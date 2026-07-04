@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">RoasteryLeader</string>
+    <string name="title_activity_main">RoasteryLeader</string>
+    <string name="package_name">com.roastery.leader</string>
+    <string name="custom_url_scheme">com.roastery.leader</string>
+</resources>

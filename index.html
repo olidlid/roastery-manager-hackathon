@@ -1,0 +1,1959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roastery Manager Pro</title>
+    <!-- CSS Stylesheet -->
+    <link rel="stylesheet" href="css/styles.css">
+    <!-- Lucide Icons CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.344.0/font/lucide.min.css">
+    <!-- Chart.js CDN for Analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .hidden { display: none !important; }
+    </style>
+    <script>
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            console.error(msg, url, lineNo, columnNo, error);
+            alert("JS Error: " + msg + "\nLine: " + lineNo + "\nFile: " + url);
+            return false;
+        };
+    </script>
+    <script>
+        window.lastError = null;
+        window.onerror = function(message, source, lineno, colno, error) {
+            window.lastError = message + " at " + source + ":" + lineno + ":" + colno;
+            var errDiv = document.getElementById('error-console');
+            if (errDiv) {
+                errDiv.textContent = "CRASH: " + window.lastError;
+                errDiv.style.display = 'block';
+            }
+        };
+
+        // Inline Theme Initializer
+        (function() {
+            var theme = 'dark';
+            try {
+                theme = localStorage.getItem('theme') || 'dark';
+            } catch (e) {}
+            document.documentElement.setAttribute('data-theme', theme);
+            document.addEventListener('DOMContentLoaded', function() {
+                var body = document.body;
+                if (body) body.setAttribute('data-theme', theme);
+                updateThemeIconInline(theme);
+            });
+        })();
+
+        function updateThemeIconInline(theme) {
+            var btn = document.getElementById('theme-toggle');
+            if (btn) {
+                var icon = btn.querySelector('i');
+                if (icon) {
+                    icon.className = theme === 'dark' ? 'lucide-sun' : 'lucide-moon';
+                }
+            }
+        }
+
+        function toggleTheme() {
+            var current = document.documentElement.getAttribute('data-theme') || 'dark';
+            var next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            if (document.body) {
+                document.body.setAttribute('data-theme', next);
+            }
+            try {
+                localStorage.setItem('theme', next);
+            } catch (e) {}
+            updateThemeIconInline(next);
+        }
+    </script>
+</head>
+<body>
+    <div id="error-console" style="display:none; position:fixed; top:0; left:0; width:100%; background:red; color:white; padding:10px; font-size:14px; z-index:9999999; font-family:monospace; font-weight:bold; text-align:center;"></div>
+
+    <!-- 1. DATABASE CONFIGURATION OVERLAY -->
+    <div id="config-overlay" class="overlay hidden">
+        <div class="overlay-card">
+            <div class="overlay-header">
+                <i class="lucide-database" style="font-size: 2.5rem; color: var(--primary);"></i>
+                <h2 class="overlay-title" data-i18n="db_title">Cloud Database Setup</h2>
+                <p class="overlay-subtitle" data-i18n="db_subtitle">Connect to your Supabase project instance</p>
+            </div>
+            <form id="config-form" onsubmit="event.preventDefault();">
+                <div class="form-group">
+                    <label class="form-label" for="config-url" data-i18n="lbl_supabase_url">Supabase Project URL</label>
+                    <input type="url" id="config-url" class="form-control" placeholder="https://your-project.supabase.co" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="config-key" data-i18n="lbl_supabase_key">Supabase API Anon Key</label>
+                    <input type="text" id="config-key" class="form-control" placeholder="eyJhbGciOi..." required>
+                </div>
+                <button type="submit" id="btn-save-config" class="btn btn-primary" style="width: 100%; margin-top: 10px;" data-i18n="db_btn">
+                    Connect Database
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 2. LOGIN & AUTHENTICATION OVERLAY -->
+    <div id="auth-overlay" class="overlay hidden">
+        <div class="overlay-card" style="max-width: 420px; padding: 32px;">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <img src="https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?q=80&w=100&auto=format&fit=crop" 
+                     alt="Logo" id="login-logo" 
+                     style="width: 64px; height: 64px; border-radius: 16px; object-fit: cover; margin-bottom: 12px; cursor: pointer; transition: all 0.3s;"
+                     data-clicks="0"
+                     onclick="this.dataset.clicks = (parseInt(this.dataset.clicks||0)+1); if(parseInt(this.dataset.clicks)>=5){document.getElementById('dev-login-panel').classList.remove('hidden'); this.style.outline='2px solid #6b21a8'; this.style.outlineOffset='3px';}">
+                <h2 class="overlay-title" style="font-size: 1.3rem; margin-bottom: 4px;">Roastery Manager Pro</h2>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0;">Coffee Roastery Management System</p>
+            </div>
+
+            <!-- Google Login -->
+            <button id="btn-google-login" class="btn" style="width: 100%; display: flex; justify-content: center; align-items: center; gap: 10px; padding: 10px; background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); border-radius: 8px; font-weight: 600; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='var(--bg-card)'">
+                <svg width="18" height="18" viewBox="0 0 24 24">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+                </svg>
+                Sign in with Google
+            </button>
+
+            <!-- Divider -->
+            <div style="display: flex; align-items: center; gap: 12px; margin: 18px 0;">
+                <hr style="flex: 1; border: 0; border-top: 1px solid var(--border);">
+                <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;">or</span>
+                <hr style="flex: 1; border: 0; border-top: 1px solid var(--border);">
+            </div>
+
+            <!-- Email/Password Login -->
+            <form id="login-form" onsubmit="event.preventDefault();">
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label" for="login-email" style="font-size: 0.8rem;">Email</label>
+                    <input type="email" id="login-email" class="form-control" placeholder="name@roastery.com" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label" for="login-password" style="font-size: 0.8rem;">Password</label>
+                    <input type="password" id="login-password" class="form-control" placeholder="••••••••" required>
+                </div>
+                <button type="submit" id="btn-login-submit" class="btn btn-primary" style="width: 100%; padding: 10px; font-weight: 600;">
+                    Sign In
+                </button>
+            </form>
+
+            <!-- Demo Mode Divider -->
+            <div style="display: flex; align-items: center; gap: 12px; margin: 20px 0 14px;">
+                <hr style="flex: 1; border: 0; border-top: 1px solid var(--border);">
+                <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;">Demo Mode</span>
+                <hr style="flex: 1; border: 0; border-top: 1px solid var(--border);">
+            </div>
+
+            <!-- Demo Mode Button -->
+            <button id="link-dev-login" class="btn btn-secondary" style="width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; padding: 10px; font-size: 0.85rem;">
+                🧪 Enter Demo Mode (No Login Required)
+            </button>
+
+            <!-- Hidden Developer Panel -->
+            <div id="dev-login-panel" class="hidden" style="margin-top: 16px; padding: 16px; border: 1.5px dashed #6b21a8; border-radius: 8px; background: rgba(107, 33, 168, 0.05);">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                    <span style="font-size: 1rem;">🔧</span>
+                    <span style="font-size: 0.85rem; font-weight: 700; color: #6b21a8;">Developer Access</span>
+                </div>
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <input type="password" id="dev-key-input" class="form-control" placeholder="Enter developer key" style="font-family: monospace;">
+                </div>
+                <button id="btn-dev-login" class="btn" style="width: 100%; padding: 8px; background: #6b21a8; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 6px;">
+                    🔓 Enter as Developer
+                </button>
+                <p style="font-size: 0.7rem; color: var(--text-muted); margin: 8px 0 0; text-align: center;">⚠️ Full system access. For developers only.</p>
+            </div>
+
+            <!-- Version -->
+            <p style="text-align: center; font-size: 0.7rem; color: var(--text-muted); margin-top: 20px; margin-bottom: 0;">v1.0.0</p>
+        </div>
+    </div>
+
+    <!-- 3. ONBOARDING PREFERENCE OVERLAY -->
+    <div id="onboarding-overlay" class="overlay hidden">
+        <div class="overlay-card">
+            <div class="overlay-header">
+                <i class="lucide-sliders" style="font-size: 2.5rem; color: var(--primary);"></i>
+                <h2 class="overlay-title" data-i18n="onboard_header">Onboarding Settings</h2>
+                <p class="overlay-subtitle" data-i18n="onboard_subtitle">Configure your default roastery preferences</p>
+            </div>
+            <form id="onboarding-form" onsubmit="event.preventDefault();">
+                <div class="form-group">
+                    <label class="form-label" for="onboard-name" data-i18n="lbl_comp_name">Company / Roastery Name</label>
+                    <input type="text" id="onboard-name" class="form-control" placeholder="e.g. Blue Bottle Roasters" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label" for="onboard-weight" data-i18n="lbl_comp_weight">Default Weight Unit</label>
+                        <select id="onboard-weight" class="form-control">
+                            <option value="kg" selected>Kilogram (kg)</option>
+                            <option value="lbs">Pound (lbs)</option>
+                            <option value="g">Gram (g)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="onboard-currency" data-i18n="lbl_comp_currency">Default Currency</label>
+                        <select id="onboard-currency" class="form-control">
+                            <option value="USD" selected>US Dollar (USD)</option>
+                            <option value="IDR">Indonesian Rupiah (IDR)</option>
+                            <option value="SGD">Singapore Dollar (SGD)</option>
+                        </select>
+                    </div>
+                </div>
+                <button type="submit" id="btn-save-onboard" class="btn btn-primary" style="width: 100%; margin-top: 10px;" data-i18n="onboard_btn">
+                    Save & Get Started
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MAIN APP CONTAINER -->
+    <div id="app-container">
+        
+        <!-- SIDEBAR NAVIGATION -->
+        <aside id="sidebar">
+            <div class="sidebar-brand">
+                <img id="sidebar-logo-img" class="sidebar-logo" src="https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?q=80&w=100&auto=format&fit=crop" alt="Logo">
+                <span id="sidebar-company-name" class="sidebar-title">Roastery Pro</span>
+            </div>
+            
+            <ul class="sidebar-menu">
+                <li class="menu-item active" data-target="sec-dashboard">
+                    <i class="lucide-layout-dashboard"></i>
+                    <span data-i18n="nav_dashboard">Dashboard</span>
+                </li>
+                <li class="menu-item has-dropdown" id="menu-inventory">
+                    <i class="lucide-package-open"></i>
+                    <span data-i18n="nav_inventory">Inventory</span>
+                    <svg class="dropdown-arrow" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </li>
+                <ul class="sidebar-submenu" id="submenu-inventory">
+                    <li class="menu-subitem" data-target="sec-greenbean" id="subitem-greenbean">
+                        <i class="lucide-leaf"></i>
+                        <span data-i18n="nav_inv_greenbean">Greenbean</span>
+                    </li>
+                    <li class="menu-subitem" data-target="sec-bulk-roasted" id="subitem-bulk-roasted">
+                        <i class="lucide-coffee"></i>
+                        <span data-i18n="nav_inv_bulk">Bulk Roasted</span>
+                    </li>
+                    <li class="menu-subitem" data-target="sec-packed-coffee" id="subitem-packed-coffee">
+                        <i class="lucide-archive"></i>
+                        <span data-i18n="nav_inv_packed">Packed Coffee</span>
+                    </li>
+                </ul>
+                <li class="menu-item" data-target="sec-roasting">
+                    <i class="lucide-flame"></i>
+                    <span data-i18n="nav_roasting">Production</span>
+                </li>
+                <li class="menu-item" data-target="sec-packing">
+                    <i class="lucide-archive"></i>
+                    <span data-i18n="nav_packing">Packing</span>
+                </li>
+                <li class="menu-item" data-target="sec-handover">
+                    <i class="lucide-truck"></i>
+                    <span data-i18n="nav_handover">Goods Handover</span>
+                </li>
+                <li class="menu-item" data-target="sec-reports">
+                    <i class="lucide-bar-chart-2"></i>
+                    <span data-i18n="nav_reports">Reports</span>
+                </li>
+                <li class="menu-item" data-target="sec-settings">
+                    <i class="lucide-settings"></i>
+                    <span data-i18n="nav_settings">Setting</span>
+                </li>
+            </ul>
+
+            <div class="sidebar-footer">
+                <div class="user-profile-widget">
+                    <div id="user-avatar-lbl" class="user-avatar">D</div>
+                    <div class="user-info">
+                        <span id="user-name-lbl" class="user-name">Developer Mode</span>
+                        <span id="user-role-lbl" class="user-role">Developer</span>
+                    </div>
+                </div>
+                <button id="btn-logout" class="btn btn-secondary btn-sm" style="width: 100%;">
+                    <i class="lucide-log-out"></i> <span data-i18n="btn_logout">Log Out</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT AREA -->
+        <main id="main-content">
+            
+            <!-- HEADER BAR -->
+            <div class="header-bar">
+                <div class="page-title-section">
+                    <h1 id="active-page-title" class="page-title" data-i18n="header_title_dashboard">Production Dashboard</h1>
+                    <span id="active-page-subtitle" class="page-subtitle" data-i18n="header_subtitle_dashboard">Overview of stock metrics, yield consistency trends, and daily schedules</span>
+                </div>
+                <div class="header-actions">
+                    <div id="greeting-container" style="display: flex; align-items: center; gap: 8px; padding: 6px 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem; color: var(--text-secondary);">
+                        <span id="greeting-icon" style="font-size: 1.1rem;">👋</span>
+                        <span id="greeting-text">Good morning, Developer!</span>
+                    </div>
+                    <!-- Hidden role switcher for dev/debug purposes -->
+                    <select id="role-play-switcher" class="role-switcher-select" style="display:none;">
+                        <option value="Developer">Developer</option>
+                        <option value="Leader">Production Leader</option>
+                        <option value="Roaster">Roaster</option>
+                        <option value="Packing">Packing Team</option>
+                        <option value="Sales">Sales Team</option>
+                    </select>
+                    <!-- Language Switcher -->
+                    <div class="role-switcher-container">
+                        <select id="language-switcher" class="role-switcher-select" onchange="if(window.setLanguage) window.setLanguage(this.value)">
+                            <option value="en">English (EN)</option>
+                            <option value="ar">العربية (AR)</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Dark/Light Theme Toggle -->
+                    <button id="theme-toggle" class="theme-toggle-btn" type="button" onclick="if(typeof toggleTheme === 'function') toggleTheme()">
+                        <i class="lucide-sun"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SECTION 1: DASHBOARD -->
+            <!-- ========================================== -->
+            <section id="sec-dashboard" class="page-section">
+                <!-- Metrics row -->
+                <div class="metrics-grid">
+                    <div class="card metric-card">
+                        <div class="metric-icon-box warning">
+                            <i class="lucide-package-open"></i>
+                        </div>
+                        <div class="metric-info">
+                            <span id="stat-greenbean" class="metric-value">0 kg</span>
+                            <span class="metric-label" data-i18n="stat_greenbean_label">Greenbean Stock</span>
+                        </div>
+                    </div>
+                    <div class="card metric-card">
+                        <div class="metric-icon-box primary">
+                            <i class="lucide-coffee"></i>
+                        </div>
+                        <div class="metric-info">
+                            <span id="stat-bulk" class="metric-value">0 kg</span>
+                            <span class="metric-label" data-i18n="stat_bulk_label">Bulk Roasted Stock</span>
+                        </div>
+                    </div>
+                    <div class="card metric-card">
+                        <div class="metric-icon-box success">
+                            <i class="lucide-archive"></i>
+                        </div>
+                        <div class="metric-info">
+                            <span id="stat-packed" class="metric-value">0 units</span>
+                            <span class="metric-label" data-i18n="stat_packed_label">Packed Retail Stock</span>
+                        </div>
+                    </div>
+                    <div class="card metric-card">
+                        <div class="metric-icon-box danger">
+                            <i class="lucide-shopping-cart"></i>
+                        </div>
+                        <div class="metric-info">
+                            <span id="stat-pending-orders" class="metric-value">0 units</span>
+                            <span class="metric-label" data-i18n="stat_pending_label">Pending Sales Requests</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MTD Summary Section -->
+                <div class="card" style="margin-top: 24px;">
+                    <div style="margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 12px;">
+                        <h3 class="card-title" style="margin-bottom: 4px;" data-i18n="dashboard_mtd_title">Month-to-Date (MTD) Summary</h3>
+                        <p style="font-size: 0.82rem; color: var(--text-secondary); margin: 0;" data-i18n="dashboard_mtd_subtitle">Performance summary starting from the 1st of the current month</p>
+                    </div>
+
+                    <!-- MTD Stats Grid -->
+                    <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                        <div class="card metric-card" style="background: rgba(255,255,255,0.02); padding: 16px; border: 1px solid var(--border);">
+                            <div class="metric-info">
+                                <span id="mtd-total-roasted-val" class="metric-value" style="font-size: 1.4rem;">0.0 kg</span>
+                                <span class="metric-label" style="font-size: 0.75rem;" data-i18n="mtd_total_roasted">Total Roasted (MTD)</span>
+                            </div>
+                        </div>
+                        <div class="card metric-card" style="background: rgba(255,255,255,0.02); padding: 16px; border: 1px solid var(--border);">
+                            <div class="metric-info">
+                                <span id="mtd-total-dispatched-val" class="metric-value" style="font-size: 1.4rem;">0.0 kg</span>
+                                <span class="metric-label" style="font-size: 0.75rem;" data-i18n="mtd_total_dispatched">Total Dispatched (MTD)</span>
+                            </div>
+                        </div>
+                        <div class="card metric-card" style="background: rgba(255,255,255,0.02); padding: 16px; border: 1px solid var(--border);">
+                            <div class="metric-info">
+                                <span id="mtd-green-intake-val" class="metric-value" style="font-size: 1.4rem;">0.0 kg</span>
+                                <span class="metric-label" style="font-size: 0.75rem;" data-i18n="mtd_green_intake">Green Bean Intake (MTD)</span>
+                            </div>
+                        </div>
+                        <div class="card metric-card" style="background: rgba(255,255,255,0.02); padding: 16px; border: 1px solid var(--border);">
+                            <div class="metric-info">
+                                <span id="mtd-batches-count-val" class="metric-value" style="font-size: 1.4rem;">0</span>
+                                <span class="metric-label" style="font-size: 0.75rem;" data-i18n="mtd_batches_count">Batches Roasted (MTD)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MTD Tables Grid -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 24px;">
+                        <!-- Dispatched by Size -->
+                        <div>
+                            <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; color: var(--primary);" data-i18n="tbl_dispatched_size">Dispatched by Size</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_size">Size</th>
+                                            <th data-i18n="col_bags_dispatched">Bags Dispatched</th>
+                                            <th data-i18n="col_total_weight_kg">Total Weight (kg)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="mtd-dispatched-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Roasting Output by Coffee -->
+                        <div>
+                            <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; color: var(--primary);" data-i18n="tbl_roasting_output">Roasting Output by Coffee</h4>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_plan_coffee">Coffee</th>
+                                            <th data-i18n="col_batches">Batches</th>
+                                            <th data-i18n="col_green_used">Green Used</th>
+                                            <th data-i18n="col_yield_obtained">Yield Obtained</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="mtd-roasting-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Today's Roasting Schedule -->
+                <div class="card" style="margin-top: 24px; display: flex; flex-direction: column; justify-content: space-between;">
+                    <div>
+                        <h3 class="card-title" data-i18n="stat_today_plans">Today's Roasting Schedule</h3>
+                        <div id="dashboard-plans-list" style="display: flex; flex-direction: column; gap: 16px; margin-top: 10px;">
+                            <p style="color: var(--text-muted); text-align: center; padding: 20px;" data-i18n="no_plans_today">No roasting plans scheduled for today.</p>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 16px; text-align: right;">
+                        <button class="btn btn-secondary btn-sm link-nav" data-target="sec-roasting" data-i18n="btn_manage_plans">Manage Roasting Plans →</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- SECTION 2: GREENBEANS & RECIPES (THREE TABS) -->
+            <!-- ========================================== -->
+            <section id="sec-greenbean" class="page-section hidden">
+                <div class="tab-container">
+                    <div class="tab-headers">
+                        <button class="tab-btn active" data-tab="tab-green-inventory" data-i18n="tab_inventory">Greenbean Inventory</button>
+                        <button class="tab-btn" data-tab="tab-add-gb-history" data-i18n="tab_add_gb_history">Greenbean Arrival</button>
+                    </div>
+
+                    <!-- TAB 1: Greenbean Inventory -->
+                    <div id="tab-green-inventory" class="tab-content">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="gb_table_title">Green Coffee Stock</h3>
+                                <button id="btn-export-greenbean" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                    Export Excel
+                                </button>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content"><span data-i18n="col_code">Code</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content"><span data-i18n="col_name">Coffee Name</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2">
+                                                <div class="th-content"><span data-i18n="col_origin">Origin</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="3">
+                                                <div class="th-content"><span data-i18n="col_process">Process</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="4">
+                                                <div class="th-content"><span data-i18n="col_stock_weight">Stock Weight</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="5">
+                                                <div class="th-content"><span data-i18n="col_supplier">Supplier</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th style="width: 130px; white-space: nowrap;" data-i18n="col_action">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="greenbean-table-body">
+                                        <!-- Dynamically loaded rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+
+
+                    <!-- TAB 4: Add Greenbean Inventory History -->
+                    <div id="tab-add-gb-history" class="tab-content hidden">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="lot_history_title">Lot History</h3>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <button id="btn-export-lot-history" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                        Export Excel
+                                    </button>
+                                    <button id="btn-add-lot" class="btn btn-primary btn-sm" data-i18n="btn_add_lot">
+                                        <i class="lucide-plus"></i> Add Lot
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content"><span data-i18n="col_intake_date">Date</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content"><span data-i18n="col_code">Code</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2">
+                                                <div class="th-content"><span data-i18n="col_name">Coffee Name</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="3">
+                                                <div class="th-content"><span data-i18n="col_origin">Origin</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="4">
+                                                <div class="th-content"><span data-i18n="col_process">Process</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="5">
+                                                <div class="th-content"><span data-i18n="col_intake_qty">Quantity</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="6">
+                                                <div class="th-content"><span data-i18n="col_supplier">Supplier</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="intake-history-table-body">
+                                        <!-- Dynamically loaded lot intakes -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- SECTION: BULK ROASTED COFFEE -->
+            <!-- ========================================== -->
+            <section id="sec-bulk-roasted" class="page-section hidden">
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <h3 class="card-title" style="margin-bottom: 0;" data-i18n="bulk_roasted_title">Bulk Roasted Coffee</h3>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th data-i18n="col_name">Coffee Name</th>
+                                    <th data-i18n="col_machine">Machine</th>
+                                    <th data-i18n="col_bulk_avail_kg">Bulk Available (kg)</th>
+                                    <th data-i18n="col_action">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bulk-roasted-table-body">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- SECTION: PACKED COFFEE STOCK -->
+            <!-- ========================================== -->
+            <section id="sec-packed-coffee" class="page-section hidden">
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <h3 class="card-title" style="margin-bottom: 0;" data-i18n="packed_coffee_title">Packed Coffee Stock</h3>
+                    </div>
+                    <div class="table-container">
+                        <table id="packed-coffee-stock-table">
+                            <thead>
+                                <tr id="packed-coffee-stock-table-head">
+                                    <th data-i18n="col_name">Coffee Name</th>
+                                    <!-- Dynamic Machine Columns go here -->
+                                    <th data-i18n="col_action">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="packed-coffee-stock-table-body">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- SECTION 3: ROASTING PRODUCTION -->
+            <!-- ========================================== -->
+            <section id="sec-roasting" class="page-section hidden">
+                <div class="tab-container">
+                    <div class="tab-headers">
+                        <button class="tab-btn active" data-tab="tab-roast-plans" data-i18n="tab_roast_plans">Plans</button>
+                        <button class="tab-btn" data-tab="tab-roast-logs" data-i18n="tab_roast_logs">Batch Logs</button>
+                        <button class="tab-btn" data-tab="tab-blend-recipes" data-i18n="tab_recipes">Blend Recipes</button>
+                        <button class="tab-btn" data-tab="tab-recipe-potential" data-i18n="tab_potential">Production Potential</button>
+                        <button class="tab-btn" data-tab="tab-daily-achievement">Daily Achievement</button>
+                    </div>
+
+                    <!-- TAB 1: Roasting Schedule & Plans -->
+                    <div id="tab-roast-plans" class="tab-content">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="plan_title">Plans</h3>
+                                <button id="btn-add-plan" class="btn btn-primary btn-sm" data-i18n="btn_create_plan">
+                                    <i class="lucide-calendar-plus"></i> Create Roasting Plan
+                                </button>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content"><span data-i18n="col_plan_date">Date</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content"><span data-i18n="col_plan_coffee">Coffee</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2">
+                                                <div class="th-content"><span data-i18n="col_batch_machine">Machine</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2">
+                                                <div class="th-content"><span data-i18n="col_plan_target">Target</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="3">
+                                                <div class="th-content"><span data-i18n="col_plan_fulfilled">Fulfilled</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th data-i18n="col_progress">Progress</th>
+                                            <th class="filterable-th" data-col="5">
+                                                <div class="th-content"><span data-i18n="col_plan_status">Status</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plan-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 2: Roasting Batch Logs -->
+                    <div id="tab-roast-logs" class="tab-content hidden">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="batch_title">Roasting Batch Logs</h3>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <button id="btn-export-batches" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                        Export Excel
+                                    </button>
+                                    <button id="btn-add-batch" class="btn btn-primary btn-sm" data-i18n="btn_log_batch">
+                                        <i class="lucide-flame"></i> Log Roast Batch
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                             <th class="filterable-th" data-col="0">
+                                                 <div class="th-content"><span data-i18n="col_batch_date">Date</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                             </th>
+                                             <th class="filterable-th" data-col="1">
+                                                 <div class="th-content"><span data-i18n="col_batch_code">Batch Code</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                             </th>
+                                             <th class="filterable-th" data-col="2">
+                                                 <div class="th-content"><span data-i18n="col_batch_coffee">Coffee</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                             </th>
+                                             <th class="filterable-th" data-col="3">
+                                                 <div class="th-content"><span data-i18n="col_batch_machine">Machine</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                             </th>
+                                             <th class="filterable-th" data-col="4">
+                                                 <div class="th-content"><span data-i18n="col_batch_greenbean_g">Batch (g)</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                             </th>
+                                             <th class="filterable-th" data-col="5">
+                                                 <div class="th-content"><span data-i18n="col_batch_roasted_g">Yield (g)</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                             </th>
+                                             <th class="filterable-th" data-col="6">
+                                                 <div class="th-content"><span data-i18n="col_batch_depreciation">Depreciation</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                             </th>
+                                             <th class="filterable-th" data-col="7">
+                                                 <div class="th-content"><span data-i18n="col_batch_type">Type</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                             </th>
+                                            <th data-i18n="col_batch_label">Label</th>
+                                            <th data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="batch-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <!-- Table pagination footer bar -->
+                            <div class="table-footer-bar" style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--text-muted); flex-wrap: wrap; gap: 16px;">
+                                <!-- Left side: Page stats & Items per page & Customize columns dropdown -->
+                                <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
+                                    <span id="batch-page-info">Show 1 - 50 of 56</span>
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <span data-i18n="lbl_pagination_show">Show:</span>
+                                        <div id="batch-page-size-selector" style="display: flex; gap: 12px; font-weight: 500;">
+                                            <span class="page-size-opt" data-size="10" style="cursor:pointer; color:var(--text-secondary);">10</span>
+                                            <span class="page-size-opt" data-size="25" style="cursor:pointer; color:var(--text-secondary);">25</span>
+                                            <span class="page-size-opt active" data-size="50" style="cursor:pointer; text-decoration: underline; font-weight:700; color:var(--text-primary);">50</span>
+                                            <span class="page-size-opt" data-size="100" style="cursor:pointer; color:var(--text-secondary);">100</span>
+                                            <span class="page-size-opt" data-size="200" style="cursor:pointer; color:var(--text-secondary);">200</span>
+                                        </div>
+                                    </div>
+                                    <div class="dropdown-customize-container" style="position: relative; display: inline-block;">
+                                        <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-customize" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 0.8rem;">
+                                            Customize
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                                        </button>
+                                        <div id="customize-columns-dropdown" class="dropdown-menu hidden" style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 8px; padding: 12px; box-shadow: var(--shadow-premium); display: flex; flex-direction: column; gap: 8px; min-width: 180px; z-index: 10;">
+                                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color: var(--text-primary); font-weight:500;"><input type="checkbox" class="col-toggle-checkbox" data-col-idx="0" checked> Date</label>
+                                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color: var(--text-primary); font-weight:500;"><input type="checkbox" class="col-toggle-checkbox" data-col-idx="1" checked> Batch Code</label>
+                                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color: var(--text-primary); font-weight:500;"><input type="checkbox" class="col-toggle-checkbox" data-col-idx="2" checked> Coffee</label>
+                                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color: var(--text-primary); font-weight:500;"><input type="checkbox" class="col-toggle-checkbox" data-col-idx="3" checked> Machine</label>
+                                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color: var(--text-primary); font-weight:500;"><input type="checkbox" class="col-toggle-checkbox" data-col-idx="4" checked> Batch (g)</label>
+                                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color: var(--text-primary); font-weight:500;"><input type="checkbox" class="col-toggle-checkbox" data-col-idx="5" checked> Yield (g)</label>
+                                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color: var(--text-primary); font-weight:500;"><input type="checkbox" class="col-toggle-checkbox" data-col-idx="6" checked> Depreciation</label>
+                                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color: var(--text-primary); font-weight:500;"><input type="checkbox" class="col-toggle-checkbox" data-col-idx="7" checked> Type</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- Right side: Page Selector Buttons -->
+                                <div id="batch-pagination-pages" style="display: flex; gap: 4px; align-items: center;">
+                                    <!-- Dynamic page numbers -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 3: Blend Recipes -->
+                    <div id="tab-blend-recipes" class="tab-content hidden">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="recipes_title">Coffee Blend Recipes</h3>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <button id="btn-export-blend-recipes" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                        Export Excel
+                                    </button>
+                                    <button id="btn-add-recipe" class="btn btn-primary btn-sm" data-i18n="btn_add_recipe">
+                                        <i class="lucide-plus"></i> Add Blend Recipe
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content"><span data-i18n="col_code">Code</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content"><span data-i18n="col_recipe_name">Recipe Name</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2">
+                                                <div class="th-content"><span data-i18n="col_ingredients">Ingredients</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th style="width: 100px;" data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recipe-table-body">
+                                        <!-- Dynamically loaded blend recipes -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 4: Production Potential -->
+                    <div id="tab-recipe-potential" class="tab-content hidden">
+                        <div class="card">
+                            <h3 class="card-title" data-i18n="potential_title">Production Potential</h3>
+                            <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 24px;" data-i18n="potential_subtitle">
+                                Showing the maximum quantity of roasted coffee (Single Origin & Blends) you can produce based on currently available greenbean stocks, factoring in a 15% weight shrinkage.
+                            </p>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content"><span data-i18n="col_code">Code</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content"><span data-i18n="col_name">Coffee Name</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2">
+                                                <div class="th-content"><span data-i18n="col_type">Type</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="3">
+                                                <div class="th-content"><span data-i18n="col_stock">Stock (Greenbean)</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="4">
+                                                <div class="th-content"><span data-i18n="col_potential_production">Potential Production (Roastbean)</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="potential-table-body">
+                                        <!-- Dynamically loaded rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 5: Daily Achievement -->
+                    <div id="tab-daily-achievement" class="tab-content hidden">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="card-title" style="margin-bottom: 0;">Daily Achievement</h3>
+                                <button class="btn btn-outline btn-sm" id="btn-export-daily-achievement">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px; vertical-align:middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                    Export Excel
+                                </button>
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table>
+                                    <thead id="daily-achievement-thead"></thead>
+                                    <tbody id="daily-achievement-tbody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- Daily Detail Popup Overlay -->
+            <div id="daily-detail-overlay" class="overlay hidden" style="z-index: 1100;">
+                <div class="overlay-card" style="max-width: 700px; width: 95%;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <h3 id="daily-detail-title" class="card-title" style="margin-bottom: 0;">Daily Detail</h3>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-close-daily-detail">&times;</button>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table>
+                            <thead id="daily-detail-thead"></thead>
+                            <tbody id="daily-detail-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- SECTION 4: PACKING -->
+            <!-- ========================================== -->
+            <section id="sec-packing" class="page-section hidden">
+                <div style="margin-bottom: 24px; border-bottom: 1px solid var(--border);">
+                    <nav style="display: flex; gap: 24px;" id="packing-tabs-nav">
+                        <button class="tab-btn active" data-target="tab-daily-packing" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--primary); cursor: pointer; border-bottom: 2px solid var(--primary);" data-i18n="tab_daily_packing">Daily Packing</button>
+                        <button class="tab-btn" data-target="tab-order-request" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_order_request">Order Requests</button>
+                        <button class="tab-btn" data-target="tab-packing-records" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Packing Records</button>
+                        <button class="tab-btn" data-target="tab-packing-history" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Completed Order</button>
+                    </nav>
+                </div>
+                
+                <div id="tab-packing-history" class="packing-tab-content hidden">
+                    <div class="card">
+                        <h3 class="card-title" style="margin-bottom: 16px;">Completed Order</h3>
+                        <div class="table-container">
+                            <table id="packing-history-table" class="nested-table-rows">
+                                <thead>
+                                    <tr id="packing-history-table-head">
+                                        <th class="filterable-th" data-col="0" style="width: 120px;">
+                                            <div class="th-content">
+                                                <span>Date</span>
+                                                <button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                                            </div>
+                                        </th>
+                                        <th class="filterable-th" data-col="1" style="width: 120px;">
+                                            <div class="th-content">
+                                                <span>Order No</span>
+                                                <button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                                            </div>
+                                        </th>
+                                        <th class="filterable-th" data-col="2" style="width: 130px;">
+                                            <div class="th-content">
+                                                <span>Sales Agent</span>
+                                                <button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                                            </div>
+                                        </th>
+                                        <th>Items Detail</th>
+                                        <th style="width: 100px;">Ready</th>
+                                        <th style="width: 120px;">Dispatched</th>
+                                        <th class="filterable-th" data-col="6" style="width: 100px;">
+                                            <div class="th-content">
+                                                <span>Status</span>
+                                                <button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                                            </div>
+                                        </th>
+                                        <th style="width: 130px;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="packing-history-table-body">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-packing-records" class="packing-tab-content hidden">
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <h3 class="card-title" style="margin-bottom: 0;">Packing Records</h3>
+                            <button id="btn-export-packing-records" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                Export Excel
+                            </button>
+                        </div>
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th class="filterable-th" data-col="0">
+                                            <div class="th-content"><span>Date</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                        </th>
+                                        <th class="filterable-th" data-col="1">
+                                            <div class="th-content"><span>Coffee Name</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                        </th>
+                                        <th class="filterable-th" data-col="2">
+                                            <div class="th-content"><span>Machine</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                        </th>
+                                        <th class="filterable-th" data-col="3">
+                                            <div class="th-content"><span>Size</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                        </th>
+                                        <th class="filterable-th" data-col="4">
+                                            <div class="th-content"><span>Quantity</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody id="packing-records-table-body">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-daily-packing" class="packing-tab-content">
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px;">
+                            <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+                                <h3 class="card-title" style="font-size: 1.5rem; margin-bottom: 0; font-weight: 700;" data-i18n="packing_title">What are we packing today?</h3>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <label style="font-size: 0.85rem; font-weight: 600; color: var(--primary); white-space: nowrap;">Date:</label>
+                                    <input type="date" id="packing-date" class="form-control" style="width: 160px; padding: 6px 10px; font-size: 0.85rem;">
+                                </div>
+                            </div>
+                            <button type="button" id="btn-custom-packing" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                Custom Packing
+                            </button>
+                        </div>
+                        <div id="packing-sheet-container" style="max-width: 1100px; margin: 0 auto; width: 100%;">
+                            <form id="packing-sheet-form">
+                                <div id="packing-sheet-rows" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; max-height: 60vh; overflow-y: auto; padding-right: 12px; margin-right: -4px; align-items: start;">
+                                    <!-- Dynamic rows of packing items -->
+                                </div>
+                                
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
+                                    <button type="button" class="btn btn-secondary" id="btn-add-packing-sheet-row">
+                                        <i class="lucide-plus"></i> <span data-i18n="btn_add_coffee">Add Coffee</span>
+                                    </button>
+                                    
+                                    <button type="submit" class="btn btn-primary btn-lg" style="padding: 10px 30px; font-weight: bold;" data-i18n="btn_done">
+                                        Done!!
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-order-request" class="packing-tab-content hidden">
+                    <div class="card">
+                        <h3 class="card-title" data-i18n="pack_req_title">Preparing Sales Orders</h3>
+                        <div class="table-container">
+                            <table class="nested-table-rows">
+                                <thead>
+                                    <tr>
+                                        <th data-i18n="col_pack_req_date">Date</th>
+                                        <th data-i18n="col_pack_req_agent">Sales Agent</th>
+                                        <th data-i18n="col_pack_req_info" style="width: 55%;">Request Information (Items)</th>
+                                        <th style="width: 110px;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="packing-requests-table-body">
+                                    <!-- Dynamic rows for preparing orders -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- SECTION 5: ITEM REQUESTS (SALES REQUESTS) -->
+            <!-- ========================================== -->
+            <section id="sec-handover" class="page-section hidden">
+                <div class="tab-container">
+                    <div class="tab-headers">
+                        <button class="tab-btn active" data-tab="tab-dispatch-request" data-i18n="tab_dispatch_request">Sales Dispatch Request</button>
+                        <button class="tab-btn" data-tab="tab-dispatch-approval" data-i18n="tab_dispatch_approval">Dispatch Approval</button>
+                    </div>
+
+                    <!-- TAB 1: Sales Dispatch Request -->
+                    <div id="tab-dispatch-request" class="tab-content">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="handover_orders_title">Sales Dispatch Requests</h3>
+                                <button id="btn-create-request" class="btn btn-primary btn-sm" data-i18n="btn_submit_req">
+                                    <i class="lucide-shopping-cart"></i> Submit Sales Request
+                                </button>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content">
+                                                    <span data-i18n="col_o_id">Order ID</span>
+                                                    <button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                                                </div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content">
+                                                    <span data-i18n="col_o_sales">Sales Name</span>
+                                                    <button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                                                </div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2" style="width: 50%;">
+                                                <div class="th-content">
+                                                    <span data-i18n="col_pack_req_info">Request Information (Items)</span>
+                                                </div>
+                                            </th>
+                                            <th data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="request-orders-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <!-- Table pagination footer bar -->
+                            <div class="table-footer-bar" style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--text-muted); flex-wrap: wrap; gap: 16px;">
+                                <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
+                                    <span id="request-page-info">Show 1 - 25 of 25</span>
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <span data-i18n="lbl_pagination_show">Show:</span>
+                                        <div id="request-page-size-selector" style="display: flex; gap: 12px; font-weight: 500;">
+                                            <span class="page-size-opt" data-size="10" style="cursor:pointer; color:var(--text-secondary);">10</span>
+                                            <span class="page-size-opt active" data-size="25" style="cursor:pointer; text-decoration: underline; font-weight:700; color:var(--text-primary);">25</span>
+                                            <span class="page-size-opt" data-size="50" style="cursor:pointer; color:var(--text-secondary);">50</span>
+                                            <span class="page-size-opt" data-size="100" style="cursor:pointer; color:var(--text-secondary);">100</span>
+                                            <span class="page-size-opt" data-size="200" style="cursor:pointer; color:var(--text-secondary);">200</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="request-pagination-pages" style="display: flex; gap: 4px; align-items: center;">
+                                    <!-- Dynamic page numbers -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 2: Dispatch Approval -->
+                    <div id="tab-dispatch-approval" class="tab-content hidden">
+                        <div class="card">
+                            <h3 class="card-title" data-i18n="dispatch_approval_title">Dispatch Approval</h3>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content">
+                                                    <span data-i18n="col_o_id">Order ID</span>
+                                                    <button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                                                </div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content">
+                                                    <span data-i18n="col_o_sales">Sales Name</span>
+                                                    <button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+                                                </div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2" style="width: 50%;">
+                                                <div class="th-content">
+                                                    <span data-i18n="col_pack_req_info">Request Information (Items)</span>
+                                                </div>
+                                            </th>
+                                            <th data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="approval-orders-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <!-- Table pagination footer bar -->
+                            <div class="table-footer-bar" style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--text-muted); flex-wrap: wrap; gap: 16px;">
+                                <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
+                                    <span id="approval-page-info">Show 1 - 25 of 25</span>
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <span data-i18n="lbl_pagination_show">Show:</span>
+                                        <div id="approval-page-size-selector" style="display: flex; gap: 12px; font-weight: 500;">
+                                            <span class="page-size-opt" data-size="10" style="cursor:pointer; color:var(--text-secondary);">10</span>
+                                            <span class="page-size-opt active" data-size="25" style="cursor:pointer; text-decoration: underline; font-weight:700; color:var(--text-primary);">25</span>
+                                            <span class="page-size-opt" data-size="50" style="cursor:pointer; color:var(--text-secondary);">50</span>
+                                            <span class="page-size-opt" data-size="100" style="cursor:pointer; color:var(--text-secondary);">100</span>
+                                            <span class="page-size-opt" data-size="200" style="cursor:pointer; color:var(--text-secondary);">200</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="approval-pagination-pages" style="display: flex; gap: 4px; align-items: center;">
+                                    <!-- Dynamic page numbers -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+
+
+            <!-- ========================================== -->
+            <!-- SECTION: REPORTS & ANALYTICS -->
+            <!-- ========================================== -->
+            <section id="sec-reports" class="page-section hidden">
+                <div class="tab-container">
+                    <div class="tab-headers" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                        <div style="display: flex; gap: 0;">
+                            <button class="tab-btn active" data-tab="tab-rep-greenbean" data-i18n="tab_rep_greenbean">Greenbean</button>
+                            <button class="tab-btn" data-tab="tab-rep-roasting" data-i18n="tab_rep_roasting">Roasting</button>
+                            <button class="tab-btn" data-tab="tab-rep-packing" data-i18n="tab_rep_packing">Packing</button>
+                            <button class="tab-btn" data-tab="tab-rep-sales">Sales Dispatch</button>
+                        </div>
+                        <!-- Date Filter (right, compact) -->
+                        <div style="display: flex; gap: 8px; align-items: flex-end;">
+                            <div>
+                                <label class="form-label" style="font-size: 0.68rem; margin-bottom: 1px;" data-i18n="lbl_rep_date_start">Start Date</label>
+                                <input type="date" id="rep-filter-start" class="form-control" style="padding: 4px 8px; font-size: 0.8rem; height: 30px;">
+                            </div>
+                            <div>
+                                <label class="form-label" style="font-size: 0.68rem; margin-bottom: 1px;" data-i18n="lbl_rep_date_end">End Date</label>
+                                <input type="date" id="rep-filter-end" class="form-control" style="padding: 4px 8px; font-size: 0.8rem; height: 30px;">
+                            </div>
+                            <button type="button" id="btn-rep-filter-apply" class="btn btn-primary" style="height: 30px; padding: 0 12px; font-size: 0.78rem;" data-i18n="lbl_rep_filter">Apply</button>
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB: Greenbean Report -->
+                    <div id="tab-rep-greenbean" class="tab-content">
+                        <!-- Data & Chart -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; flex-wrap: wrap;">
+                            <div class="card" style="overflow-x: auto; cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenTable('rep-gb-stock-table','Green Coffee Stock')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <h3 class="card-title" style="margin-bottom: 0;" data-i18n="gb_table_title">Green Coffee Stock</h3>
+                                    <div style="display:flex; gap:8px; align-items:center;">
+                                        <button id="btn-export-gb-report" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;" onclick="event.stopPropagation()">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                            Export Excel
+                                        </button>
+                                        <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Expand</span>
+                                    </div>
+                                </div>
+                                <div class="table-container">
+                                    <table id="rep-gb-stock-table">
+                                        <thead>
+                                            <tr>
+                                                <th data-i18n="col_name">Coffee Name</th>
+                                                <th data-i18n="card_total_arrivals">Total Arrivals</th>
+                                                <th data-i18n="card_green_roasted">Roasted</th>
+                                                <th data-i18n="card_remain_stock">Stock</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="rep-gb-table-body">
+                                            <!-- Dyn -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card chart-card-expandable" data-chart-id="rep-gb-chart" style="cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenChart('rep-gb-chart','Greenbean Report')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <h3 class="card-title" style="margin-bottom:0;" data-i18n="tab_rep_greenbean">Greenbean</h3>
+                                    <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Click to expand</span>
+                                </div>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="rep-gb-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB: Roasting Report -->
+                    <div id="tab-rep-roasting" class="tab-content hidden">
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; flex-wrap: wrap;">
+                            <div class="card" style="overflow-x: auto; cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenTable('rep-roast-prod-table','Roasting Production')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <h3 class="card-title" style="margin-bottom: 0;" data-i18n="nav_roasting">Production</h3>
+                                    <div style="display:flex; gap:8px; align-items:center;">
+                                        <button id="btn-export-roast-report" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;" onclick="event.stopPropagation()">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                            Export Excel
+                                        </button>
+                                        <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Expand</span>
+                                    </div>
+                                </div>
+                                <div class="table-container">
+                                    <table id="rep-roast-prod-table">
+                                        <thead>
+                                            <tr>
+                                                <th data-i18n="col_name">Coffee Name</th>
+                                                <th data-i18n="card_total_batches">Batches</th>
+                                                <th data-i18n="card_green_roasted">Green Roasted</th>
+                                                <th data-i18n="card_total_yield">Yield</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="rep-roast-table-body">
+                                            <!-- Dyn -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card chart-card-expandable" data-chart-id="rep-roast-chart" style="cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenChart('rep-roast-chart','Roasting Output')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <h3 class="card-title" style="margin-bottom:0;" data-i18n="tab_rep_roasting">Roasting</h3>
+                                    <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Click to expand</span>
+                                </div>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="rep-roast-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB: Packing Report -->
+                    <div id="tab-rep-packing" class="tab-content hidden">
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; flex-wrap: wrap;">
+                            <div class="card" style="overflow-x: auto; cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenTable('rep-pack-stock-table','Packed Coffee Stock')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <h3 class="card-title" style="margin-bottom: 0;" data-i18n="packed_coffee_title">Packed Coffee Stock</h3>
+                                    <div style="display:flex; gap:8px; align-items:center;">
+                                        <button id="btn-export-pack-report" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;" onclick="event.stopPropagation()">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                            Export Excel
+                                        </button>
+                                        <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Expand</span>
+                                    </div>
+                                </div>
+                                <div class="table-container">
+                                    <table id="rep-pack-stock-table">
+                                        <thead>
+                                            <tr id="rep-pack-thead">
+                                                <th>Coffee Name</th>
+                                                <!-- Dynamic Machine Columns -->
+                                            </tr>
+                                        </thead>
+                                        <tbody id="rep-pack-table-body">
+                                            <!-- Dyn -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card chart-card-expandable" data-chart-id="rep-pack-chart" style="cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenChart('rep-pack-chart','Packed Inventory Share')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <h3 class="card-title" style="margin-bottom:0;" data-i18n="tab_rep_packing">Packing</h3>
+                                    <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Click to expand</span>
+                                </div>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="rep-pack-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB: Sales Dispatch Report -->
+                    <div id="tab-rep-sales" class="tab-content hidden">
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; flex-wrap: wrap;">
+                            <div class="card" style="overflow-x: auto; cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenTable('rep-sales-dispatch-table','Sales Dispatch Summary')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                                    <h3 class="card-title" style="margin-bottom:0;">Sales Dispatch</h3>
+                                    <div style="display:flex; gap:8px; align-items:center;">
+                                        <button id="btn-export-sales-report" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;" onclick="event.stopPropagation()">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                            Export Excel
+                                        </button>
+                                        <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Expand</span>
+                                    </div>
+                                </div>
+                                <div class="table-container">
+                                    <table id="rep-sales-dispatch-table">
+                                        <thead>
+                                            <tr id="rep-sales-dispatch-thead">
+                                                <th>Coffee Name</th>
+                                                <!-- Dynamic Machine Columns -->
+                                            </tr>
+                                        </thead>
+                                        <tbody id="rep-sales-table-body">
+                                            <!-- Dyn -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card chart-card-expandable" data-chart-id="rep-sales-chart" style="cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenChart('rep-sales-chart','Sales Dispatch Breakdown')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <h3 class="card-title" style="margin-bottom:0;">Sales</h3>
+                                    <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Click to expand</span>
+                                </div>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="rep-sales-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Fullscreen Chart Modal -->
+                <div id="modal-fullscreen-chart" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.85); backdrop-filter:blur(4px); cursor:pointer;" onclick="closeFullscreenChart()">
+                    <div style="position:absolute; top:12px; right:20px; z-index:10001;">
+                        <button onclick="closeFullscreenChart()" style="background:rgba(255,255,255,0.15); border:none; color:#fff; font-size:28px; width:40px; height:40px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'">&times;</button>
+                    </div>
+                    <div id="fullscreen-chart-container" style="position:absolute; inset:40px 30px 30px 30px; background:var(--card-bg, #fff); border-radius:12px; padding:24px; box-shadow:0 20px 60px rgba(0,0,0,0.4); cursor:default;" onclick="event.stopPropagation()">
+                        <h3 id="fullscreen-chart-title" style="margin:0 0 16px 0; font-size:1.2rem; font-weight:700; color:var(--text-primary);"></h3>
+                        <div style="position:relative; width:100%; height:calc(100% - 40px);">
+                            <canvas id="fullscreen-chart-canvas"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- SECTION 7: SYSTEM SETTINGS -->
+            <!-- ========================================== -->
+            <section id="sec-settings" class="page-section hidden">
+                <div class="tab-container">
+                    <div class="tab-headers">
+                        <button class="tab-btn active" data-tab="tab-sett-general">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                            General
+                        </button>
+                        <button class="tab-btn" data-tab="tab-sett-production">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09c-.658.003-1.25.396-1.51 1z"/></svg>
+                            Production
+                        </button>
+                        <button class="tab-btn" data-tab="tab-sett-system">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                            System
+                        </button>
+                    </div>
+
+                    <!-- SUB-TAB: Debug / Reset -->
+                    <!-- ===== TAB: GENERAL ===== -->
+                    <div id="tab-sett-general" class="tab-content">
+                        <div style="max-width: 700px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;">
+
+                            <!-- Accordion: Company Profile -->
+                            <div class="card" style="overflow:hidden;">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(45,90,61,0.12), rgba(45,90,61,0.04)); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                                        </div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">Company Profile</h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Name, contact, logo & unit system</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        <form id="settings-company-form" onsubmit="event.preventDefault();">
+                                            <div class="form-group">
+                                                <label class="form-label" for="sett-company-name" data-i18n="lbl_comp_name">Company / Roastery Name</label>
+                                                <input type="text" id="sett-company-name" class="form-control" required>
+                                            </div>
+                                            <div class="form-row">
+                                                <div class="form-group">
+                                                    <label class="form-label" for="sett-phone" data-i18n="lbl_comp_phone">Contact Phone</label>
+                                                    <input type="text" id="sett-phone" class="form-control">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="form-label" for="sett-email" data-i18n="lbl_comp_email">Contact Email</label>
+                                                    <input type="email" id="sett-email" class="form-control">
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label" for="sett-address" data-i18n="lbl_comp_addr">Office / Roastery Address</label>
+                                                <textarea id="sett-address" class="form-control" rows="2"></textarea>
+                                            </div>
+                                            <div class="form-row">
+                                                <div class="form-group">
+                                                    <label class="form-label" for="sett-weight" data-i18n="lbl_comp_weight">Default Weight Unit</label>
+                                                    <select id="sett-weight" class="form-control">
+                                                        <option value="kg">Kilogram (kg)</option>
+                                                        <option value="lbs">Pound (lbs)</option>
+                                                        <option value="g">Gram (g)</option>
+                                                    </select>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="form-label" for="sett-currency" data-i18n="lbl_comp_currency">Currency Symbol</label>
+                                                    <select id="sett-currency" class="form-control">
+                                                        <option value="USD">USD ($)</option>
+                                                        <option value="IDR">IDR (Rp)</option>
+                                                        <option value="SGD">SGD (S$)</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label" for="sett-logo-upload" data-i18n="lbl_comp_logo">Company Logo Image</label>
+                                                <input type="file" id="sett-logo-upload" class="form-control" accept="image/*">
+                                            </div>
+                                            <button type="submit" id="btn-save-settings" class="btn btn-primary" style="width:100%; margin-top:10px;" data-i18n="btn_save_company">Save Settings</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Accordion: Print & Connection -->
+                            <div class="card" style="overflow:hidden;">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(59,130,246,0.12), rgba(59,130,246,0.04)); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                                        </div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">Print & Connection</h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Handover slip layout & printout settings</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        <form id="settings-print-form" onsubmit="event.preventDefault();">
+                                            <div class="form-group">
+                                                <label class="form-label" for="sett-print-title" data-i18n="lbl_print_header">Printout Document Header</label>
+                                                <input type="text" id="sett-print-title" class="form-control" required>
+                                            </div>
+                                            <div class="form-group" style="flex-direction: row; align-items: center; justify-content: space-between; padding: 6px 0;">
+                                                <label class="form-label" for="sett-print-logo" style="margin-bottom: 0;" data-i18n="lbl_print_logo">Show Logo in Printout</label>
+                                                <input type="checkbox" id="sett-print-logo" style="width: 18px; height: 18px; cursor: pointer;">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label" for="sett-print-footer" data-i18n="lbl_print_footer">Printout Footer Notes</label>
+                                                <textarea id="sett-print-footer" class="form-control" rows="3"></textarea>
+                                            </div>
+                                            <button type="submit" id="btn-save-print-settings" class="btn btn-primary" style="width: 100%; margin-top: 10px;" data-i18n="btn_save_print">Save Printing Settings</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div><!-- /max-width wrapper -->
+                    </div><!-- /tab-sett-general -->
+
+                    <!-- ===== TAB: PRODUCTION ===== -->
+                    <div id="tab-sett-production" class="tab-content hidden">
+                        <div style="max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;">
+
+                            <!-- Accordion: Machine Settings -->
+                            <div class="card" style="overflow:hidden;">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(245,158,11,0.12), rgba(245,158,11,0.04)); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 0 1 0 4h-.09c-.658.003-1.25.396-1.51 1z"/></svg>
+                                        </div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">Machine Settings</h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Roasting machines, capacity & batch sizes</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                            <h3 class="card-title" style="margin-bottom: 0;" data-i18n="tab_sett_machines">Machine Settings</h3>
+                                            <button id="btn-add-machine" class="btn btn-primary btn-sm" data-i18n="btn_add_machine">
+                                                <i class="lucide-plus"></i> Add Machine
+                                            </button>
+                                        </div>
+                                        <div class="table-container">
+                                            <table>
+                                                <thead>
+                                                    <tr>
+                                                        <th data-i18n="col_m_name">Machine Name</th>
+                                                        <th data-i18n="col_m_code">Code</th>
+                                                        <th data-i18n="col_m_capacity">Capacity (g)</th>
+                                                        <th data-i18n="col_m_ideal">Ideal Batch Size (g)</th>
+                                                        <th data-i18n="col_action">Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="machines-table-body">
+                                                    <!-- Dynamically loaded roaster machines -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Accordion: Packaging Sizes -->
+                            <div class="card" style="overflow:hidden;">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.04)); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                                        </div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">Packaging Sizes</h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Bag sizes, weights & packing visibility</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                            <h3 class="card-title" style="margin-bottom: 0;" data-i18n="title_packaging_sizes">Packaging Sizes</h3>
+                                            <button id="btn-add-pack-size" class="btn btn-primary btn-sm" data-i18n="btn_add_size">
+                                                <i class="lucide-plus"></i> Add Size
+                                            </button>
+                                        </div>
+                                        <div class="table-container">
+                                            <table>
+                                                <thead>
+                                                    <tr>
+                                                        <th data-i18n="col_size_label">Label / Size Name</th>
+                                                        <th data-i18n="col_size_weight">Weight (grams)</th>
+                                                        <th data-i18n="col_size_show">Show in Packing UI</th>
+                                                        <th data-i18n="col_action">Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="packaging-sizes-table-body">
+                                                    <!-- Dynamically loaded -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Accordion: Minimum Quantities -->
+                            <div class="card" style="overflow:hidden;">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(239,68,68,0.12), rgba(239,68,68,0.04)); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                        </div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">Minimum Quantities</h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Stock alert thresholds & warning levels</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 20px;" data-i18n="desc_min_qty">Set stock thresholds below which the inventory values will be highlighted in red.</p>
+                                        <form id="settings-minqty-form">
+                                            <div class="form-group" style="margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border);">
+                                                <h4 style="margin-top: 0; margin-bottom: 16px;" data-i18n="lbl_greenbeans_production">Greenbeans & Production</h4>
+                                                <div class="form-row">
+                                                    <div class="form-group" style="flex: 1;">
+                                                        <label class="form-label" for="sett-min-greenbean" data-i18n="lbl_min_greenbean">Default Greenbean Min (kg)</label>
+                                                        <input type="number" id="sett-min-greenbean" class="form-control" step="0.1" value="0">
+                                                    </div>
+                                                    <div class="form-group" style="flex: 1;">
+                                                        <label class="form-label" for="sett-min-prod-potential" data-i18n="lbl_min_potential">Production Potential Min (kg)</label>
+                                                        <input type="number" id="sett-min-prod-potential" class="form-control" step="0.1" value="0">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <h4 style="margin-top: 0; margin-bottom: 16px;" data-i18n="lbl_packed_coffee_mins">Packed Coffee Minimums</h4>
+                                                <div id="minqty-packed-sizes-container">
+                                                    <!-- Dynamically populated from active packaging sizes -->
+                                                </div>
+                                            </div>
+                                            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 25px;">
+                                                <button type="submit" class="btn btn-primary" data-i18n="btn_save_minimums">Save Minimums</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Accordion: Label Layout -->
+                            <div class="card" style="overflow:hidden;">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(139,92,246,0.12), rgba(139,92,246,0.04)); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                                        </div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">Label Layout</h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Dimensions & visible fields on labels</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        <form id="settings-label-form">
+                                            <div class="form-row">
+                                                <div class="form-group">
+                                                    <label class="form-label" data-i18n="lbl_label_width">Label Width (mm)</label>
+                                                    <input type="number" id="sett-label-width" class="form-control" min="20" max="150" required value="50">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="form-label" data-i18n="lbl_label_height">Label Height (mm)</label>
+                                                    <input type="number" id="sett-label-height" class="form-control" min="20" max="150" required value="30">
+                                                </div>
+                                            </div>
+                                            <div class="form-group" style="margin-top: 15px;">
+                                                <label class="form-label" style="font-weight: 700;" data-i18n="lbl_show_fields_label">Show Fields on Label:</label>
+                                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+                                                    <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
+                                                        <input type="checkbox" id="sett-label-show-code" checked> <span data-i18n="lbl_batch_code_chk">Batch Code</span>
+                                                    </label>
+                                                    <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
+                                                        <input type="checkbox" id="sett-label-show-coffee" checked> <span data-i18n="lbl_coffee_name_chk">Coffee Name</span>
+                                                    </label>
+                                                    <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
+                                                        <input type="checkbox" id="sett-label-show-date" checked> <span data-i18n="lbl_roast_date_chk">Roast Date</span>
+                                                    </label>
+                                                    <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
+                                                        <input type="checkbox" id="sett-label-show-machine" checked> <span data-i18n="lbl_machine_name_chk">Machine Name</span>
+                                                    </label>
+                                                    <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
+                                                        <input type="checkbox" id="sett-label-show-weight" checked> <span data-i18n="lbl_yield_weight_chk">Yield Weight</span>
+                                                    </label>
+                                                    <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
+                                                        <input type="checkbox" id="sett-label-show-dep" checked> <span data-i18n="lbl_depreciation_pct_chk">Depreciation (%)</span>
+                                                    </label>
+                                                    <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
+                                                        <input type="checkbox" id="sett-label-show-operator" checked> <span data-i18n="lbl_operator_chk">Operator</span>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 25px;">
+                                                <button type="submit" class="btn btn-primary" data-i18n="btn_save_label">Save Label Settings</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div><!-- /max-width wrapper -->
+                    </div><!-- /tab-sett-production -->
+
+                    <!-- ===== TAB: SYSTEM ===== -->
+                    <div id="tab-sett-system" class="tab-content hidden">
+                        <div style="max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;">
+
+                            <!-- Accordion: User Management -->
+                            <div class="card" style="overflow:hidden;">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(6,182,212,0.12), rgba(6,182,212,0.04)); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                        </div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">User Management</h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Account roles, invitations & access control</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                            <h3 class="card-title" style="margin-bottom: 0;" data-i18n="users_title">System Account Roles</h3>
+                                            <button id="btn-invite-user" class="btn btn-primary btn-sm" data-i18n="btn_invite_user">
+                                                <i class="lucide-user-plus"></i> Invite User
+                                            </button>
+                                        </div>
+                                        <div class="table-container">
+                                            <table>
+                                                <thead>
+                                                    <tr>
+                                                        <th data-i18n="col_u_name">Full Name</th>
+                                                        <th data-i18n="col_u_email">Email / Username</th>
+                                                        <th data-i18n="col_u_role">Assigned Role</th>
+                                                        <th data-i18n="col_u_joined">Date Joined</th>
+                                                        <th data-i18n="col_action">Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="users-table-body">
+                                                    <!-- Dynamic rows -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Role & Permissions Card -->
+                            <div class="settings-card" id="card-sett-roles" style="border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 12px;">
+                                <div class="settings-card-header" onclick="toggleSettingsCard(this)" style="display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; cursor: pointer; background: var(--bg-card); transition: background 0.2s;">
+                                    <div style="display: flex; align-items: center; gap: 12px;">
+                                        <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(107, 33, 168, 0.1); display: flex; align-items: center; justify-content: center; font-size: 1.1rem;">🛡️</div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">Role & Permissions</h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Create custom roles with granular access control</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-card-body" style="max-height: 0; overflow: hidden; transition: max-height 0.4s ease;">
+                                    <div style="padding: 18px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                            <span style="font-size: 0.85rem; color: var(--text-secondary);">Manage access roles for your team</span>
+                                            <button id="btn-add-role" class="btn btn-primary btn-sm" style="display: flex; align-items: center; gap: 6px;">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                                Create Role
+                                            </button>
+                                        </div>
+                                        <div id="roles-list-container">
+                                            <!-- Dynamic role cards rendered by JS -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Accordion: Translation Manager -->
+                            <div class="card" style="overflow:hidden;">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(99,102,241,0.12), rgba(99,102,241,0.04)); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                        </div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">Translation Manager</h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Multi-language support & CSV import/export</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 20px;">
+                                            <div>
+                                                <h3 class="card-title" style="margin-bottom: 4px;" data-i18n="title_translation_manager">Translation Manager</h3>
+                                                <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;" data-i18n="desc_translation_manager">Manage translations. Export to Excel/CSV, edit, and import back.</p>
+                                            </div>
+                                            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                                                <button type="button" class="btn btn-secondary btn-sm" onclick="exportTranslationsCSV()" style="display:flex; align-items:center; gap:6px;">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                                    <span data-i18n="btn_export_excel">Export to Excel/CSV</span>
+                                                </button>
+                                                <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('translation-import-file').click()" style="display:flex; align-items:center; gap:6px;">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                                    <span data-i18n="btn_import_excel">Import from Excel/CSV</span>
+                                                </button>
+                                                <input type="file" id="translation-import-file" accept=".csv" style="display:none;" onchange="importTranslationsCSV(event)">
+                                                <button type="button" class="btn btn-danger btn-sm" onclick="resetTranslations()" style="background:transparent; border:1px solid var(--danger); color:var(--danger); display:flex; align-items:center; gap:6px;">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                                                    <span data-i18n="btn_reset_translations">Reset to Defaults</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <!-- Excel Guide Box -->
+                                        <div style="background: rgba(255,193,7,0.08); border-left: 4px solid #ffc107; padding: 12px 16px; border-radius: 4px; margin-bottom: 20px; font-size: 0.82rem; line-height: 1.5; color: var(--text-primary);">
+                                            <strong style="color: #ffc107; display:flex; align-items:center; gap:6px; margin-bottom: 6px;">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                                <span data-i18n="guide_box_title">Excel Editing Rules:</span>
+                                            </strong>
+                                            <ul style="margin: 0; padding-left: 20px;">
+                                                <li data-i18n="guide_box_rule1">Column A (Key): NEVER edit or delete translation keys.</li>
+                                                <li data-i18n="guide_box_rule2">Columns B & C: Edit English and Arabic values freely.</li>
+                                                <li data-i18n="guide_box_rule3">Saving in Excel: Save back as CSV UTF-8 (Comma delimited) (*.csv) to preserve Arabic characters.</li>
+                                            </ul>
+                                            <div style="margin-top: 8px; font-size: 0.8rem; font-style: italic;">
+                                                <span data-i18n="guide_box_footer_prefix">The full guide is available in</span> <a href="file:///C:/Users/Huawei/.gemini/antigravity/scratch/roastery-manager-v2/README_TRANSLATION.md" target="_blank" style="color: var(--primary); text-decoration: underline;">README_TRANSLATION.md</a> <span data-i18n="guide_box_footer_suffix">in the project directory.</span>
+                                            </div>
+                                        </div>
+                                        <!-- Search Filter -->
+                                        <div class="form-group" style="margin-bottom: 16px;">
+                                            <label class="form-label" data-i18n="lbl_search_translation">Search Keys/Texts:</label>
+                                            <input type="text" id="translation-search-input" class="form-control" placeholder="Search key, english, or arabic..." oninput="filterTranslationTable()">
+                                        </div>
+                                        <!-- Scrollable Table -->
+                                        <div class="table-container" style="max-height: 480px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px;">
+                                            <table style="margin: 0; width: 100%;">
+                                                <thead style="position: sticky; top: 0; background: var(--bg-secondary); z-index: 2;">
+                                                    <tr>
+                                                        <th style="width: 25%; font-size: 0.85rem;" data-i18n="col_trans_key">Translation Key</th>
+                                                        <th style="width: 37.5%; font-size: 0.85rem;" data-i18n="col_trans_en">English Value</th>
+                                                        <th style="width: 37.5%; font-size: 0.85rem;" data-i18n="col_trans_ar">Arabic Value</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="translation-manager-table-body">
+                                                    <!-- Dynamic rows filled by app.js -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <!-- Footer Save Button -->
+                                        <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                                            <button type="button" class="btn btn-primary" onclick="saveTranslationsChanges()" data-i18n="btn_save_translations">Save Changes</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Accordion: Debug Tools (Developer Only) -->
+                            <div class="card" id="card-sett-debug" style="overflow:hidden; border: 1px solid rgba(239,68,68,0.2);">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(239,68,68,0.12), rgba(239,68,68,0.04)); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                                        </div>
+                                        <div>
+                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;">🔒 Debug Tools <span style="font-size:0.65rem; background:rgba(239,68,68,0.1); color:#ef4444; padding:1px 6px; border-radius:4px; font-weight:600;">Developer Only</span></h3>
+                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);">Developer utilities, data reset & access key management</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        
+                                        <!-- Developer Key Section -->
+                                        <div style="margin-bottom: 20px; padding: 14px; border: 1px dashed #6b21a8; border-radius: 8px; background: rgba(107, 33, 168, 0.03);">
+                                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                                                <span style="font-size: 1rem;">🔑</span>
+                                                <span style="font-size: 0.85rem; font-weight: 700; color: #6b21a8;">Developer Access Key</span>
+                                            </div>
+                                            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 10px;">This key is used for the hidden developer login on the login page. Change it to secure developer access.</p>
+                                            <div style="display: flex; gap: 8px;">
+                                                <input type="text" id="debug-dev-key" class="form-control" placeholder="Enter developer key" style="font-family: monospace; flex: 1; font-size: 0.85rem;">
+                                                <button id="btn-save-dev-key" class="btn btn-primary btn-sm" style="white-space: nowrap;">Save Key</button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Role Simulator -->
+                                        <div style="margin-bottom: 20px; padding: 14px; border: 1px solid var(--border); border-radius: 8px;">
+                                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                                                <span style="font-size: 1rem;">🎭</span>
+                                                <span style="font-size: 0.85rem; font-weight: 700;">Role Simulator</span>
+                                            </div>
+                                            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 10px;">Switch your active role to test access control. Page will refresh UI based on selected role permissions.</p>
+                                            <div style="display: flex; gap: 8px;">
+                                                <select id="debug-role-switcher" class="form-control" style="flex: 1; font-size: 0.85rem;">
+                                                    <!-- Dynamic options from JS -->
+                                                </select>
+                                                <button id="btn-apply-debug-role" class="btn btn-secondary btn-sm" style="white-space: nowrap;">Apply Role</button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Utility Buttons -->
+                                        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; font-weight: 600;">Diagnostic Tools</p>
+                                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                                            <button id="btn-debug-clear-local" class="btn btn-secondary btn-sm" style="width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;" onclick="if(confirm('Clear all localStorage data? This will reset local settings.')) { localStorage.clear(); alert('localStorage cleared.'); location.reload(); }">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                                Clear localStorage
+                                            </button>
+                                            <button id="btn-debug-reload" class="btn btn-secondary btn-sm" style="width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;" onclick="location.reload()">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                                                Force Reload Page
+                                            </button>
+                                            <button id="btn-debug-check-db" class="btn btn-secondary btn-sm" style="width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;" onclick="alert('Supabase URL: ' + (localStorage.getItem('supabase_url') || 'NOT SET') + '\nKey: ' + (localStorage.getItem('supabase_key') ? '***SET***' : 'NOT SET'))">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                                                Check DB Connection Info
+                                            </button>
+                                            <button id="btn-reset-connection" class="btn btn-danger btn-sm" style="width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+                                                Disconnect from Supabase (Reset Credentials)
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div><!-- /max-width wrapper -->
+                    </div><!-- /tab-sett-system -->
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- COLUMN MULTI-SELECT CHECKBOX FILTER DROPDOWN -->
+    <div id="table-filter-dropdown" class="filter-dropdown-menu hidden" style="position: absolute;">
+        <div class="filter-options-list" id="filter-options-container">
+            <!-- Dynamically populated checkbox list -->
+        </div>
+        <div class="filter-dropdown-actions">
+            <button type="button" class="filter-action-btn" id="btn-filter-clear" data-i18n="btn_filter_clear">Clear</button>
+            <button type="button" class="filter-action-btn" id="btn-filter-select-all" data-i18n="btn_filter_select_all">Select All</button>
+            <button type="button" class="filter-action-btn primary" id="btn-filter-apply" data-i18n="btn_filter_ok">OK</button>
+        </div>
+    </div>
+
+    <!-- DYNAMIC ACTION MODALS CONTAINER -->
+    <div id="modal-container" class="overlay hidden">
+        <div class="overlay-card" style="max-width: 550px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 16px;">
+                <h3 id="modal-title" style="font-size: 1.15rem; font-weight: 700;">Modal Header</h3>
+                <button id="btn-close-modal" style="background: transparent; border: 0; cursor: pointer; color: var(--text-muted); font-size: 1.5rem; line-height: 1;">&times;</button>
+            </div>
+            <div id="modal-body-content">
+                <!-- Content will be injected dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Supabase CDN Script (Global Object) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Translation & I18n Scripts -->
+    <script src="js/translations.js"></script>
+    <script src="js/i18n.js"></script>
+    <!-- App Scripts (Standard JavaScript, works over file:///) -->
+    <script src="js/supabase.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
