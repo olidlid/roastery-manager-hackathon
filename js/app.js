@@ -504,6 +504,11 @@ if (btnApplyDebugRole) {
 function checkAuthentication() {
     if (!checkDatabaseConnection()) return;
     
+    // Re-evaluate isMockMode based on current connection state
+    if (window.isConnected() && localStorage.getItem('is_mock_mode') !== 'true') {
+        isMockMode = false;
+    }
+    
     if (isMockMode) {
         currentUser = { id: 'dev-id', name: 'Lead Developer', role: localStorage.getItem('mock_active_role') || 'Developer' };
         document.getElementById('user-name-lbl').textContent = currentUser.name;
@@ -517,6 +522,21 @@ function checkAuthentication() {
         loadCompanySettings();
         scheduleDashboardRefresh();
     } else {
+        // Listen for auth state changes (handles OAuth redirect)
+        window.supabaseClient.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_IN' && session) {
+                authOverlay.classList.add('hidden');
+                document.getElementById('app-container').style.display = 'flex';
+                loadUserProfile(session.user.id);
+                scheduleDashboardRefresh();
+            } else if (event === 'SIGNED_OUT') {
+                authOverlay.classList.remove('hidden');
+                document.getElementById('app-container').style.display = 'none';
+                currentUser = null;
+            }
+        });
+        
+        // Also check current session
         window.supabaseClient.auth.getSession().then(({ data: { session } }) => {
             if (!session) {
                 authOverlay.classList.remove('hidden');
@@ -525,6 +545,7 @@ function checkAuthentication() {
                 authOverlay.classList.add('hidden');
                 document.getElementById('app-container').style.display = 'flex';
                 loadUserProfile(session.user.id);
+                scheduleDashboardRefresh();
             }
         });
     }
