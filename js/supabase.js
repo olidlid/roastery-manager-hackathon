@@ -57,11 +57,20 @@
         console.log("Supabase connection reset.");
     };
 
-    // Auto-initialize if credentials exist
+    // Auto-initialize if credentials exist (synchronous — must run before app.js reads isMockMode)
     if (supabaseUrl && supabaseKey) {
-        // Wait briefly for supabase global library to be fully ready
-        setTimeout(() => {
-            window.initSupabase(supabaseUrl, supabaseKey);
-        }, 100);
+        try {
+            if (typeof supabase !== 'undefined') {
+                window.supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+                console.log("Supabase Client initialized successfully.");
+            } else {
+                // Fallback: library not ready yet, try after a short delay
+                setTimeout(() => {
+                    window.initSupabase(supabaseUrl, supabaseKey);
+                }, 100);
+            }
+        } catch(e) {
+            console.error("Auto-init failed:", e);
+        }
     }
 })();
