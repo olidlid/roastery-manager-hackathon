@@ -30,7 +30,14 @@
                 return false;
             }
             
-            window.supabaseClient = supabase.createClient(cleanUrl, cleanKey);
+            window.supabaseClient = supabase.createClient(cleanUrl, cleanKey, {
+                auth: {
+                    detectSessionInUrl: true,
+                    autoRefreshToken: true,
+                    persistSession: true,
+                    flowType: 'implicit'
+                }
+            });
             supabaseUrl = cleanUrl;
             supabaseKey = cleanKey;
             
@@ -61,7 +68,14 @@
     if (supabaseUrl && supabaseKey) {
         try {
             if (typeof supabase !== 'undefined') {
-                window.supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+                window.supabaseClient = supabase.createClient(supabaseUrl, supabaseKey, {
+                    auth: {
+                        detectSessionInUrl: true,
+                        autoRefreshToken: true,
+                        persistSession: true,
+                        flowType: 'implicit'
+                    }
+                });
                 console.log("Supabase Client initialized successfully.");
             } else {
                 // Fallback: library not ready yet, try after a short delay
