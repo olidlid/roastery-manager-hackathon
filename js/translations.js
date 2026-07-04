@@ -382,7 +382,8 @@ window.translations = {
         guide_box_rule2: "Columns B & C: Edit English and Arabic values freely.",
         guide_box_rule3: "Saving in Excel: Save back as CSV UTF-8 (Comma delimited) (*.csv) to preserve Arabic characters.",
         guide_box_footer_prefix: "The full guide is available in",
-        guide_box_footer_suffix: "in the project directory."
+        guide_box_footer_suffix: "in the project directory.",
+        msg_no_roast_mtd: "No roasting output this month"
     },
     ar: {
         // Navigation & Sidebar
@@ -766,6 +767,7 @@ window.translations = {
         guide_box_rule2: "العمودان ب و ج: قم بتعديل القيم الإنجليزية والعربية بحرية.",
         guide_box_rule3: "الحفظ في Excel: احفظ الملف بصيغة CSV UTF-8 (بفاصلة محددة) (*.csv) للحفاظ على الحروف العربية.",
         guide_box_footer_prefix: "الدليل الكامل متوفر في ملف",
-        guide_box_footer_suffix: "في مجلد المشروع."
+        guide_box_footer_suffix: "في مجلد المشروع.",
+        msg_no_roast_mtd: "لا يوجد إنتاج تحميص هذا الشهر"
     }
 };

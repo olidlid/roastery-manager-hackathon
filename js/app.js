@@ -2910,6 +2910,18 @@ async function openRoastPlanModal(editId = null) {
                     </select>
                 </div>
             </div>
+            ${editId ? `
+            <div class="form-row" style="margin-top: 15px;">
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select id="m-plan-status" class="form-control">
+                        <option value="Pending">Pending</option>
+                        <option value="In Progress">In Progress</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Cancelled">Cancelled</option>
+                    </select>
+                </div>
+            </div>` : ''}
             
             <div class="form-group" style="margin-top: 15px;">
                 <label class="form-label">Coffee Items to Roast</label>
@@ -2940,6 +2952,12 @@ async function openRoastPlanModal(editId = null) {
         machineSelect.value = existingPlan.machine_id;
     } else if (machines[0]) {
         machineSelect.value = machines[0].id;
+    }
+    
+    // Prefill status on edit
+    const statusSelect = document.getElementById('m-plan-status');
+    if (statusSelect && editId && existingPlan && existingPlan.status) {
+        statusSelect.value = existingPlan.status;
     }
     
     // Add event listener to re-evaluate blend compatibility when machine changes
@@ -3313,7 +3331,7 @@ async function openRoastPlanModal(editId = null) {
                 blend_recipe_id: type === 'Blend' ? id : null,
                 target_roasted_kg: targetWeight,
                 fulfilled_roasted_kg: existingPlan.fulfilled_roasted_kg || 0.0,
-                status: existingPlan.status || 'Pending'
+                status: document.getElementById('m-plan-status') ? document.getElementById('m-plan-status').value : (existingPlan.status || 'Pending')
             };
 
             await saveData('roasting_plans', record);
