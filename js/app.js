@@ -5769,20 +5769,14 @@ async function submitPackingSheet() {
             }
         }
         
-        // Save packing records for history
+        // Save packing records for history (match production schema)
         const packingDate = document.getElementById('packing-date')?.value || new Date().toISOString().split('T')[0];
-        const { data: machines } = await fetchData('machines');
         for (const add of additions) {
-            const mach = (machines || []).find(m => m.id === add.machineId);
-            const machineName = mach ? mach.name : '-';
-            const sizeLbl = add.sizeG >= 1000 ? `${add.sizeG / 1000}kg` : `${add.sizeG}g`;
             await saveData('packing_records', {
                 date: packingDate,
                 coffee_name: `${add.coffeeName} (${add.type})`,
-                machine_name: machineName,
                 machine_id: add.machineId,
                 bag_size_g: add.sizeG,
-                size_label: sizeLbl,
                 quantity: add.qty
             });
         }
@@ -8263,13 +8257,32 @@ async function loadPackagingSizesTable() {
     if (!tbody) return;
     tbody.innerHTML = '';
     
-    const { data: sizes } = await fetchData('packaging_sizes');
+    const { data: sizes, error: fetchErr } = await fetchData('packaging_sizes');
+    console.log('[PackagingSize] fetchData result:', { sizes, fetchErr });
+    
+    if (fetchErr) {
+        console.error('[PackagingSize] Fetch error:', fetchErr);
+        // Force direct fetch bypassing cache
+        try {
+            const { data: directData } = await window.supabaseClient.from('packaging_sizes').select('id, label, gram, is_visible');
+            console.log('[PackagingSize] Direct fetch result:', directData);
+            if (directData && directData.length > 0) {
+                renderPackagingSizesRows(tbody, directData);
+                return;
+            }
+        } catch(e) { console.error('[PackagingSize] Direct fetch also failed:', e); }
+    }
+
     if (!sizes || sizes.length === 0) {
         tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No packaging sizes found.</td></tr>`;
         return;
     }
     
-    sizes.sort((a,b) => a.gram - b.gram).forEach(s => {
+    renderPackagingSizesRows(tbody, sizes);
+}
+
+function renderPackagingSizesRows(tbody, sizes) {
+    sizes.sort((a,b) => (parseFloat(a.gram)||0) - (parseFloat(b.gram)||0)).forEach(s => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td><strong>${s.label}</strong></td>
