@@ -7698,6 +7698,8 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
                         user_name: email.split('@')[0]
                     }
                 }
+            });
+
             if (error) {
                 console.error("Supabase SignUp Error:", error);
                 let msg = error.message;
