@@ -171,3 +171,27 @@ Exact keys live in each role's `permissions` object in `custom_roles` (seeded fr
 - `index.html` cache-busts `js/app.js` with a `?v=` query param (`js/app.js?v=2`); bump it when shipping a change so browsers don't serve a stale cached copy.
 - Any new user-facing string needs a `data-i18n`/`t()` key added to *both* `en` and `ar` in `js/translations.js` — see `.agents/AGENTS.md` for the localization/RTL/theming rules enforced in this repo (no hardcoded English text, no hardcoded colors, always null-check DOM elements before attaching listeners).
 - `js/supabase.js` is shared by both `index.html` and `leader.html` — changes to Supabase client init affect both apps (and the Capacitor Android build in `dist/`, which must be kept in sync manually).
+
+---
+
+## Deployment Checklist
+
+**Before pushing code to main / deploying to production:**
+
+- [ ] **Syntax:** `node --check js/app.js` passes
+- [ ] **Schema alignment:** Code changes match `database/supabase_schema.sql` (or production schema if ahead)
+- [ ] **Hard refresh testing:** Hard refresh app (`Ctrl+Shift+R`), test changed features end-to-end
+- [ ] **Documentation:** Schema file updated if any DB columns added/removed
+- [ ] **Error handling:** New data mutations (saveData) check `error` and alert on failure (don't fail silently)
+- [ ] **Cache busting:** If JS changes shipped, bump `app.js?v=X` in `index.html` so browsers load fresh copy
+
+**Schema Sync (Critical):**
+- **Single source of truth:** `database/supabase_schema.sql` must reflect production schema
+- **Before merge:** Code must match schema; if schema and code diverge, update both in same PR
+- **Before deploy:** Verify production schema = file schema (or run migrations if ahead)
+- **Lesson:** All 6 bugs in July 2026 session were schema mismatches between development file and production DB
+
+**Rollout:**
+- After push to main, wait for Vercel deployment to complete (check dashboard — status should be "Ready")
+- Hard refresh app and test again to ensure new code is live
+- Monitor browser console for errors on first user interactions with new features
