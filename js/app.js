@@ -10751,7 +10751,7 @@ function toggleSettingsCard(headerEl) {
             return;
         }
         
-        if (e.key.length === 1) { // printable character
+        if (e.key && e.key.length === 1) { // printable character
             if (now - lastKeyTime > 200) {
                 barcodeBuffer = ''; // reset if too slow (manual typing)
             }
