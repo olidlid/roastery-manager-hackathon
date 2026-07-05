@@ -101,6 +101,7 @@ const MOCK_DB = {
                 packing_view: true, packing_daily: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
                 sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
+                customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
                 reports_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
                 user_management: true
@@ -119,6 +120,7 @@ const MOCK_DB = {
                 packing_view: true, packing_daily: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
                 sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
+                customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
                 reports_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
                 user_management: true
@@ -137,6 +139,7 @@ const MOCK_DB = {
                 packing_view: true, packing_daily: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
                 sales_request_view: true, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
+                customer_view: true, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: true,
                 settings_general: false, settings_production: true, settings_system: false,
                 user_management: false
@@ -155,6 +158,7 @@ const MOCK_DB = {
                 packing_view: false, packing_daily: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false,
                 sales_request_view: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
+                customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false
@@ -173,6 +177,7 @@ const MOCK_DB = {
                 packing_view: true, packing_daily: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
                 sales_request_view: true, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
+                customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false
@@ -191,6 +196,7 @@ const MOCK_DB = {
                 packing_view: false, packing_daily: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false,
                 sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
+                customer_view: true, customer_add: true, customer_edit: true, customer_delete: false,
                 reports_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false
@@ -414,7 +420,7 @@ function applyRoleAccess() {
         'sec-greenbean': 'greenbean_view',
         'sec-roasting': 'roasting_view',
         'sec-packing': 'packing_view',
-        'sec-customers': ['sales_request_view'],
+        'sec-customers': ['customer_view'],
         'sec-handover': ['sales_request_view', 'dispatch_approval_view'],
         'sec-reports': 'reports_view',
         'sec-settings': ['settings_general', 'settings_production', 'settings_system'],
@@ -7698,6 +7704,12 @@ const PERMISSION_GROUPS = [
         { key: 'dispatch_approval_approve', label: 'Approve Order' },
         { key: 'dispatch_approval_dispatch', label: 'Dispatch Order' },
         { key: 'dispatch_approval_print', label: 'Print Waybill' }
+    ]},
+    { label: '👥 Customers', keys: [
+        { key: 'customer_view', label: 'View Customers' },
+        { key: 'customer_add', label: 'Add Customer' },
+        { key: 'customer_edit', label: 'Edit Customer' },
+        { key: 'customer_delete', label: 'Delete Customer' }
     ]},
     { label: '📈 Reports', keys: [{ key: 'reports_view', label: 'View Reports' }] },
     { label: '⚙️ Settings', keys: [
