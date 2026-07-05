@@ -7698,10 +7698,13 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
                         user_name: email.split('@')[0]
                     }
                 }
-            });
-
             if (error) {
-                alert("Registration failed: " + (error.message || JSON.stringify(error)));
+                console.error("Supabase SignUp Error:", error);
+                let msg = error.message;
+                if (!msg || msg === '{}' || JSON.stringify(error) === '{}') {
+                    msg = "Pastikan email ini belum pernah terdaftar sebelumnya, dan fitur 'Enable Signups' menyala di dashboard Supabase.";
+                }
+                alert("Registration failed: " + msg);
                 return;
             }
 
