@@ -7625,22 +7625,30 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
         `<option value="${r.name}">${r.name}</option>`
     ).join('');
 
+    const passwordFieldHtml = !isMockMode ? `
+        <div class="form-group" style="margin-top: 12px;">
+            <label class="form-label">Initial Password</label>
+            <input type="password" id="m-inv-pass" class="form-control" placeholder="Minimum 6 characters" required minlength="6">
+        </div>
+    ` : '';
+
     const html = `
         <form id="modal-invite-form">
             <div class="form-group">
                 <label class="form-label">Full Name</label>
                 <input type="text" id="m-inv-name" class="form-control" placeholder="e.g. Alice Roaster" required>
             </div>
-            <div class="form-group">
-                <label class="form-label">Username / Email</label>
-                <input type="text" id="m-inv-user" class="form-control" placeholder="e.g. alice@roastery.com" required>
+            <div class="form-group" style="margin-top: 12px;">
+                <label class="form-label">Email Address</label>
+                <input type="email" id="m-inv-user" class="form-control" placeholder="e.g. alice@roastery.com" required>
             </div>
-            <div class="form-group">
+            ${passwordFieldHtml}
+            <div class="form-group" style="margin-top: 12px;">
                 <label class="form-label">Assigned Work Role</label>
                 <select id="m-inv-role" class="form-control">${roleOptionsHtml}</select>
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 25px;">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Create Account</button>
             </div>
@@ -7651,17 +7659,63 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
 
     document.getElementById('modal-invite-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const record = {
-            id: 'mock-' + Math.random().toString(36).substr(2, 9),
-            name: document.getElementById('m-inv-name').value,
-            username: document.getElementById('m-inv-user').value,
-            role: document.getElementById('m-inv-role').value,
-            created_at: new Date().toISOString()
-        };
+        
+        const name = document.getElementById('m-inv-name').value;
+        const email = document.getElementById('m-inv-user').value;
+        const role = document.getElementById('m-inv-role').value;
 
-        await saveData('profiles', record);
-        modalContainer.classList.add('hidden');
-        loadUsersSection();
+        if (isMockMode) {
+            const record = {
+                id: 'mock-' + Math.random().toString(36).substr(2, 9),
+                name: name,
+                username: email,
+                role: role,
+                created_at: new Date().toISOString()
+            };
+
+            await saveData('profiles', record);
+            modalContainer.classList.add('hidden');
+            loadUsersSection();
+        } else {
+            const password = document.getElementById('m-inv-pass').value;
+            
+            // 1. Sign up the user in Supabase auth
+            const { data, error } = await window.supabaseClient.auth.signUp({
+                email: email,
+                password: password,
+                options: {
+                    data: {
+                        full_name: name,
+                        user_name: email.split('@')[0]
+                    }
+                }
+            });
+
+            if (error) {
+                alert("Registration failed: " + error.message);
+                return;
+            }
+
+            // 2. Wait a split second for trigger to insert into profiles, then update role
+            if (data.user) {
+                setTimeout(async () => {
+                    const { error: profileError } = await window.supabaseClient
+                        .from('profiles')
+                        .update({ role: role })
+                        .eq('id', data.user.id);
+                    if (profileError) {
+                        console.error("Failed to update role in profile:", profileError);
+                    }
+                    loadUsersSection();
+                }, 800);
+            }
+
+            alert("Operator account created successfully!" + 
+                  "\nNote: If email confirmation is enabled in your Supabase Dashboard, the user must click the confirmation link in their email inbox before they can sign in.");
+            
+            modalContainer.classList.add('hidden');
+            loadUsersSection();
+        }
     });
 });
 
