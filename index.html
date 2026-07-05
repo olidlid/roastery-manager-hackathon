@@ -91,9 +91,14 @@
                     <label class="form-label" for="config-key" data-i18n="lbl_supabase_key">Supabase API Anon Key</label>
                     <input type="text" id="config-key" class="form-control" placeholder="eyJhbGciOi..." required>
                 </div>
-                <button type="submit" id="btn-save-config" class="btn btn-primary" style="width: 100%; margin-top: 10px;" data-i18n="db_btn">
-                    Connect Database
-                </button>
+                <div style="display: flex; gap: 12px; margin-top: 15px;">
+                    <button type="button" id="btn-cancel-config" class="btn btn-secondary" style="flex: 1;">
+                        Cancel
+                    </button>
+                    <button type="submit" id="btn-save-config" class="btn btn-primary" style="flex: 2;" data-i18n="db_btn">
+                        Connect Database
+                    </button>
+                </div>
             </form>
         </div>
     </div>
@@ -155,6 +160,13 @@
             <button id="link-dev-login" class="btn btn-secondary" style="width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; padding: 10px; font-size: 0.85rem;">
                 🧪 Enter Demo Mode (No Login Required)
             </button>
+
+            <!-- Database Config Trigger -->
+            <div style="text-align: center; margin-top: 14px;">
+                <a href="#" id="link-show-db-config" style="font-size: 0.8rem; color: var(--primary); text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                    ⚙️ Setup Database Connection (Supabase)
+                </a>
+            </div>
 
             <!-- Hidden Developer Panel -->
             <div id="dev-login-panel" class="hidden" style="margin-top: 16px; padding: 16px; border: 1.5px dashed #6b21a8; border-radius: 8px; background: rgba(107, 33, 168, 0.05);">

@@ -8448,6 +8448,20 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     }
 });
 
+// --- SHOW DATABASE CONFIG OVERLAY ---
+document.getElementById('link-show-db-config').addEventListener('click', (e) => {
+    e.preventDefault();
+    configOverlay.classList.remove('hidden');
+    authOverlay.classList.add('hidden');
+});
+
+// --- CANCEL DATABASE CONFIG OVERLAY ---
+document.getElementById('btn-cancel-config').addEventListener('click', (e) => {
+    e.preventDefault();
+    configOverlay.classList.add('hidden');
+    authOverlay.classList.remove('hidden');
+});
+
 // --- DATABASE CONNECTION SETUP SUBMISSION ---
 document.getElementById('config-form').addEventListener('submit', (e) => {
     e.preventDefault();
