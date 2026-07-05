@@ -10,6 +10,8 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.344.0/font/lucide.min.css">
     <!-- Chart.js CDN for Analytics -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- JsBarcode CDN for Barcode Scanner -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
     <style>
         .hidden { display: none !important; }
     </style>
@@ -1729,6 +1731,34 @@
                                                 <button type="submit" class="btn btn-primary" data-i18n="btn_save_label">Save Label Settings</button>
                                             </div>
                                         </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Accordion: Barcode Labels -->
+                            <div class="card" style="overflow:hidden;">
+                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <div style="width:36px; height:36px; border-radius:8px; background:var(--primary-light); display:flex; align-items:center; justify-content:center;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="16"/></svg>
+                                        </div>
+                                        <div>
+                                            <h4 style="margin:0; font-size:0.95rem;">Barcode Labels</h4>
+                                            <p style="margin:0; font-size:0.78rem; color:var(--text-muted);">Generate & print barcode labels for roasting</p>
+                                        </div>
+                                    </div>
+                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
+                                </div>
+                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
+                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+                                            Print all barcode labels for every coffee × machine combination on A4 pages.
+                                            Each barcode encodes the coffee type and machine for quick roast log scanning.
+                                        </p>
+                                        <button class="btn btn-primary" onclick="printAllBarcodes()" style="display: inline-flex; align-items: center; gap: 8px;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                                            Print All Barcode Labels (A4)
+                                        </button>
                                     </div>
                                 </div>
                             </div>

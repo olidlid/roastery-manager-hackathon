@@ -1479,6 +1479,9 @@ async function loadGreenbeanInventory() {
                 <button class="btn btn-danger btn-sm btn-delete-greenbean" data-id="${bean.id}" data-name="${bean.name}" style="margin-left: 4px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                 </button>
+                <button class="btn btn-secondary btn-sm btn-barcode-gb" data-id="${bean.id}" data-name="${bean.name}" title="Generate Barcodes" style="margin-left: 4px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="16"/></svg>
+                </button>
             </td>
         `;
         tbody.appendChild(tr);
@@ -1494,6 +1497,13 @@ async function loadGreenbeanInventory() {
             await deleteData('green_coffee', id);
             await loadGreenbeanInventory();
             scheduleDashboardRefresh();
+        });
+    });
+
+    // Wire barcode buttons for green coffee
+    document.querySelectorAll('.btn-barcode-gb').forEach(btn => {
+        btn.addEventListener('click', () => {
+            showBarcodeLabels('Single', parseInt(btn.dataset.id), btn.dataset.name);
         });
     });
 
@@ -2284,6 +2294,7 @@ async function loadBlendRecipes() {
             <td style="vertical-align: middle;">
                 <button class="btn btn-secondary btn-sm btn-edit-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
                 <button class="btn btn-danger btn-sm btn-delete-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+                <button class="btn btn-secondary btn-sm btn-barcode-recipe" data-id="${recipe.id}" data-name="${recipe.name}" title="Generate Barcodes" style="margin-left: 4px;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="16"/></svg></button>
             </td>
         `;
         
@@ -2304,6 +2315,13 @@ async function loadBlendRecipes() {
             btnDelete.addEventListener('click', (e) => {
                 e.stopPropagation();
                 deleteRecipe(recipe.id);
+            });
+        }
+        const btnBarcode = tr.querySelector('.btn-barcode-recipe');
+        if (btnBarcode) {
+            btnBarcode.addEventListener('click', (e) => {
+                e.stopPropagation();
+                showBarcodeLabels('Blend', recipe.id, recipe.name);
             });
         }
         
@@ -10705,5 +10723,463 @@ function toggleSettingsCard(headerEl) {
         body.style.maxHeight = body.scrollHeight + 'px';
         chevron.style.transform = 'rotate(180deg)';
     }
+}
+
+// ==========================================================================
+// GLOBAL BARCODE SCANNER LISTENER
+// ==========================================================================
+(function() {
+    let barcodeBuffer = '';
+    let lastKeyTime = 0;
+    const BARCODE_THRESHOLD = 50; // ms between keystrokes for barcode vs manual
+    const BARCODE_MIN_LENGTH = 8; // minimum barcode length
+    
+    document.addEventListener('keydown', (e) => {
+        // Don't intercept if user is typing in an input/textarea
+        const tag = (e.target.tagName || '').toLowerCase();
+        const isInputField = tag === 'input' || tag === 'textarea' || tag === 'select';
+        
+        const now = Date.now();
+        
+        if (e.key === 'Enter') {
+            if (barcodeBuffer.length >= BARCODE_MIN_LENGTH && barcodeBuffer.startsWith('RMP:')) {
+                e.preventDefault();
+                e.stopPropagation();
+                handleBarcodeScan(barcodeBuffer);
+            }
+            barcodeBuffer = '';
+            return;
+        }
+        
+        if (e.key.length === 1) { // printable character
+            if (now - lastKeyTime > 200) {
+                barcodeBuffer = ''; // reset if too slow (manual typing)
+            }
+            barcodeBuffer += e.key;
+            lastKeyTime = now;
+        }
+    });
+})();
+
+async function handleBarcodeScan(barcode) {
+    // Parse barcode: RMP:Single:5:2 or RMP:Blend:3:1
+    const parts = barcode.split(':');
+    if (parts.length !== 4 || parts[0] !== 'RMP') {
+        alert('Invalid barcode format: ' + barcode);
+        return;
+    }
+    
+    const [prefix, coffeeType, coffeeIdStr, machineIdStr] = parts;
+    const coffeeId = parseInt(coffeeIdStr);
+    const machineId = parseInt(machineIdStr);
+    
+    // Open the quick roast form
+    await openQuickRoastModal(coffeeType, coffeeId, machineId);
+}
+
+// ==========================================================================
+// QUICK ROAST MODAL (Barcode Scan)
+// ==========================================================================
+async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
+    // Fetch required data
+    const { data: greenbeans } = await fetchData('green_coffee');
+    const { data: recipes } = await fetchData('blend_recipes');
+    const { data: machines } = await fetchData('machines');
+    const { data: batches } = await fetchData('roast_batches');
+    const { data: ingredients } = await fetchData('blend_ingredients');
+    
+    // Lookup coffee name
+    let coffeeName = 'Unknown';
+    let coffeeVal = '';
+    let defaultGreenWeight = 5000;
+    
+    if (coffeeType === 'Single') {
+        const gb = (greenbeans || []).find(g => g.id === coffeeId);
+        if (gb) {
+            coffeeName = gb.name;
+            coffeeVal = `Single-${coffeeId}`;
+        }
+    } else {
+        const rec = (recipes || []).find(r => r.id === coffeeId);
+        if (rec) {
+            coffeeName = rec.name;
+            coffeeVal = `Blend-${coffeeId}`;
+            if (rec.batch_size_g) defaultGreenWeight = rec.batch_size_g;
+        }
+    }
+    
+    // Lookup machine
+    const machine = (machines || []).find(m => m.id === machineId);
+    const machineName = machine ? machine.name : 'Unknown';
+    if (machine && machine.ideal_batch_g) defaultGreenWeight = machine.ideal_batch_g;
+    
+    // Build same form as openBatchLogModal but auto-filled
+    const gbSelectOpts = (greenbeans || []).map(g => `<option value="Single-${g.id}" ${g.id === coffeeId && coffeeType === 'Single' ? 'selected' : ''}>${g.name}</option>`).join('');
+    const recSelectOpts = (recipes || []).map(r => `<option value="Blend-${r.id}" ${r.id === coffeeId && coffeeType === 'Blend' ? 'selected' : ''}>${r.name}</option>`).join('');
+    const machOpts = (machines || []).map(m => `<option value="${m.id}" ${m.id === machineId ? 'selected' : ''}>${m.name}</option>`).join('');
+    
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    const html = `
+        <form id="modal-batch-form">
+            <div style="background: var(--primary-light); color: var(--primary); padding: 8px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="16"/></svg>
+                <strong>Quick Scan Mode</strong> — ${coffeeName} on ${machineName}
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Batch Code</label>
+                    <input type="text" id="m-bat-code" class="form-control" value="" readonly style="background:var(--border);">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" id="m-bat-date" class="form-control" value="${todayStr}" required>
+                </div>
+            </div>
+            <div class="form-row" style="margin-top: 15px;">
+                <div class="form-group">
+                    <label class="form-label">Roaster Machine</label>
+                    <select id="m-bat-machine" class="form-control" required>
+                        ${machOpts}
+                    </select>
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; flex-direction: column; justify-content: flex-end; padding-bottom: 2px;">
+                    <label style="width:100%; font-size:0.82rem; font-weight:600; color:var(--text-muted); margin-bottom:8px;">Options</label>
+                    <div style="display:flex; gap:20px; align-items:center; width:100%;">
+                        <label class="checkbox-container" style="display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; color: var(--text-main); white-space:nowrap;">
+                            <input type="checkbox" id="m-bat-test" style="width: 18px; height: 18px; cursor: pointer;">
+                            Batch Test
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="form-row" style="align-items: flex-end; gap: 15px; margin-top: 15px;">
+                <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                    <label class="form-label">Coffee</label>
+                    <select id="m-bat-coffee" class="form-control" required>
+                        <option value="" disabled>-- Select Coffee --</option>
+                        <optgroup label="Single Origin">
+                            ${gbSelectOpts}
+                        </optgroup>
+                        <optgroup label="Blend Recipes">
+                            ${recSelectOpts}
+                        </optgroup>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row" style="margin-top: 15px;">
+                <div class="form-group">
+                    <label class="form-label">Greenbean Weight (gram)</label>
+                    <input type="number" step="1" id="m-bat-greenbean" class="form-control" value="${defaultGreenWeight}" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" style="color:var(--primary); font-weight:700;">Roasted Weight (gram) ← INPUT HERE</label>
+                    <input type="number" step="1" id="m-bat-roasted" class="form-control" required style="border: 2px solid var(--primary); font-weight: 700; font-size: 1.1rem;">
+                </div>
+            </div>
+            <div class="form-row" style="margin-top: 15px;">
+                <div class="form-group" style="flex: 1;">
+                    <label class="form-label">Depreciation (%)</label>
+                    <input type="text" id="m-bat-depreciation" class="form-control" style="background:var(--border); font-weight:700; color:var(--warning);" readonly value="0.0%">
+                </div>
+            </div>
+            <div class="form-group" style="margin-top: 15px;">
+                <label class="form-label">Notes</label>
+                <textarea id="m-bat-notes" class="form-control" rows="2" placeholder="First crack timings, end temperature, etc."></textarea>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 25px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                <button type="submit" class="btn btn-primary">ROASTED!!</button>
+            </div>
+        </form>
+    `;
+    
+    openModal('⚡ Quick Roast Log (Barcode Scan)', html);
+    
+    const batchCodeInput = document.getElementById('m-bat-code');
+    const dateInput = document.getElementById('m-bat-date');
+    const machineSelect = document.getElementById('m-bat-machine');
+    const coffeeSelect = document.getElementById('m-bat-coffee');
+    const greenbeanWeightInput = document.getElementById('m-bat-greenbean');
+    const roastedWeightInput = document.getElementById('m-bat-roasted');
+    const depreciationInput = document.getElementById('m-bat-depreciation');
+    
+    // Auto-generate batch code
+    async function generateCode() {
+        const cv = coffeeSelect.value;
+        const mid = machineSelect.value;
+        if (!cv || !mid) return;
+        const [cType, cIdStr] = cv.split('-');
+        const cId = parseInt(cIdStr);
+        let coffeeCode = 'COF';
+        if (cType === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === cId);
+            if (gb) coffeeCode = gb.code || gb.name.slice(0, 3).toUpperCase();
+        } else {
+            const r = (recipes || []).find(rec => rec.id === cId);
+            if (r) coffeeCode = r.code || r.name.slice(0, 3).toUpperCase();
+        }
+        const mach = (machines || []).find(m => m.id === parseInt(mid));
+        const machineCode = mach ? (mach.code || mach.name.slice(0, 2).toUpperCase()) : 'M';
+        const d = dateInput.value ? new Date(dateInput.value) : new Date();
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const datePart = `${dd}${mm}`;
+        let maxSeq = 0;
+        const regex = /^([^-]+)-([A-Za-z0-9]+?)(\d{4})-(\d+)$/;
+        (batches || []).forEach(b => {
+            if (b.batch_code) {
+                const match = b.batch_code.match(regex);
+                if (match && match[1] === coffeeCode && match[3] === datePart) {
+                    const s = parseInt(match[4]); if (s > maxSeq) maxSeq = s;
+                }
+            }
+        });
+        batchCodeInput.value = `${coffeeCode}-${machineCode}${datePart}-${maxSeq + 1}`;
+    }
+    generateCode();
+    
+    // Auto-calculate depreciation
+    function calcDepreciation() {
+        const gw = parseFloat(greenbeanWeightInput.value) || 0;
+        const rw = parseFloat(roastedWeightInput.value) || 0;
+        if (gw > 0 && rw > 0) {
+            const pct = ((gw - rw) / gw) * 100;
+            depreciationInput.value = pct.toFixed(1) + '%';
+        } else {
+            depreciationInput.value = '0.0%';
+        }
+    }
+    greenbeanWeightInput.addEventListener('input', calcDepreciation);
+    roastedWeightInput.addEventListener('input', calcDepreciation);
+    
+    // Focus on roasted weight field after a short delay
+    setTimeout(() => {
+        roastedWeightInput.focus();
+    }, 300);
+    
+    // Form submit - reuse the same save logic
+    document.getElementById('modal-batch-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const code = batchCodeInput.value;
+        const roastDate = dateInput.value;
+        const mId = parseInt(machineSelect.value);
+        const cv = coffeeSelect.value;
+        const inputKg = parseFloat(greenbeanWeightInput.value) / 1000;
+        const outputKg = parseFloat(roastedWeightInput.value) / 1000;
+        const isTest = document.getElementById('m-bat-test').checked;
+        const notes = document.getElementById('m-bat-notes').value;
+        
+        if (!cv || !roastDate || !greenbeanWeightInput.value || !roastedWeightInput.value) {
+            alert('Please fill all required fields');
+            return;
+        }
+        
+        const [type, idStr] = cv.split('-');
+        const id = parseInt(idStr);
+        const singleId = type === 'Single' ? id : null;
+        const blendId = type === 'Blend' ? id : null;
+        
+        // Deduct greenbean stock
+        if (type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === id);
+            if (gb) {
+                gb.stock_kg = Math.max(0, parseFloat(gb.stock_kg || 0) - inputKg);
+                await saveData('green_coffee', gb);
+            }
+        } else {
+            const recipeIngs = (ingredients || []).filter(ing => ing.blend_recipe_id === blendId);
+            for (const ing of recipeIngs) {
+                const gb = (greenbeans || []).find(g => g.id === ing.green_coffee_id);
+                if (gb) {
+                    const req = (parseFloat(ing.percentage) / 100) * inputKg;
+                    gb.stock_kg = Math.max(0, parseFloat(gb.stock_kg || 0) - req);
+                    await saveData('green_coffee', gb);
+                }
+            }
+        }
+        
+        const qcStatus = isTest ? 'Pending' : 'Success';
+        
+        const record = {
+            batch_code: code,
+            roast_date: roastDate,
+            roast_type: isTest ? 'Test' : 'Regular',
+            qc_status: qcStatus,
+            coffee_type: type,
+            single_coffee_id: singleId,
+            blend_recipe_id: blendId,
+            machine_id: mId,
+            roasting_plan_id: null,
+            input_weight_kg: inputKg,
+            output_weight_kg: outputKg,
+            yield_percentage: (outputKg / inputKg) * 100,
+            remaining_bulk_kg: qcStatus === 'Success' ? outputKg : 0.0,
+            roaster_operator: currentUser ? currentUser.name : 'Operator',
+            notes: notes
+        };
+        
+        const { error } = await saveData('roast_batches', record);
+        if (error) {
+            alert('Failed to save batch: ' + error.message);
+            return;
+        }
+        
+        // Show success toast
+        const toast = document.createElement('div');
+        toast.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#16a34a; color:white; padding:12px 20px; border-radius:8px; font-weight:700; z-index:99999; box-shadow:0 4px 12px rgba(0,0,0,0.3); animation: fadeIn 0.3s;';
+        toast.textContent = `✅ Batch ${code} saved! Ready for next scan.`;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+        
+        // Close modal
+        document.getElementById('btn-close-modal').click();
+        
+        // Refresh if on roasting page
+        if (!document.getElementById('sec-roasting')?.classList.contains('hidden')) {
+            loadSectionData('sec-roasting');
+        }
+    });
+}
+
+// ==========================================================================
+// BARCODE GENERATOR
+// ==========================================================================
+
+async function showBarcodeLabels(coffeeType, coffeeId, coffeeName) {
+    const { data: machines } = await fetchData('machines');
+    if (!machines || machines.length === 0) {
+        alert('No machines configured. Please add machines in Settings first.');
+        return;
+    }
+    
+    let labelsHtml = '<div style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: center;">';
+    
+    machines.forEach((m, idx) => {
+        const barcodeValue = `RMP:${coffeeType}:${coffeeId}:${m.id}`;
+        labelsHtml += `
+            <div style="border: 2px dashed var(--border); border-radius: 8px; padding: 16px; text-align: center; min-width: 220px;">
+                <svg id="barcode-label-${idx}"></svg>
+                <div style="margin-top: 8px; font-weight: 700; font-size: 0.9rem;">${coffeeName}</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">🏭 ${m.name}</div>
+                <button class="btn btn-secondary btn-sm" style="margin-top: 8px;" onclick="printSingleBarcode('${barcodeValue}', '${coffeeName.replace(/'/g, "\\'")}', '${m.name.replace(/'/g, "\\'")}')">
+                    🖨️ Print
+                </button>
+            </div>
+        `;
+    });
+    labelsHtml += '</div>';
+    
+    openModal(`🏷️ Barcodes: ${coffeeName}`, labelsHtml, '700px');
+    
+    // Render barcodes after modal opens
+    setTimeout(() => {
+        machines.forEach((m, idx) => {
+            const barcodeValue = `RMP:${coffeeType}:${coffeeId}:${m.id}`;
+            const el = document.getElementById(`barcode-label-${idx}`);
+            if (el && typeof JsBarcode !== 'undefined') {
+                JsBarcode(el, barcodeValue, {
+                    format: 'CODE128',
+                    width: 1.5,
+                    height: 50,
+                    displayValue: true,
+                    fontSize: 11,
+                    margin: 5
+                });
+            }
+        });
+    }, 200);
+}
+
+function printSingleBarcode(barcodeValue, coffeeName, machineName) {
+    const printWin = window.open('', '_blank', 'width=400,height=300');
+    printWin.document.write(`
+        <html><head><title>Barcode Label</title>
+        <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+        <style>
+            body { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; margin:0; font-family: Arial, sans-serif; }
+            .label { text-align:center; padding: 10px; }
+            .name { font-weight:700; font-size: 14px; margin-top: 5px; }
+            .machine { font-size: 12px; color: #666; }
+            @media print { body { margin: 0; } }
+        </style></head><body>
+        <div class="label">
+            <svg id="bc"></svg>
+            <div class="name">${coffeeName}</div>
+            <div class="machine">🏭 ${machineName}</div>
+        </div>
+        <script>
+            JsBarcode('#bc', '${barcodeValue}', { format: 'CODE128', width: 2, height: 60, displayValue: true, fontSize: 12, margin: 5 });
+            setTimeout(() => { window.print(); }, 500);
+        <\/script>
+        </body></html>
+    `);
+    printWin.document.close();
+}
+
+async function printAllBarcodes() {
+    const { data: greenbeans } = await fetchData('green_coffee');
+    const { data: recipes } = await fetchData('blend_recipes');
+    const { data: machines } = await fetchData('machines');
+    
+    if (!machines || machines.length === 0) {
+        alert('No machines configured.');
+        return;
+    }
+    
+    let allLabels = '';
+    
+    // Singles
+    (greenbeans || []).forEach(g => {
+        (machines || []).forEach(m => {
+            const barcodeValue = `RMP:Single:${g.id}:${m.id}`;
+            allLabels += `
+                <div class="label-item">
+                    <svg class="bc" data-value="${barcodeValue}"></svg>
+                    <div class="name">${g.name}</div>
+                    <div class="machine">🏭 ${m.name}</div>
+                </div>
+            `;
+        });
+    });
+    
+    // Blends
+    (recipes || []).forEach(r => {
+        (machines || []).forEach(m => {
+            const barcodeValue = `RMP:Blend:${r.id}:${m.id}`;
+            allLabels += `
+                <div class="label-item">
+                    <svg class="bc" data-value="${barcodeValue}"></svg>
+                    <div class="name">${r.name}</div>
+                    <div class="machine">🏭 ${m.name}</div>
+                </div>
+            `;
+        });
+    });
+    
+    const printWin = window.open('', '_blank', 'width=800,height=600');
+    printWin.document.write(`
+        <html><head><title>All Barcode Labels</title>
+        <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+        <style>
+            @page { size: A4; margin: 10mm; }
+            body { margin: 0; padding: 10mm; font-family: Arial, sans-serif; }
+            .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+            .label-item { text-align: center; border: 1px dashed #ccc; padding: 8px; page-break-inside: avoid; }
+            .name { font-weight: 700; font-size: 11px; margin-top: 3px; }
+            .machine { font-size: 10px; color: #666; }
+            svg { max-width: 100%; }
+        </style></head><body>
+        <div class="grid">${allLabels}</div>
+        <script>
+            document.querySelectorAll('.bc').forEach(el => {
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.2, height: 40, displayValue: true, fontSize: 9, margin: 3 });
+            });
+            setTimeout(() => { window.print(); }, 800);
+        <\/script>
+        </body></html>
+    `);
+    printWin.document.close();
 }
 
