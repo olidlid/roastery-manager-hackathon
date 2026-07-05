@@ -107,11 +107,9 @@
     <div id="auth-overlay" class="overlay hidden">
         <div class="overlay-card" style="max-width: 420px; padding: 32px;">
             <div style="text-align: center; margin-bottom: 24px;">
-                <img src="https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?q=80&w=100&auto=format&fit=crop" 
-                     alt="Logo" id="login-logo" 
-                     style="width: 64px; height: 64px; border-radius: 16px; object-fit: cover; margin-bottom: 12px; cursor: pointer; transition: all 0.3s;"
-                     data-clicks="0"
-                     onclick="this.dataset.clicks = (parseInt(this.dataset.clicks||0)+1); if(parseInt(this.dataset.clicks)>=5){document.getElementById('dev-login-panel').classList.remove('hidden'); this.style.outline='2px solid #6b21a8'; this.style.outlineOffset='3px';}">
+                <img src="https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?q=80&w=100&auto=format&fit=crop"
+                     alt="Logo" id="login-logo"
+                     style="width: 64px; height: 64px; border-radius: 16px; object-fit: cover; margin-bottom: 12px;">
                 <h2 class="overlay-title" style="font-size: 1.3rem; margin-bottom: 4px;">Roastery Manager Pro</h2>
                 <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0;">Coffee Roastery Management System</p>
             </div>
@@ -148,40 +146,6 @@
                     Sign In
                 </button>
             </form>
-
-            <!-- Demo Mode Divider -->
-            <div style="display: flex; align-items: center; gap: 12px; margin: 20px 0 14px;">
-                <hr style="flex: 1; border: 0; border-top: 1px solid var(--border);">
-                <span style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;">Demo Mode</span>
-                <hr style="flex: 1; border: 0; border-top: 1px solid var(--border);">
-            </div>
-
-            <!-- Demo Mode Button -->
-            <button id="link-dev-login" class="btn btn-secondary" style="width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; padding: 10px; font-size: 0.85rem;">
-                🧪 Enter Demo Mode (No Login Required)
-            </button>
-
-            <!-- Database Config Trigger -->
-            <div style="text-align: center; margin-top: 14px;">
-                <a href="#" id="link-show-db-config" style="font-size: 0.8rem; color: var(--primary); text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
-                    ⚙️ Setup Database Connection (Supabase)
-                </a>
-            </div>
-
-            <!-- Hidden Developer Panel -->
-            <div id="dev-login-panel" class="hidden" style="margin-top: 16px; padding: 16px; border: 1.5px dashed #6b21a8; border-radius: 8px; background: rgba(107, 33, 168, 0.05);">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
-                    <span style="font-size: 1rem;">🔧</span>
-                    <span style="font-size: 0.85rem; font-weight: 700; color: #6b21a8;">Developer Access</span>
-                </div>
-                <div class="form-group" style="margin-bottom: 12px;">
-                    <input type="password" id="dev-key-input" class="form-control" placeholder="Enter developer key" style="font-family: monospace;">
-                </div>
-                <button id="btn-dev-login" class="btn" style="width: 100%; padding: 8px; background: #6b21a8; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 6px;">
-                    🔓 Enter as Developer
-                </button>
-                <p style="font-size: 0.7rem; color: var(--text-muted); margin: 8px 0 0; text-align: center;">⚠️ Full system access. For developers only.</p>
-            </div>
 
             <!-- Version -->
             <p style="text-align: center; font-size: 0.7rem; color: var(--text-muted); margin-top: 20px; margin-bottom: 0;">v1.0.0</p>
@@ -1948,34 +1912,6 @@
                                 </div>
                                 <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
                                     <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
-                                        
-                                        <!-- Developer Key Section -->
-                                        <div style="margin-bottom: 20px; padding: 14px; border: 1px dashed #6b21a8; border-radius: 8px; background: rgba(107, 33, 168, 0.03);">
-                                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
-                                                <span style="font-size: 1rem;">🔑</span>
-                                                <span style="font-size: 0.85rem; font-weight: 700; color: #6b21a8;">Developer Access Key</span>
-                                            </div>
-                                            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 10px;">This key is used for the hidden developer login on the login page. Change it to secure developer access.</p>
-                                            <div style="display: flex; gap: 8px;">
-                                                <input type="text" id="debug-dev-key" class="form-control" placeholder="Enter developer key" style="font-family: monospace; flex: 1; font-size: 0.85rem;">
-                                                <button id="btn-save-dev-key" class="btn btn-primary btn-sm" style="white-space: nowrap;">Save Key</button>
-                                            </div>
-                                        </div>
-
-                                        <!-- Role Simulator -->
-                                        <div style="margin-bottom: 20px; padding: 14px; border: 1px solid var(--border); border-radius: 8px;">
-                                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
-                                                <span style="font-size: 1rem;">🎭</span>
-                                                <span style="font-size: 0.85rem; font-weight: 700;">Role Simulator</span>
-                                            </div>
-                                            <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 10px;">Switch your active role to test access control. Page will refresh UI based on selected role permissions.</p>
-                                            <div style="display: flex; gap: 8px;">
-                                                <select id="debug-role-switcher" class="form-control" style="flex: 1; font-size: 0.85rem;">
-                                                    <!-- Dynamic options from JS -->
-                                                </select>
-                                                <button id="btn-apply-debug-role" class="btn btn-secondary btn-sm" style="white-space: nowrap;">Apply Role</button>
-                                            </div>
-                                        </div>
 
                                         <!-- Utility Buttons -->
                                         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; font-weight: 600;">Diagnostic Tools</p>
@@ -1988,13 +1924,9 @@
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                                                 Force Reload Page
                                             </button>
-                                            <button id="btn-debug-check-db" class="btn btn-secondary btn-sm" style="width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;" onclick="alert('Supabase URL: ' + (localStorage.getItem('supabase_url') || 'NOT SET') + '\nKey: ' + (localStorage.getItem('supabase_key') ? '***SET***' : 'NOT SET'))">
+                                            <button id="btn-debug-check-db" class="btn btn-secondary btn-sm" style="width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;" onclick="alert('Supabase URL: ' + (window.SUPABASE_URL || 'NOT SET') + '\nConnected: ' + (window.isConnected && window.isConnected() ? 'YES' : 'NO'))">
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
                                                 Check DB Connection Info
-                                            </button>
-                                            <button id="btn-reset-connection" class="btn btn-danger btn-sm" style="width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;">
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
-                                                Disconnect from Supabase (Reset Credentials)
                                             </button>
                                         </div>
                                     </div>

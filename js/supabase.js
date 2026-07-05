@@ -1,90 +1,41 @@
 // SUPABASE CLIENT INITIALIZATION - ROASTERY MANAGER V2 (GLOBAL SCRIPT VERSION)
 // This script runs globally and defines window.supabaseClient and connection helpers.
+// Credentials are hardcoded so the app is always full-Supabase, consistent across every browser/device.
 
 (function() {
-    // Retrieve credentials from localStorage
-    let supabaseUrl = localStorage.getItem('supabase_url') || '';
-    let supabaseKey = localStorage.getItem('supabase_key') || '';
+    const SUPABASE_URL = 'https://YOUR_PROJECT_REF.supabase.co';
+    const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 
+    window.SUPABASE_URL = SUPABASE_URL;
+    window.SUPABASE_ANON_KEY = SUPABASE_ANON_KEY;
     window.supabaseClient = null;
 
     /**
-     * Check if the database connection details are configured.
+     * Check if the Supabase client has been initialized.
      */
     window.isConnected = function() {
-        return supabaseUrl !== '' && supabaseKey !== '' && window.supabaseClient !== null;
+        return window.supabaseClient !== null;
     };
 
-    /**
-     * Initialize Supabase client and save keys to localStorage.
-     */
-    window.initSupabase = function(url, key) {
-        if (!url || !key) return false;
-        try {
-            const cleanUrl = url.trim();
-            const cleanKey = key.trim();
-            
-            // supabase global object comes from the CDN script tag in index.html
-            if (typeof supabase === 'undefined') {
-                console.error("Supabase library not loaded yet.");
-                return false;
-            }
-            
-            window.supabaseClient = supabase.createClient(cleanUrl, cleanKey, {
-                auth: {
-                    detectSessionInUrl: true,
-                    autoRefreshToken: true,
-                    persistSession: true,
-                    flowType: 'implicit'
-                }
-            });
-            supabaseUrl = cleanUrl;
-            supabaseKey = cleanKey;
-            
-            localStorage.setItem('supabase_url', cleanUrl);
-            localStorage.setItem('supabase_key', cleanKey);
-            
-            console.log("Supabase Client initialized successfully.");
-            return true;
-        } catch (e) {
-            console.error("Failed to initialize Supabase:", e);
+    function createClient() {
+        if (typeof supabase === 'undefined') {
+            console.error("Supabase library not loaded yet.");
             return false;
         }
-    };
-
-    /**
-     * Clear connection settings.
-     */
-    window.disconnectSupabase = function() {
-        window.supabaseClient = null;
-        supabaseUrl = '';
-        supabaseKey = '';
-        localStorage.removeItem('supabase_url');
-        localStorage.removeItem('supabase_key');
-        console.log("Supabase connection reset.");
-    };
-
-    // Auto-initialize if credentials exist (synchronous — must run before app.js reads isMockMode)
-    if (supabaseUrl && supabaseKey) {
-        try {
-            if (typeof supabase !== 'undefined') {
-                window.supabaseClient = supabase.createClient(supabaseUrl, supabaseKey, {
-                    auth: {
-                        detectSessionInUrl: true,
-                        autoRefreshToken: true,
-                        persistSession: true,
-                        flowType: 'implicit'
-                    }
-                });
-                console.log("Supabase Client initialized successfully.");
-            } else {
-                // Fallback: library not ready yet, try after a short delay
-                setTimeout(() => {
-                    window.initSupabase(supabaseUrl, supabaseKey);
-                }, 100);
+        window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+            auth: {
+                detectSessionInUrl: true,
+                autoRefreshToken: true,
+                persistSession: true,
+                flowType: 'implicit'
             }
-        } catch(e) {
-            console.error("Auto-init failed:", e);
-        }
+        });
+        console.log("Supabase Client initialized successfully.");
+        return true;
+    }
+
+    if (!createClient()) {
+        // Library not ready yet, try again after a short delay
+        setTimeout(createClient, 100);
     }
 })();

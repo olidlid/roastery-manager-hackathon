@@ -20,7 +20,7 @@ function getCookie(name) {
 }
 
 // --- STATE MANAGEMENT ---
-let isMockMode = localStorage.getItem('is_mock_mode') === 'true' || !window.isConnected();
+let isMockMode = false;
 let currentUser = null;
 let batchCurrentPage = 1;
 let batchPageSize = 50;
@@ -228,7 +228,6 @@ function initMockDatabases() {
         localStorage.setItem('mock_custom_roles', JSON.stringify(MOCK_DB.custom_roles));
     }
 }
-initMockDatabases();
 
 // Helper to get/set mock DB tables
 function getMockTable(table) {
@@ -322,6 +321,31 @@ async function deleteData(table, id) {
         } catch (e) {
             console.error(`Supabase delete failed for ${table}:`, e);
             return { error: e };
+        }
+    }
+}
+
+// ============================================================
+// CUSTOM ROLES SYNC — Supabase is the source of truth; localStorage
+// key 'mock_custom_roles' is kept only as a synchronous read cache
+// for permission checks (hasPermission, etc.)
+// ============================================================
+async function syncCustomRolesFromSupabase() {
+    try {
+        const { data, error } = await window.supabaseClient.from('custom_roles').select('*');
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+            localStorage.setItem('mock_custom_roles', JSON.stringify(data));
+        } else {
+            const { error: seedError } = await window.supabaseClient.from('custom_roles').insert(MOCK_DB.custom_roles);
+            if (seedError) throw seedError;
+            localStorage.setItem('mock_custom_roles', JSON.stringify(MOCK_DB.custom_roles));
+        }
+    } catch (e) {
+        console.error('Failed to sync custom_roles from Supabase:', e);
+        if (!localStorage.getItem('mock_custom_roles')) {
+            localStorage.setItem('mock_custom_roles', JSON.stringify(MOCK_DB.custom_roles));
         }
     }
 }
@@ -457,106 +481,35 @@ function applyRoleAccess() {
     }
 }
 
-// --- DEBUG TOOLS: Dev Key Save ---
-const btnSaveDevKey = document.getElementById('btn-save-dev-key');
-if (btnSaveDevKey) {
-    btnSaveDevKey.addEventListener('click', () => {
-        const input = document.getElementById('debug-dev-key');
-        const newKey = input ? input.value.trim() : '';
-        if (!newKey) { alert('Developer key cannot be empty.'); return; }
-        const settings = JSON.parse(localStorage.getItem('mock_company_settings')) || companySettings;
-        settings.developer_key = newKey;
-        localStorage.setItem('mock_company_settings', JSON.stringify(settings));
-        companySettings.developer_key = newKey;
-        alert('✅ Developer key updated successfully.');
-    });
-}
-
-// --- DEBUG TOOLS: Role Simulator ---
-function populateDebugRoleSwitcher() {
-    const select = document.getElementById('debug-role-switcher');
-    if (!select) return;
-    const roles = JSON.parse(localStorage.getItem('mock_custom_roles')) || [];
-    select.innerHTML = roles.map(r => 
-        `<option value="${r.name}" ${currentUser && currentUser.role === r.name ? 'selected' : ''}>${r.name}</option>`
-    ).join('');
-}
-
-// Load dev key value when settings section opens
-function loadDebugToolsValues() {
-    const devKeyInput = document.getElementById('debug-dev-key');
-    if (devKeyInput) {
-        const settings = JSON.parse(localStorage.getItem('mock_company_settings')) || companySettings;
-        devKeyInput.value = settings.developer_key || 'dev2026';
-    }
-    populateDebugRoleSwitcher();
-}
-
-const btnApplyDebugRole = document.getElementById('btn-apply-debug-role');
-if (btnApplyDebugRole) {
-    btnApplyDebugRole.addEventListener('click', () => {
-        const select = document.getElementById('debug-role-switcher');
-        if (!select) return;
-        const selectedRole = select.value;
-        if (isMockMode) {
-            localStorage.setItem('mock_active_role', selectedRole);
-            currentUser.role = selectedRole;
-            document.getElementById('user-role-lbl').textContent = selectedRole;
-            updateGreeting(currentUser.name);
-            applyRoleAccess();
-            alert(`🎭 Now simulating role: ${selectedRole}. Sidebar and permissions updated.`);
-        }
-    });
-}
-
 function checkAuthentication() {
     if (!checkDatabaseConnection()) return;
-    
-    // Re-evaluate isMockMode based on current connection state
-    if (window.isConnected() && localStorage.getItem('is_mock_mode') !== 'true') {
-        isMockMode = false;
-    }
-    
-    if (isMockMode) {
-        currentUser = { id: 'dev-id', name: 'Lead Developer', role: localStorage.getItem('mock_active_role') || 'Developer' };
-        document.getElementById('user-name-lbl').textContent = currentUser.name;
-        document.getElementById('user-role-lbl').textContent = currentUser.role;
-        document.getElementById('user-avatar-lbl').textContent = currentUser.name.charAt(0);
-        document.getElementById('role-play-switcher').value = currentUser.role;
-        updateGreeting(currentUser.name);
-        applyRoleAccess();
-        authOverlay.classList.add('hidden');
-        document.getElementById('app-container').style.display = 'flex';
-        loadCompanySettings();
-        scheduleDashboardRefresh();
-    } else {
-        // Listen for auth state changes (handles OAuth redirect)
-        window.supabaseClient.auth.onAuthStateChange((event, session) => {
-            if (event === 'SIGNED_IN' && session) {
-                authOverlay.classList.add('hidden');
-                document.getElementById('app-container').style.display = 'flex';
-                loadUserProfile(session.user.id);
-                scheduleDashboardRefresh();
-            } else if (event === 'SIGNED_OUT') {
-                authOverlay.classList.remove('hidden');
-                document.getElementById('app-container').style.display = 'none';
-                currentUser = null;
-            }
-        });
-        
-        // Also check current session
-        window.supabaseClient.auth.getSession().then(({ data: { session } }) => {
-            if (!session) {
-                authOverlay.classList.remove('hidden');
-                document.getElementById('app-container').style.display = 'none';
-            } else {
-                authOverlay.classList.add('hidden');
-                document.getElementById('app-container').style.display = 'flex';
-                loadUserProfile(session.user.id);
-                scheduleDashboardRefresh();
-            }
-        });
-    }
+
+    // Listen for auth state changes (handles OAuth redirect)
+    window.supabaseClient.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+            authOverlay.classList.add('hidden');
+            document.getElementById('app-container').style.display = 'flex';
+            loadUserProfile(session.user.id);
+            scheduleDashboardRefresh();
+        } else if (event === 'SIGNED_OUT') {
+            authOverlay.classList.remove('hidden');
+            document.getElementById('app-container').style.display = 'none';
+            currentUser = null;
+        }
+    });
+
+    // Also check current session
+    window.supabaseClient.auth.getSession().then(({ data: { session } }) => {
+        if (!session) {
+            authOverlay.classList.remove('hidden');
+            document.getElementById('app-container').style.display = 'none';
+        } else {
+            authOverlay.classList.add('hidden');
+            document.getElementById('app-container').style.display = 'flex';
+            loadUserProfile(session.user.id);
+            scheduleDashboardRefresh();
+        }
+    });
 }
 
 async function loadUserProfile(userId) {
@@ -1242,7 +1195,6 @@ async function loadSettingTabSpecificData(tabId) {
         case 'tab-sett-system':
             await loadUsersSection();
             loadRoleManagement();
-            loadDebugToolsValues();
             await loadTranslationManager();
             break;
     }
@@ -7682,8 +7634,8 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
             // 1. Sign up the user in Supabase auth using a temporary client
             // We use a temp client so it doesn't log out the current admin session!
             const tempClient = supabase.createClient(
-                localStorage.getItem('supabase_url'), 
-                localStorage.getItem('supabase_key'),
+                window.SUPABASE_URL,
+                window.SUPABASE_ANON_KEY,
                 {
                     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
                 }
@@ -7902,25 +7854,25 @@ function openRoleModal(roleId) {
     openModal(title, html);
     
     if (!isSystem) {
-        document.getElementById('modal-role-form').addEventListener('submit', (e) => {
+        document.getElementById('modal-role-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            saveRole();
+            await saveRole();
         });
     }
 }
 
-function saveRole() {
+async function saveRole() {
     const roles = JSON.parse(localStorage.getItem('mock_custom_roles')) || [];
     const roleId = document.getElementById('m-role-id').value;
     const roleName = document.getElementById('m-role-name').value.trim();
     const roleColor = document.getElementById('m-role-color').value;
-    
+
     if (!roleName) { alert('Role name is required.'); return; }
-    
+
     // Check duplicate name
     const duplicate = roles.find(r => r.name.toLowerCase() === roleName.toLowerCase() && String(r.id) !== String(roleId));
     if (duplicate) { alert('A role with this name already exists.'); return; }
-    
+
     // Collect permissions from checkboxes
     const permissions = {};
     PERMISSION_GROUPS.forEach(group => {
@@ -7929,22 +7881,18 @@ function saveRole() {
             permissions[k.key] = cb ? cb.checked : false;
         });
     });
-    
-    if (roleId) {
-        // Update existing
-        const idx = roles.findIndex(r => r.id === parseInt(roleId));
-        if (idx !== -1) {
-            roles[idx].name = roleName;
-            roles[idx].color = roleColor;
-            roles[idx].permissions = permissions;
-        }
-    } else {
-        // Create new
-        const newId = roles.length > 0 ? Math.max(...roles.map(r => r.id)) + 1 : 1;
-        roles.push({ id: newId, name: roleName, color: roleColor, is_system: false, permissions });
+
+    const record = { name: roleName, color: roleColor, is_system: false, permissions };
+    if (roleId) record.id = parseInt(roleId);
+
+    const { error } = await window.supabaseClient.from('custom_roles').upsert(record);
+    if (error) {
+        console.error('Failed to save role to Supabase:', error);
+        alert('Failed to save role: ' + error.message);
+        return;
     }
-    
-    localStorage.setItem('mock_custom_roles', JSON.stringify(roles));
+
+    await syncCustomRolesFromSupabase();
     document.getElementById('btn-close-modal').click();
     loadRoleManagement();
     applyRoleAccess(); // re-apply in case current user's role was edited
@@ -7955,11 +7903,17 @@ async function deleteRole(roleId) {
     const role = roles.find(r => r.id === roleId);
     if (!role) return;
     if (role.is_system) { alert('System roles cannot be deleted.'); return; }
-    
+
     if (!await showWarningModal(`Delete role "${role.name}"? Users with this role will lose their access configuration.`)) return;
-    
-    const updated = roles.filter(r => r.id !== roleId);
-    localStorage.setItem('mock_custom_roles', JSON.stringify(updated));
+
+    const { error } = await window.supabaseClient.from('custom_roles').delete().eq('id', roleId);
+    if (error) {
+        console.error('Failed to delete role from Supabase:', error);
+        alert('Failed to delete role: ' + error.message);
+        return;
+    }
+
+    await syncCustomRolesFromSupabase();
     loadRoleManagement();
 }
 
@@ -8186,17 +8140,6 @@ document.getElementById('sett-logo-upload').addEventListener('change', (e) => {
     }
 });
 
-// Disconnect database connection
-document.getElementById('btn-reset-connection').addEventListener('click', async () => {
-    if (await showWarningModal("Are you sure you want to clear your Supabase cloud keys? The app will return to offline sandbox mode.")) {
-        window.disconnectSupabase();
-        localStorage.removeItem('is_mock_mode');
-        isMockMode = true;
-        checkAuthentication();
-        await showWarningModal(window.t("alert_db_connected"), false);
-    }
-});
-
 // Logo file picker trigger
 const logoInput = document.getElementById('sett-logo-upload');
 
@@ -8398,43 +8341,6 @@ if (btnAddPackSize) {
     btnAddPackSize.addEventListener('click', () => openPackagingSizeModal());
 }
 
-// --- SANDBOX DEVELOPER BYPASS LINK ---
-document.getElementById('link-dev-login').addEventListener('click', (e) => {
-    e.preventDefault();
-    isMockMode = true;
-    localStorage.setItem('is_mock_mode', 'true');
-    checkAuthentication();
-});
-
-// --- DEVELOPER KEY LOGIN ---
-const btnDevLogin = document.getElementById('btn-dev-login');
-if (btnDevLogin) {
-    btnDevLogin.addEventListener('click', () => {
-        const keyInput = document.getElementById('dev-key-input');
-        const enteredKey = keyInput ? keyInput.value.trim() : '';
-        const settings = JSON.parse(localStorage.getItem('mock_company_settings')) || companySettings;
-        const validKey = settings.developer_key || 'dev2026';
-        
-        if (enteredKey === validKey) {
-            isMockMode = true;
-            localStorage.setItem('is_mock_mode', 'true');
-            localStorage.setItem('mock_active_role', 'Developer');
-            currentUser = { id: 'dev-id', name: 'Developer', role: 'Developer' };
-            document.getElementById('user-name-lbl').textContent = currentUser.name;
-            document.getElementById('user-role-lbl').textContent = currentUser.role;
-            document.getElementById('user-avatar-lbl').textContent = 'D';
-            updateGreeting(currentUser.name);
-            applyRoleAccess();
-            document.getElementById('auth-overlay').classList.add('hidden');
-            document.getElementById('app-container').style.display = 'flex';
-            loadCompanySettings();
-            scheduleDashboardRefresh();
-        } else {
-            alert('❌ Invalid developer key.');
-        }
-    });
-}
-
 // --- RESET MOCK DATABASE (flush bloated localStorage) ---
 window.resetMockDatabase = async function() {
     if (!await showWarningModal('⚠️ This will RESET all data to default sample data. All your test entries will be lost. Continue?')) return;
@@ -8477,10 +8383,6 @@ window.debugInspectStorage = function() {
 
 // --- GOOGLE AUTHENTICATION ---
 document.getElementById('btn-google-login').addEventListener('click', async () => {
-    if (isMockMode) {
-        alert(window.t("alert_oauth_live_only"));
-        return;
-    }
     const { error } = await window.supabaseClient.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -8496,54 +8398,14 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     const email = document.getElementById('login-email').value;
     const password = document.getElementById('login-password').value;
 
-    if (isMockMode) {
-        // Sandbox bypass
-        currentUser = { id: 'mock-user-1', name: email.split('@')[0], role: 'Leader' };
-        authOverlay.classList.add('hidden');
-        document.getElementById('app-container').style.display = 'flex';
-        loadCompanySettings();
-        scheduleDashboardRefresh();
+    const { data, error } = await window.supabaseClient.auth.signInWithPassword({
+        email,
+        password
+    });
+    if (error) {
+        alert(window.t("alert_signin_failed").replace("{msg}", error.message));
     } else {
-        const { data, error } = await window.supabaseClient.auth.signInWithPassword({
-            email,
-            password
-        });
-        if (error) {
-            alert(window.t("alert_signin_failed").replace("{msg}", error.message));
-        } else {
-            checkAuthentication();
-        }
-    }
-});
-
-// --- SHOW DATABASE CONFIG OVERLAY ---
-document.getElementById('link-show-db-config').addEventListener('click', (e) => {
-    e.preventDefault();
-    configOverlay.classList.remove('hidden');
-    authOverlay.classList.add('hidden');
-});
-
-// --- CANCEL DATABASE CONFIG OVERLAY ---
-document.getElementById('btn-cancel-config').addEventListener('click', (e) => {
-    e.preventDefault();
-    configOverlay.classList.add('hidden');
-    authOverlay.classList.remove('hidden');
-});
-
-// --- DATABASE CONNECTION SETUP SUBMISSION ---
-document.getElementById('config-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const url = document.getElementById('config-url').value;
-    const key = document.getElementById('config-key').value;
-
-    const success = window.initSupabase(url, key);
-    if (success) {
-        isMockMode = false;
-        localStorage.removeItem('is_mock_mode');
-        configOverlay.classList.add('hidden');
         checkAuthentication();
-    } else {
-        alert(window.t("alert_connect_failed"));
     }
 });
 
@@ -10158,12 +10020,15 @@ function initHandoverPagination() {
 }
 
 // --- INITIAL BOOTSTRAP ---
-checkAuthentication();
-makeTabsDraggable();
-initTableFilters();
-initRoastingBatchPagination();
-initHandoverPagination();
-navigateTo('sec-dashboard'); // start on dashboard
+(async function bootstrap() {
+    await syncCustomRolesFromSupabase();
+    checkAuthentication();
+    makeTabsDraggable();
+    initTableFilters();
+    initRoastingBatchPagination();
+    initHandoverPagination();
+    navigateTo('sec-dashboard'); // start on dashboard
+})();
 
 // ==========================================================================
 // TRANSLATION MANAGER ACTIONS & CSV SUPPORT
