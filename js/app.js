@@ -2801,14 +2801,23 @@ async function openRecipeModal(id = null) {
         }
 
         // Insert new ingredients
+        console.log('[Blend] Saving ingredients:', ingredientsData, 'for recipe id:', activeRecipeId);
+        let ingSaveFailed = false;
         for (const ing of ingredientsData) {
             const ingRecord = {
                 blend_recipe_id: activeRecipeId,
                 green_coffee_id: ing.green_coffee_id,
                 percentage: ing.percentage,
-                quantity_g: ing.quantity_g
+                quantity_g: ing.quantity_g || 0
             };
-            await saveData('blend_ingredients', ingRecord);
+            console.log('[Blend] Inserting ingredient:', ingRecord);
+            const { error: ingErr } = await saveData('blend_ingredients', ingRecord);
+            if (ingErr) {
+                console.error('[Blend] Failed to save ingredient:', ingErr);
+                alert('Failed to save ingredient: ' + ingErr.message);
+                ingSaveFailed = true;
+                break;
+            }
         }
 
         modalContainer.classList.add('hidden');
