@@ -3722,9 +3722,18 @@ async function approveTestBatch(id) {
         const { data: batches } = await fetchData('roast_batches');
         const batch = batches.find(b => b.id === id);
         if (batch) {
-            batch.qc_status = 'Success';
-            batch.remaining_bulk_kg = parseFloat(batch.output_weight_kg || 0);
-            await saveData('roast_batches', batch);
+            // Only save fields that exist in production schema
+            const updateRecord = {
+                id: batch.id,
+                batch_number: batch.batch_number,
+                roast_date: batch.roast_date,
+                roast_plan_id: batch.roast_plan_id,
+                green_coffee_id: batch.green_coffee_id,
+                machine_id: batch.machine_id,
+                green_weight_g: batch.green_weight_g,
+                roasted_weight_g: batch.roasted_weight_g
+            };
+            await saveData('roast_batches', updateRecord);
 
             // Fetch coffee name
             const { data: greenbeans } = await fetchData('green_coffee');
