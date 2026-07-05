@@ -254,6 +254,10 @@
                     <i class="lucide-archive"></i>
                     <span data-i18n="nav_packing">Packing</span>
                 </li>
+                <li class="menu-item" data-target="sec-customers">
+                    <i class="lucide-users"></i>
+                    <span data-i18n="nav_customers">Customers</span>
+                </li>
                 <li class="menu-item" data-target="sec-handover">
                     <i class="lucide-truck"></i>
                     <span data-i18n="nav_handover">Goods Handover</span>
@@ -1025,6 +1029,47 @@
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- SECTION: CUSTOMER MANAGEMENT              -->
+            <!-- ========================================== -->
+            <section id="sec-customers" class="page-section hidden">
+                <div class="card">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                        <h3 class="card-title" style="margin-bottom: 0;">Customer Directory</h3>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <div style="display: flex; gap: 4px;">
+                                <button class="btn btn-secondary btn-sm customer-filter-btn active" data-filter="all" onclick="filterCustomers('all')">All</button>
+                                <button class="btn btn-secondary btn-sm customer-filter-btn" data-filter="Wholesale" onclick="filterCustomers('Wholesale')">🏭 Wholesale</button>
+                                <button class="btn btn-secondary btn-sm customer-filter-btn" data-filter="Retail" onclick="filterCustomers('Retail')">☕ Retail</button>
+                            </div>
+                            <input type="text" id="customer-search" class="form-control" placeholder="Search customer..." style="width: 200px; height: 32px; font-size: 0.8rem;" oninput="loadCustomersSection()">
+                            <button class="btn btn-primary btn-sm" onclick="openCustomerModal()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                Add Customer
+                            </button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Customer ID</th>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Contact Person</th>
+                                    <th>Phone</th>
+                                    <th>City</th>
+                                    <th style="width: 180px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="customers-table-body">
+                                <!-- Dynamic customer rows -->
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </section>

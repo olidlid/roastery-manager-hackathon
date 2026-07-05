@@ -74,6 +74,7 @@ const MOCK_DB = {
     request_orders: [],
     request_order_items: [],
     handover_logs: [],
+    customers: [],
     profiles: [
         { id: 'dev-id', username: 'developer', role: 'Developer', name: 'Lead Developer' },
         { id: 'roaster-id', username: 'roaster', role: 'Roaster', name: 'Gavin Roaster' }
@@ -413,6 +414,7 @@ function applyRoleAccess() {
         'sec-greenbean': 'greenbean_view',
         'sec-roasting': 'roasting_view',
         'sec-packing': 'packing_view',
+        'sec-customers': ['sales_request_view'],
         'sec-handover': ['sales_request_view', 'dispatch_approval_view'],
         'sec-reports': 'reports_view',
         'sec-settings': ['settings_general', 'settings_production', 'settings_system'],
@@ -670,7 +672,8 @@ const PAGE_METADATA = {
     'sec-users': { title: 'User Account Management', subtitle: 'Manage operator details, roles, and warehouse access rights' },
     'sec-settings': { title: 'System Settings', subtitle: 'Configure branding, printing layouts, and connection endpoints' },
     'sec-reports': { title: 'Reports', subtitle: '' },
-    'sec-handover': { title: 'Handover', subtitle: '' }
+    'sec-handover': { title: 'Handover', subtitle: '' },
+    'sec-customers': { title: 'Customer Management', subtitle: 'Manage wholesale and retail customers' }
 };
 
 function navigateTo(sectionId) {
@@ -911,6 +914,9 @@ async function loadSectionData(sectionId) {
         case 'sec-packing':
             await loadPackingSection();
             break;
+        case 'sec-customers':
+            await loadCustomersSection();
+            break;
         case 'sec-handover':
             const activeHandoverTabBtn = document.querySelector('#sec-handover .tab-btn.active');
             if (activeHandoverTabBtn) {
@@ -937,6 +943,251 @@ async function loadHandoverTabSpecificData(tabId) {
             await loadDispatchApprovalTable();
             break;
     }
+}
+
+// ========== CUSTOMER MANAGEMENT ==========
+
+let _customerFilterType = 'all';
+
+function filterCustomers(type) {
+    _customerFilterType = type;
+    document.querySelectorAll('.customer-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-filter') === type);
+    });
+    loadCustomersSection();
+}
+
+async function loadCustomersSection(filterType) {
+    if (filterType) _customerFilterType = filterType;
+    const { data: customers } = await fetchData('customers');
+    const tbody = document.getElementById('customers-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    const searchVal = (document.getElementById('customer-search')?.value || '').toLowerCase();
+    
+    let filtered = (customers || []).filter(c => {
+        if (_customerFilterType !== 'all' && c.type !== _customerFilterType) return false;
+        if (searchVal && !c.name.toLowerCase().includes(searchVal) && !c.customer_id.toLowerCase().includes(searchVal)) return false;
+        return true;
+    });
+    
+    if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding: 32px 0;">No customers found</td></tr>';
+        return;
+    }
+    
+    filtered.forEach(c => {
+        const typeBadge = c.type === 'Wholesale' 
+            ? '<span style="background:var(--primary-light); color:var(--primary); padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600;">🏭 Wholesale</span>'
+            : '<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600;">☕ Retail</span>';
+        
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><code style="font-weight:700;">${c.customer_id}</code></td>
+            <td><strong>${c.name}</strong></td>
+            <td>${typeBadge}</td>
+            <td>${c.contact_person || '-'}</td>
+            <td>${c.phone || '-'}</td>
+            <td>${c.city || '-'}</td>
+            <td>
+                <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                    <button class="btn btn-secondary btn-sm" onclick="viewCustomerHistory(${c.id})" title="Order History">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        History
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="openCustomerModal(${c.id})" title="Edit">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteCustomer(${c.id})" title="Delete">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+async function openCustomerModal(editId = null) {
+    const { data: customers } = await fetchData('customers');
+    let existing = null;
+    if (editId) {
+        existing = (customers || []).find(c => c.id === editId);
+    }
+    
+    const html = `
+        <form id="modal-customer-form" novalidate>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Customer ID</label>
+                    <input type="text" id="m-cust-id" class="form-control" readonly placeholder="Auto Generated" value="${existing ? existing.customer_id : ''}">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Type</label>
+                    <select id="m-cust-type" class="form-control" ${editId ? 'disabled' : ''} required>
+                        <option value="Wholesale" ${existing?.type === 'Wholesale' ? 'selected' : ''}>🏭 Wholesale</option>
+                        <option value="Retail" ${existing?.type === 'Retail' || !existing ? 'selected' : ''}>☕ Retail</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Customer / Company Name</label>
+                <input type="text" id="m-cust-name" class="form-control" required value="${existing ? existing.name : ''}" placeholder="e.g. PT Kopi Nusantara">
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Contact Person</label>
+                    <input type="text" id="m-cust-contact" class="form-control" value="${existing?.contact_person || ''}" placeholder="PIC name">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Phone</label>
+                    <input type="text" id="m-cust-phone" class="form-control" value="${existing?.phone || ''}" placeholder="08xxx">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">Email</label>
+                    <input type="email" id="m-cust-email" class="form-control" value="${existing?.email || ''}" placeholder="email@example.com">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">City</label>
+                    <input type="text" id="m-cust-city" class="form-control" value="${existing?.city || ''}" placeholder="Jakarta">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Address</label>
+                <input type="text" id="m-cust-address" class="form-control" value="${existing?.address || ''}" placeholder="Full address">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <input type="text" id="m-cust-notes" class="form-control" value="${existing?.notes || ''}" placeholder="Additional notes">
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                <button type="submit" class="btn btn-primary">${editId ? 'Save Changes' : 'Add Customer'}</button>
+            </div>
+        </form>
+    `;
+    
+    openModal(editId ? 'Edit Customer' : 'Add New Customer', html, '650px');
+    
+    // Auto-generate customer ID for new customers
+    const typeSelect = document.getElementById('m-cust-type');
+    const custIdInput = document.getElementById('m-cust-id');
+    
+    async function generateCustomerId() {
+        const type = typeSelect.value;
+        const prefix = type === 'Wholesale' ? 'WHL' : 'RTL';
+        const allCust = (customers || []).filter(c => c.type === type);
+        let maxNum = 0;
+        allCust.forEach(c => {
+            const match = c.customer_id?.match(new RegExp(`^${prefix}-(\\d+)$`));
+            if (match) { const n = parseInt(match[1]); if (n > maxNum) maxNum = n; }
+        });
+        custIdInput.value = `${prefix}-${String(maxNum + 1).padStart(3, '0')}`;
+    }
+    
+    if (!editId) {
+        generateCustomerId();
+        typeSelect.addEventListener('change', generateCustomerId);
+    }
+    
+    // Form submit
+    document.getElementById('modal-customer-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('m-cust-name').value.trim();
+        if (!name) { alert('Customer name is required'); return; }
+        
+        const record = {
+            id: editId || undefined,
+            customer_id: custIdInput.value,
+            name,
+            type: typeSelect.value,
+            contact_person: document.getElementById('m-cust-contact').value.trim(),
+            phone: document.getElementById('m-cust-phone').value.trim(),
+            email: document.getElementById('m-cust-email').value.trim(),
+            address: document.getElementById('m-cust-address').value.trim(),
+            city: document.getElementById('m-cust-city').value.trim(),
+            notes: document.getElementById('m-cust-notes').value.trim(),
+            is_active: true
+        };
+        
+        const { error } = await saveData('customers', record);
+        if (error) {
+            alert('Failed to save customer: ' + error.message);
+        } else {
+            document.getElementById('btn-close-modal').click();
+            await loadCustomersSection();
+        }
+    });
+}
+
+async function deleteCustomer(id) {
+    if (!confirm('Are you sure you want to delete this customer?')) return;
+    const { error } = await deleteData('customers', id);
+    if (error) {
+        alert('Failed to delete: ' + error.message);
+    } else {
+        await loadCustomersSection();
+    }
+}
+
+async function viewCustomerHistory(customerId) {
+    const { data: customers } = await fetchData('customers');
+    const customer = (customers || []).find(c => c.id === customerId);
+    if (!customer) return;
+    
+    const { data: orders } = await fetchData('request_orders');
+    const { data: orderItems } = await fetchData('request_order_items');
+    
+    const custOrders = (orders || []).filter(o => o.customer_id === customerId);
+    
+    let historyHtml = '';
+    if (custOrders.length === 0) {
+        historyHtml = '<p style="text-align:center; color:var(--text-muted); padding:20px;">No order history for this customer</p>';
+    } else {
+        historyHtml = `<table class="data-table" style="width:100%;">
+            <thead><tr>
+                <th>Order #</th><th>Date</th><th>Items</th><th>Status</th>
+            </tr></thead><tbody>`;
+        
+        custOrders.sort((a, b) => (b.order_date || '').localeCompare(a.order_date || ''));
+        
+        custOrders.forEach(o => {
+            const items = (orderItems || []).filter(i => i.request_order_id === o.id);
+            const itemsSummary = items.map(i => `${i.coffee_name || 'Item'} (${i.grind || '-'}, ${i.size_g || '-'}g x${i.quantity || 0})`).join('<br>');
+            const statusColor = o.status === 'Dispatched' ? 'var(--success)' : o.status === 'Approved' ? 'var(--primary)' : 'var(--warning)';
+            
+            historyHtml += `<tr>
+                <td><code>${o.order_number || '#ORD-'+o.id}</code></td>
+                <td>${o.order_date || '-'}</td>
+                <td style="font-size:0.8rem;">${itemsSummary || '-'}</td>
+                <td><span style="color:${statusColor}; font-weight:600;">${o.status || 'Pending'}</span></td>
+            </tr>`;
+        });
+        historyHtml += '</tbody></table>';
+    }
+    
+    const html = `
+        <div style="margin-bottom: 16px; padding: 16px; background: var(--card-bg); border-radius: 8px; border: 1px solid var(--border-color);">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div style="font-size: 1.2rem; font-weight: 700;">${customer.name}</div>
+                    <div style="color:var(--text-muted); font-size:0.85rem;">${customer.customer_id} • ${customer.type}</div>
+                </div>
+                <div style="text-align:right; color:var(--text-muted); font-size:0.85rem;">
+                    <div>${customer.contact_person || ''}</div>
+                    <div>${customer.phone || ''}</div>
+                    <div>${customer.city || ''}</div>
+                </div>
+            </div>
+        </div>
+        <h4 style="margin-bottom: 12px;">Order History (${custOrders.length} orders)</h4>
+        ${historyHtml}
+    `;
+    
+    openModal(`Customer: ${customer.name}`, html, '800px');
 }
 
 async function loadTabSpecificData(tabId) {
@@ -4724,6 +4975,7 @@ async function loadPackingRequestsSection() {
     const { data: packedGoods } = await fetchData('packed_coffee');
     const { data: roastBatches } = await fetchData('roast_batches');
     const { data: machines } = await fetchData('machines');
+    const { data: customers } = await fetchData('customers');
     
     const tbody = document.getElementById('packing-requests-table-body');
     if (!tbody) return;
@@ -4879,7 +5131,10 @@ async function loadPackingRequestsSection() {
                 ${order.order_date}<br/>
                 <code>${order.order_number || '#ORD-'+order.id}</code>
             </td>
-            <td style="vertical-align: top; padding-top: 12px;"><strong>${order.sales_name}</strong></td>
+            <td style="vertical-align: top; padding-top: 12px;">
+                <strong>${order.sales_name}</strong>
+                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span style="font-size:0.75rem; color:var(--text-secondary);">👤 ${cust.name}</span>` : ''; })()}
+            </td>
             <td style="vertical-align: top; padding-top: 12px;">${itemsHtml}${dispatchBtnHtml}</td>
             <td style="vertical-align: top; padding-top: 12px;">
                 <button class="btn btn-secondary btn-sm btn-print-order" data-id="${order.id}" style="display:inline-flex; align-items:center; gap:4px; white-space:nowrap;">
@@ -5747,6 +6002,7 @@ async function loadSalesDispatchRequestsTable() {
     const { data: greenbeans } = await fetchData('green_coffee');
     const { data: recipes } = await fetchData('blend_recipes');
     const { data: machines } = await fetchData('machines');
+    const { data: customers } = await fetchData('customers');
     const tbody = document.getElementById('request-orders-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
@@ -5968,7 +6224,10 @@ async function loadSalesDispatchRequestsTable() {
                 <span style="font-size:0.75rem; color:var(--text-secondary);">${order.order_date}</span>
                 ${needsRoast ? `<div style="margin-top: 4px;"><span style="font-size:0.65rem; color: var(--danger); font-weight: bold;">⚠️ ${window.t ? window.t('badge_auto_roast') : 'Auto-Roast Required'}</span></div>` : ''}
             </td>
-            <td><strong>${order.sales_name}</strong></td>
+            <td>
+                <strong>${order.sales_name}</strong>
+                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span style="font-size:0.75rem; color:var(--text-secondary);">👤 ${cust.name} <code style="font-size:0.65rem;">${cust.customer_id}</code></span>` : ''; })()}
+            </td>
             <td>${itemsHtml}</td>
             <td>
                 ${actionColumnContent}
@@ -6001,6 +6260,7 @@ async function loadDispatchApprovalTable() {
     const { data: greenbeans } = await fetchData('green_coffee');
     const { data: recipes } = await fetchData('blend_recipes');
     const { data: machines } = await fetchData('machines');
+    const { data: customers } = await fetchData('customers');
     const tbody = document.getElementById('approval-orders-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
@@ -6169,7 +6429,10 @@ async function loadDispatchApprovalTable() {
                 <code>${order.order_number || '#ORD-'+order.id}</code><br/>
                 <span style="font-size:0.75rem; color:var(--text-secondary);">${order.order_date}</span>
             </td>
-            <td><strong>${order.sales_name}</strong></td>
+            <td>
+                <strong>${order.sales_name}</strong>
+                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span style="font-size:0.75rem; color:var(--text-secondary);">👤 ${cust.name} <code style="font-size:0.65rem;">${cust.customer_id}</code></span>` : ''; })()}
+            </td>
             <td>${itemsHtml}</td>
             <td>
                 ${actionColumnContent}
@@ -6745,6 +7008,22 @@ async function openSalesRequestModal(orderId = null) {
     let machineOptionsHtml = `<option value="" disabled selected>-- Machine --</option>`;
     machineOptionsHtml += (machines || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 
+    // Customer options
+    const { data: customersList } = await fetchData('customers');
+    let customerOptionsHtml = '';
+    const whlCustomers = (customersList || []).filter(c => c.type === 'Wholesale' && c.is_active !== false);
+    const rtlCustomers = (customersList || []).filter(c => c.type === 'Retail' && c.is_active !== false);
+    if (whlCustomers.length) {
+        customerOptionsHtml += '<optgroup label="🏭 Wholesale">';
+        customerOptionsHtml += whlCustomers.map(c => `<option value="${c.id}" ${existingOrder?.customer_id === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
+        customerOptionsHtml += '</optgroup>';
+    }
+    if (rtlCustomers.length) {
+        customerOptionsHtml += '<optgroup label="☕ Retail">';
+        customerOptionsHtml += rtlCustomers.map(c => `<option value="${c.id}" ${existingOrder?.customer_id === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
+        customerOptionsHtml += '</optgroup>';
+    }
+
     const html = `
         <form id="modal-request-form" novalidate>
             <div class="form-row">
@@ -6757,6 +7036,13 @@ async function openSalesRequestModal(orderId = null) {
                     <input type="text" id="m-req-sales" class="form-control" list="agent-list" required autocomplete="off" value="${existingOrder ? existingOrder.sales_name : ''}">
                     <datalist id="agent-list">${agentListHTML}</datalist>
                 </div>
+            </div>
+            <div class="form-group" style="margin-top: 12px;">
+                <label class="form-label">Customer</label>
+                <select id="m-req-customer" class="form-control" required>
+                    <option value="" disabled selected>-- Select Customer --</option>
+                    ${customerOptionsHtml}
+                </select>
             </div>
             
             <div class="form-group" style="margin-top: 15px;">
@@ -7111,7 +7397,8 @@ async function openSalesRequestModal(orderId = null) {
             order_date: existingOrder ? existingOrder.order_date : new Date().toISOString().split('T')[0],
             sales_name: salesName,
             status: existingOrder ? existingOrder.status : 'Pending Approval',
-            notes: document.getElementById('m-req-notes').value
+            notes: document.getElementById('m-req-notes').value,
+            customer_id: parseInt(document.getElementById('m-req-customer')?.value) || null
         };
 
         const { data: savedOrder, error } = await saveData('request_orders', orderRecord);
