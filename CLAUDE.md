@@ -157,8 +157,10 @@ Exact keys live in each role's `permissions` object in `custom_roles` (seeded fr
 ## Test Credentials
 
 - **Email:** cholidulasyhar00@gmail.com
-- **Password:** test123456
-- Role: Developer (Developer-only UI, e.g. Settings → Debug Tools, is gated on `currentUser.role === 'Developer'`, not a permission key).
+- **Password:** [See team shared document or ask team for current password]
+- **Role:** Developer (Developer-only UI, e.g. Settings → Debug Tools, is gated on `currentUser.role === 'Developer'`, not a permission key).
+
+⚠️ **Security Note:** This repo is now private. If credentials are ever exposed, reset the password in Supabase Dashboard → Authentication → Users.
 
 ---
 
