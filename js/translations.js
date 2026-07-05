@@ -13,6 +13,7 @@ window.translations = {
         nav_inv_greenbean: "Greenbean",
         nav_inv_bulk: "Bulk Roasted",
         nav_inv_packed: "Packed Coffee",
+        nav_customers: "Customers",
         btn_logout: "Log Out",
         
         // App Layout Headers
@@ -398,6 +399,7 @@ window.translations = {
         nav_inv_greenbean: "البن الأخضر",
         nav_inv_bulk: "القهوة السائبة",
         nav_inv_packed: "القهوة المعبأة",
+        nav_customers: "العملاء",
         btn_logout: "تسجيل الخروج",
         
         // App Layout Headers
