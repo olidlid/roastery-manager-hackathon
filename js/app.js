@@ -3049,7 +3049,7 @@ async function loadRoastingBatches() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td data-col="0">${batch.roast_date}</td>
-            <td data-col="1"><code>${batch.batch_code || '-'}</code></td>
+            <td data-col="1"><code>${batch.batch_number || '-'}</code></td>
             <td data-col="2"><strong>${coffeeName}</strong></td>
             <td data-col="3">${machineName}</td>
             <td data-col="4">${inputG} g</td>
@@ -3845,7 +3845,7 @@ async function openExportBatchesModal() {
             const depre = batchG > 0 ? (((batchG - yieldG) / batchG) * 100).toFixed(1) + '%' : '0%';
             return {
                 'Date': b.roast_date,
-                'Batch Code': b.batch_code || '-',
+                'Batch Code': b.batch_number || '-',
                 'Coffee': coffeeName,
                 'Machine': machineName,
                 'Batch (g)': batchG,
@@ -4191,10 +4191,10 @@ async function openRoastBatchModal(plan = null, editId = null) {
             const r = recipes.find(rec => rec.id === id);
             if (r) coffeeCode = r.code || r.name.slice(0, 3).toUpperCase();
         }
-        
+
         const mach = machines.find(m => m.id === parseInt(machineId));
         const machineCode = mach ? (mach.code || mach.name.slice(0, 2).toUpperCase()) : 'M';
-        
+
         let dateObj = new Date();
         if (dateInput.value) {
             const parts = dateInput.value.split('-');
@@ -4206,19 +4206,19 @@ async function openRoastBatchModal(plan = null, editId = null) {
         const dd = String(dateObj.getDate()).padStart(2, '0');
         const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
         const datePart = `${dd}${mm}`;
-        
+
         let maxSeq = 0;
         const regex = /^([^-]+)-([A-Za-z0-9]+?)(\d{4})-(\d+)$/;
 
         batches.forEach(b => {
-            if (b.batch_code) {
-                const match = b.batch_code.match(regex);
+            if (b.batch_number) {
+                const match = b.batch_number.match(regex);
                 if (match) {
                     const bCoffee = match[1];
                     const bMach = match[2];
                     const bDate = match[3];
                     const bSeq = parseInt(match[4]);
-                    
+
                     if (bCoffee === coffeeCode && bMach === machineCode && bDate === datePart) {
                         if (bSeq > maxSeq) {
                             maxSeq = bSeq;
@@ -4227,7 +4227,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 }
             }
         });
-        
+
         const nextSeq = maxSeq + 1;
         return `${coffeeCode}-${machineCode}${datePart}-${nextSeq}`;
     }
@@ -4319,7 +4319,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
 
     // Prefill logic
     if (editId && existingBatch) {
-        batchCodeInput.value = existingBatch.batch_code;
+        batchCodeInput.value = existingBatch.batch_number;
         // Prefill date from existing record, fallback to today
         dateInput.value = existingBatch.roast_date ? existingBatch.roast_date.split('T')[0] : todayStr;
         machineSelect.value = existingBatch.machine_id;
@@ -4490,7 +4490,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
 
         // 3. Save Roast Batch Record
         const record = {
-            batch_code: code,
+            batch_number: code,
             roast_date: roastDate,
             roast_type: isTest ? 'Test' : 'Regular',
             qc_status: qcStatus,
@@ -4670,7 +4670,7 @@ async function printStickerLabel(id) {
     const showOperator = companySettings.label_show_operator !== false;
 
     let fieldsHtml = '';
-    if (showCode) fieldsHtml += `<div style="font-size:0.75rem; font-weight:bold; border-bottom:1px solid #000; padding-bottom:2px; margin-bottom:4px; font-family:monospace;">${batch.batch_code}</div>`;
+    if (showCode) fieldsHtml += `<div style="font-size:0.75rem; font-weight:bold; border-bottom:1px solid #000; padding-bottom:2px; margin-bottom:4px; font-family:monospace;">${batch.batch_number}</div>`;
     if (showCoffee) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Coffee:</strong> ${coffeeName}</div>`;
     if (showDate) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Date:</strong> ${batch.roast_date}</div>`;
     if (showMachine) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Machine:</strong> ${machineName}</div>`;
@@ -10875,8 +10875,8 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
         let maxSeq = 0;
         const regex = /^([^-]+)-([A-Za-z0-9]+?)(\d{4})-(\d+)$/;
         (batches || []).forEach(b => {
-            if (b.batch_code) {
-                const match = b.batch_code.match(regex);
+            if (b.batch_number) {
+                const match = b.batch_number.match(regex);
                 if (match && match[1] === coffeeCode && match[3] === datePart) {
                     const s = parseInt(match[4]); if (s > maxSeq) maxSeq = s;
                 }
@@ -10948,9 +10948,9 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
         }
         
         const qcStatus = isTest ? 'Pending' : 'Success';
-        
+
         const record = {
-            batch_code: code,
+            batch_number: code,
             roast_date: roastDate,
             roast_type: isTest ? 'Test' : 'Regular',
             qc_status: qcStatus,
