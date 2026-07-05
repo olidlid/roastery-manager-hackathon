@@ -30,7 +30,7 @@ roastery-manager-v2/
 │                             #   (webDir: "dist", appId: com.roastery.leader) packages this into the Android app.
 ├── android/                  # Capacitor-generated Android project (Gradle) for the Leader app
 ├── whatsapp-service/          # Standalone Node service: polls Supabase for pending orders, notifies via WhatsApp
-├── database/supabase_schema.sql  # Base schema — NOT fully in sync with production (see note below)
+├── database/supabase_schema.sql  # Column-accurate snapshot of PRODUCTION schema (synced 2026-07-06)
 ├── server.js                 # Trivial static file server for local dev (node server.js, port 8000)
 └── test.js                   # One-off script that evaluates js/app.js in a jsdom/vm sandbox to catch SyntaxErrors
 ```
@@ -69,9 +69,13 @@ There is no bundler, transpiler, or package build for the main app — `js/app.j
 
 ## Database Schema
 
-`database/supabase_schema.sql` contains: `profiles`, `company_settings`, `green_coffee`, `blend_recipes`, `blend_ingredients`, `machines`, `roasting_plans`, `roast_batches`, `waste_inventory`, `packed_coffee`, `request_orders`, `request_order_items`, `handover_logs`.
+`database/supabase_schema.sql` is a **column-accurate snapshot of production** (synced 2026-07-06 from `information_schema`). It covers all 20 production tables: `profiles`, `custom_roles`, `company_settings`, `green_coffee`, `green_coffee_intake`, `blend_recipes`, `blend_ingredients`, `machines`, `roasting_plans`, `roast_batches`, `bulk_roasted_coffee`, `waste_inventory`, `packaging_sizes`, `packed_coffee`, `packing_records`, `customers`, `sales_agents`, `request_orders`, `request_order_items`, `sales_orders` (legacy).
 
-**Note:** production also has tables that are *not* in this schema file (created later via the Supabase dashboard or ad-hoc SQL) — at least `custom_roles`, `customers`, `sales_agents`, `packaging_sizes`, `green_coffee_intake`, `bulk_roasted_coffee`. Don't treat `supabase_schema.sql` as a complete/authoritative dump of production; when in doubt, check the live database.
+**Rules for keeping it in sync (this drift caused all 6 production bugs on 2026-07-05/06):**
+- Any schema change: update the file first, apply the same ALTER/CREATE to production via SQL Editor, then run `NOTIFY pgrst, 'reload schema';` (PostgREST caches the schema — without this, the REST API throws "Could not find the '<col>' column ... in the schema cache" even when the column exists; occasionally needs running twice).
+- Never add columns via the Supabase dashboard without mirroring them in the file.
+- Many tables carry **legacy columns** from earlier app generations (marked `-- legacy` in the file). Don't reuse them for new features.
+- `handover_logs` does **not** exist in production even though `MOCK_DB` in `js/app.js` still references it — live fetches for it fall back to the local mock cache.
 
 ### `profiles`
 `id (uuid, PK)`, `name`, `email`, `role` (default `'Roaster'`), `avatar_url`, `created_at`.
@@ -130,7 +134,7 @@ Independent Node process (`whatsapp-web.js` + Puppeteer) that polls `request_ord
 - Reports module (chart data binding, date filtering).
 - Print output for requests/dispatch/waybill/labels.
 - Mobile responsiveness.
-- `database/supabase_schema.sql` should be brought up to date with production (missing tables listed above), or a migration/dump workflow established so it doesn't keep drifting.
+- ~~`database/supabase_schema.sql` should be brought up to date with production~~ — DONE 2026-07-06 (full sync from production `information_schema`; keep it in sync per the rules in "Database Schema" above).
 
 **Known technical debt:**
 - `js/app.js` is monolithic (~11,000 lines) with no module boundaries — could be split by feature (greenbean, roasting, packing, sales, reports, settings) if it keeps growing.
