@@ -8336,7 +8336,7 @@ async function openPackagingSizeModal(id = null) {
     openModal(id ? 'Edit Packaging Size' : 'Add Packaging Size', html);
     
     document.getElementById('btn-save-pack-size').onclick = async () => {
-        const labelInput = document.getElementById('m-ps-label').value;
+        const labelInput = document.getElementById('m-ps-label').value.trim();
         const gramInput = document.getElementById('m-ps-gram').value;
         
         if (!labelInput || !gramInput) {
@@ -8352,7 +8352,14 @@ async function openPackagingSizeModal(id = null) {
         
         if (id) saveDataObj.id = id;
         
-        await saveData('packaging_sizes', saveDataObj);
+        console.log('[PackagingSize] Saving:', saveDataObj);
+        const { error } = await saveData('packaging_sizes', saveDataObj);
+        if (error) {
+            console.error('[PackagingSize] Save failed:', error);
+            alert('Failed to save packaging size: ' + error.message);
+            return;
+        }
+        
         modalContainer.classList.add('hidden');
         loadPackagingSizesTable();
         scheduleDashboardRefresh();
