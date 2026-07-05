@@ -7679,8 +7679,17 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
         } else {
             const password = document.getElementById('m-inv-pass').value;
             
-            // 1. Sign up the user in Supabase auth
-            const { data, error } = await window.supabaseClient.auth.signUp({
+            // 1. Sign up the user in Supabase auth using a temporary client
+            // We use a temp client so it doesn't log out the current admin session!
+            const tempClient = supabase.createClient(
+                localStorage.getItem('supabase_url'), 
+                localStorage.getItem('supabase_key'),
+                {
+                    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+                }
+            );
+
+            const { data, error } = await tempClient.auth.signUp({
                 email: email,
                 password: password,
                 options: {
@@ -7692,7 +7701,7 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
             });
 
             if (error) {
-                alert("Registration failed: " + error.message);
+                alert("Registration failed: " + (error.message || JSON.stringify(error)));
                 return;
             }
 
