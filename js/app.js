@@ -7702,9 +7702,9 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
 
             if (error) {
                 console.error("Supabase SignUp Error:", error);
-                let msg = error.message;
-                if (!msg || msg === '{}' || JSON.stringify(error) === '{}') {
-                    msg = "Pastikan email ini belum pernah terdaftar sebelumnya, dan fitur 'Enable Signups' menyala di dashboard Supabase.";
+                let msg = error.message || "Unknown error occurred";
+                if (msg === '{}') {
+                    msg = "Error dari database (pastikan tabel profiles sudah sesuai dan tidak ada error pada trigger on_auth_user_created).";
                 }
                 alert("Registration failed: " + msg);
                 return;
