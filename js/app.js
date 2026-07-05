@@ -3049,7 +3049,7 @@ async function loadRoastingBatches() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td data-col="0">${batch.roast_date}</td>
-            <td data-col="1"><code>${batch.batch_number || '-'}</code></td>
+            <td data-col="1"><code>${batch.batch_code || '-'}</code></td>
             <td data-col="2"><strong>${coffeeName}</strong></td>
             <td data-col="3">${machineName}</td>
             <td data-col="4">${inputG} g</td>
@@ -3725,13 +3725,19 @@ async function approveTestBatch(id) {
             // Only save fields that exist in production schema
             const updateRecord = {
                 id: batch.id,
-                batch_number: batch.batch_number,
+                batch_code: batch.batch_code,
                 roast_date: batch.roast_date,
-                roast_plan_id: batch.roast_plan_id,
-                green_coffee_id: batch.green_coffee_id,
+                roasting_plan_id: batch.roasting_plan_id,
+                coffee_type: batch.coffee_type,
+                single_coffee_id: batch.single_coffee_id,
+                blend_recipe_id: batch.blend_recipe_id,
                 machine_id: batch.machine_id,
-                green_weight_g: batch.green_weight_g,
-                roasted_weight_g: batch.roasted_weight_g
+                input_weight_kg: batch.input_weight_kg,
+                output_weight_kg: batch.output_weight_kg,
+                yield_percentage: batch.yield_percentage,
+                roast_type: batch.roast_type,
+                qc_status: 'Success',
+                notes: batch.notes
             };
             await saveData('roast_batches', updateRecord);
 
@@ -3854,7 +3860,7 @@ async function openExportBatchesModal() {
             const depre = batchG > 0 ? (((batchG - yieldG) / batchG) * 100).toFixed(1) + '%' : '0%';
             return {
                 'Date': b.roast_date,
-                'Batch Code': b.batch_number || '-',
+                'Batch Code': b.batch_code || '-',
                 'Coffee': coffeeName,
                 'Machine': machineName,
                 'Batch (g)': batchG,
@@ -4220,8 +4226,8 @@ async function openRoastBatchModal(plan = null, editId = null) {
         const regex = /^([^-]+)-([A-Za-z0-9]+?)(\d{4})-(\d+)$/;
 
         batches.forEach(b => {
-            if (b.batch_number) {
-                const match = b.batch_number.match(regex);
+            if (b.batch_code) {
+                const match = b.batch_code.match(regex);
                 if (match) {
                     const bCoffee = match[1];
                     const bMach = match[2];
@@ -4328,7 +4334,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
 
     // Prefill logic
     if (editId && existingBatch) {
-        batchCodeInput.value = existingBatch.batch_number;
+        batchCodeInput.value = existingBatch.batch_code;
         // Prefill date from existing record, fallback to today
         dateInput.value = existingBatch.roast_date ? existingBatch.roast_date.split('T')[0] : todayStr;
         machineSelect.value = existingBatch.machine_id;
@@ -4498,14 +4504,21 @@ async function openRoastBatchModal(plan = null, editId = null) {
         setCookie('last_coffee_val', coffeeVal);
 
         // 3. Save Roast Batch Record (match production schema)
+        const yieldPct = outputKg > 0 && inputKg > 0 ? parseFloat(((outputKg / inputKg) * 100).toFixed(2)) : null;
         const record = {
-            batch_number: code,
+            batch_code: code,
             roast_date: roastDate,
-            roast_plan_id: editId ? existingBatch.roast_plan_id : (plan ? plan.id : null),
-            green_coffee_id: singleId || null,
+            roasting_plan_id: editId ? existingBatch.roasting_plan_id : (plan ? plan.id : null),
+            coffee_type: type,
+            single_coffee_id: singleId || null,
+            blend_recipe_id: blendId || null,
             machine_id: machineId,
-            green_weight_g: Math.round(inputKg * 1000),
-            roasted_weight_g: Math.round(outputKg * 1000)
+            input_weight_kg: inputKg,
+            output_weight_kg: outputKg,
+            yield_percentage: yieldPct,
+            roast_type: isTest ? 'Test' : 'Regular',
+            qc_status: qcStatus,
+            notes: notes || null
         };
 
         if (editId) {
@@ -4671,7 +4684,7 @@ async function printStickerLabel(id) {
     const showOperator = companySettings.label_show_operator !== false;
 
     let fieldsHtml = '';
-    if (showCode) fieldsHtml += `<div style="font-size:0.75rem; font-weight:bold; border-bottom:1px solid #000; padding-bottom:2px; margin-bottom:4px; font-family:monospace;">${batch.batch_number}</div>`;
+    if (showCode) fieldsHtml += `<div style="font-size:0.75rem; font-weight:bold; border-bottom:1px solid #000; padding-bottom:2px; margin-bottom:4px; font-family:monospace;">${batch.batch_code}</div>`;
     if (showCoffee) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Coffee:</strong> ${coffeeName}</div>`;
     if (showDate) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Date:</strong> ${batch.roast_date}</div>`;
     if (showMachine) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Machine:</strong> ${machineName}</div>`;
@@ -10876,8 +10889,8 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
         let maxSeq = 0;
         const regex = /^([^-]+)-([A-Za-z0-9]+?)(\d{4})-(\d+)$/;
         (batches || []).forEach(b => {
-            if (b.batch_number) {
-                const match = b.batch_number.match(regex);
+            if (b.batch_code) {
+                const match = b.batch_code.match(regex);
                 if (match && match[1] === coffeeCode && match[3] === datePart) {
                     const s = parseInt(match[4]); if (s > maxSeq) maxSeq = s;
                 }
@@ -10950,14 +10963,21 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
         
         const qcStatus = isTest ? 'Pending' : 'Success';
 
+        const yieldPct = outputKg > 0 && inputKg > 0 ? parseFloat(((outputKg / inputKg) * 100).toFixed(2)) : null;
         const record = {
-            batch_number: code,
+            batch_code: code,
             roast_date: roastDate,
-            roast_plan_id: null,
-            green_coffee_id: singleId || null,
+            roasting_plan_id: null,
+            coffee_type: type,
+            single_coffee_id: singleId || null,
+            blend_recipe_id: blendId || null,
             machine_id: mId,
-            green_weight_g: Math.round(inputKg * 1000),
-            roasted_weight_g: Math.round(outputKg * 1000)
+            input_weight_kg: inputKg,
+            output_weight_kg: outputKg,
+            yield_percentage: yieldPct,
+            roast_type: isTest ? 'Test' : 'Regular',
+            qc_status: qcStatus,
+            notes: notes || null
         };
         
         const { error } = await saveData('roast_batches', record);
