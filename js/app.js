@@ -4488,23 +4488,15 @@ async function openRoastBatchModal(plan = null, editId = null) {
         setCookie('last_machine_id', machineId.toString());
         setCookie('last_coffee_val', coffeeVal);
 
-        // 3. Save Roast Batch Record
+        // 3. Save Roast Batch Record (match production schema)
         const record = {
             batch_number: code,
             roast_date: roastDate,
-            roast_type: isTest ? 'Test' : 'Regular',
-            qc_status: qcStatus,
-            coffee_type: type,
-            single_coffee_id: singleId,
-            blend_recipe_id: blendId,
+            roast_plan_id: editId ? existingBatch.roast_plan_id : (plan ? plan.id : null),
+            green_coffee_id: singleId || null,
             machine_id: machineId,
-            roasting_plan_id: editId ? existingBatch.roasting_plan_id : (plan ? plan.id : null),
-            input_weight_kg: inputKg,
-            output_weight_kg: outputKg,
-            yield_percentage: (outputKg / inputKg) * 100,
-            remaining_bulk_kg: qcStatus === 'Success' ? outputKg : 0.0,
-            roaster_operator: currentUser ? currentUser.name : 'Operator',
-            notes: notes
+            green_weight_g: Math.round(inputKg * 1000),
+            roasted_weight_g: Math.round(outputKg * 1000)
         };
 
         if (editId) {
@@ -10952,19 +10944,11 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
         const record = {
             batch_number: code,
             roast_date: roastDate,
-            roast_type: isTest ? 'Test' : 'Regular',
-            qc_status: qcStatus,
-            coffee_type: type,
-            single_coffee_id: singleId,
-            blend_recipe_id: blendId,
+            roast_plan_id: null,
+            green_coffee_id: singleId || null,
             machine_id: mId,
-            roasting_plan_id: null,
-            input_weight_kg: inputKg,
-            output_weight_kg: outputKg,
-            yield_percentage: (outputKg / inputKg) * 100,
-            remaining_bulk_kg: qcStatus === 'Success' ? outputKg : 0.0,
-            roaster_operator: currentUser ? currentUser.name : 'Operator',
-            notes: notes
+            green_weight_g: Math.round(inputKg * 1000),
+            roasted_weight_g: Math.round(outputKg * 1000)
         };
         
         const { error } = await saveData('roast_batches', record);
