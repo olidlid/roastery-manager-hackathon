@@ -7473,7 +7473,11 @@ async function openSalesRequestModal(orderId = null) {
                     quantity_pending: qty,
                     item_status: existingOrder ? existingOrder.status : 'Pending Approval'
                 };
-                await saveData('request_order_items', itemRecord);
+                const { error: itemErr } = await saveData('request_order_items', itemRecord);
+                if (itemErr) {
+                    alert("Failed to save order item: " + itemErr.message);
+                    return;
+                }
             }
         } else {
             // New order: save items
@@ -7495,7 +7499,11 @@ async function openSalesRequestModal(orderId = null) {
                     quantity_pending: qty,
                     item_status: 'Pending Approval'
                 };
-                await saveData('request_order_items', itemRecord);
+                const { error: itemErr } = await saveData('request_order_items', itemRecord);
+                if (itemErr) {
+                    alert("Failed to save order item: " + itemErr.message);
+                    return;
+                }
             }
         }
 
