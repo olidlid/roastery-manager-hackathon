@@ -5774,10 +5774,15 @@ async function submitPackingSheet() {
         for (const add of additions) {
             await saveData('packing_records', {
                 date: packingDate,
+                pack_date: packingDate,
+                source_type: add.type,
+                source_id: add.id,
                 coffee_name: `${add.coffeeName} (${add.type})`,
                 machine_id: add.machineId,
                 bag_size_g: add.sizeG,
-                quantity: add.qty
+                size_g: add.sizeG,
+                quantity: add.qty,
+                status: 'Completed'
             });
         }
         
