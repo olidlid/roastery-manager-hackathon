@@ -10968,7 +10968,11 @@ async function viewStockTake(takeId) {
 async function printStockCountForm() {
     const groups = await buildStockTakeGroups();
     const cs = companySettings;
-    const EMPTY_ROWS = 8;
+    // Fill each A4 page: aim for a fixed total number of rows so the table reaches
+    // the bottom. Empty rows top up whatever the data rows don't cover; if the data
+    // alone already exceeds a page, still add a few blanks for write-ins.
+    const TARGET_ROWS_PER_PAGE = 22;
+    const MIN_EMPTY_ROWS = 4;
 
     const byCat = { greenbean: [], bulk: [], packed: [] };
     groups.forEach(g => { if (byCat[g.category]) byCat[g.category].push(g); });
@@ -10995,7 +10999,8 @@ async function printStockCountForm() {
                 <td class="blank"></td>
             </tr>`;
         });
-        for (let i = 0; i < EMPTY_ROWS; i++) {
+        const emptyCount = Math.max(TARGET_ROWS_PER_PAGE - list.length, MIN_EMPTY_ROWS);
+        for (let i = 0; i < emptyCount; i++) {
             rows += `<tr>
                 <td class="c">${idx++}</td>
                 <td class="blank"></td>
@@ -11065,12 +11070,12 @@ async function printStockCountForm() {
         .meta { display: flex; gap: 40px; font-size: 11px; color: #555; margin-bottom: 12px; }
         table { width: 100%; border-collapse: collapse; }
         thead th { background: #2d5016; color: #fff; padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; text-align: left; border: 1px solid #2d5016; }
-        tbody td { padding: 9px 10px; border: 1px solid #cfcfcf; font-size: 12px; height: 34px; }
+        tbody td { padding: 6px 10px; border: 1px solid #cfcfcf; font-size: 12px; height: 26px; }
         tbody td.c { text-align: center; }
         tbody td.blank { background: #fff; }
-        .signoff { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; margin-top: 36px; }
+        .signoff { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; margin-top: 24px; }
         .sig { text-align: center; }
-        .sig-line { border-top: 1px solid #333; margin-bottom: 4px; padding-top: 40px; }
+        .sig-line { border-top: 1px solid #333; margin-bottom: 4px; padding-top: 32px; }
         .sig-lbl { font-size: 10px; text-transform: uppercase; color: #666; font-weight: 600; }
         @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
     </style>
