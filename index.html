@@ -1195,6 +1195,7 @@
                             <button class="tab-btn" data-tab="tab-rep-packing" data-i18n="tab_rep_packing">Packing</button>
                             <button class="tab-btn" data-tab="tab-rep-sales">Sales Dispatch</button>
                             <button class="tab-btn" data-tab="tab-rep-customers" data-i18n="tab_rep_customers">Customers</button>
+                            <button class="tab-btn" data-tab="tab-rep-stockopname" data-i18n="tab_rep_stockopname">Stock Opname</button>
                         </div>
                         <!-- Date Filter (right, compact) -->
                         <div style="display: flex; gap: 8px; align-items: flex-end;">
@@ -1512,6 +1513,68 @@
                                 </div>
                             </div>
                         </div>
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB: Stock Opname -->
+                    <div id="tab-rep-stockopname" class="tab-content hidden">
+                        <!-- Counting sheet (hidden until a new stock take is started) -->
+                        <div id="stockopname-sheet" class="hidden">
+                            <div class="card">
+                                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:16px;">
+                                    <div>
+                                        <h3 class="card-title" style="margin-bottom:4px;" data-i18n="stockopname_sheet_title">New Stock Count</h3>
+                                        <p style="margin:0; font-size:0.8rem; color:var(--text-muted);" data-i18n="stockopname_sheet_hint">Enter the physically counted quantity for each item. Unchanged rows keep the system value.</p>
+                                    </div>
+                                    <div style="display:flex; gap:8px;">
+                                        <button type="button" id="btn-stockopname-cancel" class="btn btn-secondary btn-sm" data-i18n="btn_cancel">Cancel</button>
+                                        <button type="button" id="btn-stockopname-finalize" class="btn btn-primary btn-sm" data-i18n="btn_stockopname_finalize">Finalize &amp; Adjust</button>
+                                    </div>
+                                </div>
+                                <div class="form-group" style="max-width:360px;">
+                                    <label class="form-label" for="stockopname-notes" data-i18n="lbl_stockopname_notes">Notes (optional)</label>
+                                    <input type="text" id="stockopname-notes" class="form-control">
+                                </div>
+                                <div class="table-container">
+                                    <table id="stockopname-count-table">
+                                        <thead>
+                                            <tr>
+                                                <th data-i18n="col_category">Category</th>
+                                                <th data-i18n="col_item">Item</th>
+                                                <th style="text-align:center;" data-i18n="col_system_qty">System</th>
+                                                <th style="text-align:center;" data-i18n="col_actual_qty">Actual</th>
+                                                <th style="text-align:center;" data-i18n="col_variance">Variance</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="stockopname-count-body"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- History (default view) -->
+                        <div id="stockopname-history">
+                            <div class="card" style="overflow-x:auto;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                                    <h3 class="card-title" style="margin-bottom:0;" data-i18n="stockopname_history_title">Stock Opname History</h3>
+                                    <button type="button" id="btn-stockopname-new" class="btn btn-primary btn-sm">+ <span data-i18n="btn_stockopname_new">New Stock Take</span></button>
+                                </div>
+                                <div class="table-container">
+                                    <table id="stockopname-history-table">
+                                        <thead>
+                                            <tr>
+                                                <th data-i18n="col_date">Date</th>
+                                                <th data-i18n="col_performed_by">Performed By</th>
+                                                <th style="text-align:center;" data-i18n="col_items">Items</th>
+                                                <th style="text-align:center;" data-i18n="col_variances">Variances</th>
+                                                <th data-i18n="col_notes">Notes</th>
+                                                <th style="text-align:center;" data-i18n="col_actions">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="stockopname-history-body"></tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2111,6 +2174,6 @@
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/app.js?v=17"></script>
+    <script src="js/app.js?v=18"></script>
 </body>
 </html>

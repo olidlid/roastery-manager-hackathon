@@ -9598,6 +9598,9 @@ async function loadReportsTabSpecificData(tabId) {
         case 'tab-rep-customers':
             await loadCustomerReport(startVal, endVal);
             break;
+        case 'tab-rep-stockopname':
+            await loadStockOpnameReport(startVal, endVal);
+            break;
     }
 }
 
@@ -10607,6 +10610,355 @@ async function loadCustomerReport(startDate, endDate) {
             exportToExcel(exportData, 'Coffee_Preference_by_Customer');
         });
     }
+}
+
+// ============================================================
+// STOCK OPNAME (physical stock count / reconciliation)
+// ============================================================
+
+// Holds the groups being counted during an in-progress stock take so
+// finalizeStockTake() can adjust the underlying source rows.
+let currentStockTakeGroups = null;
+
+function resolvePackedCoffeeName(item, batches, greenbeans, recipes) {
+    let name = item.custom_coffee_name || 'Roasted Coffee';
+    if (item.roast_batch_id) {
+        const b = (batches || []).find(x => x.id === item.roast_batch_id);
+        if (b) {
+            if (b.coffee_type === 'Single') {
+                const gb = (greenbeans || []).find(g => g.id === b.single_coffee_id);
+                if (gb) name = gb.name;
+            } else {
+                const r = (recipes || []).find(rec => rec.id === b.blend_recipe_id);
+                if (r) name = r.name;
+            }
+        }
+    }
+    return name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+}
+
+// Build the list of countable units. Green bean is one row per coffee; bulk and
+// packed are aggregated to what a human physically counts (per coffee, per
+// coffee+size) so a single actual count can map onto several system rows.
+async function buildStockTakeGroups() {
+    const [
+        { data: greenbeans },
+        { data: bulk },
+        { data: packed },
+        { data: batches },
+        { data: recipes }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('bulk_roasted_coffee'),
+        fetchData('packed_coffee'),
+        fetchData('roast_batches'),
+        fetchData('blend_recipes')
+    ]);
+
+    const groups = [];
+
+    // Green bean — one countable unit per coffee (always shown).
+    (greenbeans || []).forEach(g => {
+        groups.push({
+            category: 'greenbean',
+            label: g.name || `Green #${g.id}`,
+            unit: 'kg',
+            field: 'stock_kg',
+            systemQty: parseFloat(g.stock_kg) || 0,
+            rows: [{ table: 'green_coffee', rec: g }]
+        });
+    });
+
+    // Bulk roasted — aggregate by coffee_name across machine rows.
+    const bulkByName = {};
+    (bulk || []).forEach(b => {
+        const key = b.coffee_name || `Bulk #${b.id}`;
+        if (!bulkByName[key]) bulkByName[key] = [];
+        bulkByName[key].push(b);
+    });
+    Object.keys(bulkByName).forEach(name => {
+        const rows = bulkByName[name];
+        const systemQty = rows.reduce((s, r) => s + (parseFloat(r.bulk_available) || 0), 0);
+        if (systemQty <= 0) return;
+        groups.push({
+            category: 'bulk',
+            label: name,
+            unit: 'kg',
+            field: 'bulk_available',
+            systemQty,
+            rows: rows.map(r => ({ table: 'bulk_roasted_coffee', rec: r }))
+        });
+    });
+
+    // Packed coffee — aggregate by coffee name + bag size across batches/machines.
+    const packedByKey = {};
+    (packed || []).forEach(p => {
+        const name = resolvePackedCoffeeName(p, batches, greenbeans, recipes);
+        const size = parseInt(p.bag_size_g) || 0;
+        const key = `${name}|${size}`;
+        if (!packedByKey[key]) packedByKey[key] = { name, size, rows: [] };
+        packedByKey[key].rows.push(p);
+    });
+    Object.values(packedByKey).forEach(grp => {
+        const systemQty = grp.rows.reduce((s, r) => s + (parseInt(r.quantity) || 0), 0);
+        if (systemQty <= 0) return;
+        const sizeLabel = grp.size >= 1000 ? `${grp.size / 1000}kg` : `${grp.size}g`;
+        groups.push({
+            category: 'packed',
+            label: `${grp.name} (${sizeLabel})`,
+            unit: 'bags',
+            field: 'quantity',
+            systemQty,
+            rows: grp.rows.map(r => ({ table: 'packed_coffee', rec: r }))
+        });
+    });
+
+    return groups;
+}
+
+function stockCategoryLabel(cat) {
+    if (cat === 'greenbean') return window.t ? (window.t('cat_greenbean') || 'Green Bean') : 'Green Bean';
+    if (cat === 'bulk') return window.t ? (window.t('cat_bulk') || 'Bulk Roasted') : 'Bulk Roasted';
+    if (cat === 'packed') return window.t ? (window.t('cat_packed') || 'Packed') : 'Packed';
+    return cat;
+}
+
+async function loadStockOpnameReport(startDate, endDate) {
+    // Wire buttons (idempotent — onclick assignment, not addEventListener).
+    const newBtn = document.getElementById('btn-stockopname-new');
+    if (newBtn) newBtn.onclick = startStockTake;
+    const cancelBtn = document.getElementById('btn-stockopname-cancel');
+    if (cancelBtn) cancelBtn.onclick = cancelStockTake;
+    const finalizeBtn = document.getElementById('btn-stockopname-finalize');
+    if (finalizeBtn) finalizeBtn.onclick = finalizeStockTake;
+
+    // Default to history view.
+    const sheet = document.getElementById('stockopname-sheet');
+    const history = document.getElementById('stockopname-history');
+    if (sheet) sheet.classList.add('hidden');
+    if (history) history.classList.remove('hidden');
+
+    const { data: takes } = await fetchData('stock_takes');
+    const filtered = (takes || []).filter(t => {
+        const d = t.take_date || t.created_at?.split('T')[0];
+        if (!d) return true;
+        if (startDate && d < startDate) return false;
+        if (endDate && d > endDate) return false;
+        return true;
+    }).sort((a, b) => (b.take_date || '').localeCompare(a.take_date || '') || b.id - a.id);
+
+    const tbody = document.getElementById('stockopname-history-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">${window.t ? (window.t('stockopname_empty') || 'No stock takes recorded yet.') : 'No stock takes recorded yet.'}</td></tr>`;
+        return;
+    }
+    filtered.forEach(t => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${t.take_date || '-'}</strong></td>
+            <td>${t.performed_by || '-'}</td>
+            <td style="text-align:center;">${t.total_items || 0}</td>
+            <td style="text-align:center; ${(t.variance_items || 0) > 0 ? 'color:var(--danger); font-weight:700;' : ''}">${t.variance_items || 0}</td>
+            <td>${t.notes || '-'}</td>
+            <td style="text-align:center;"><button class="btn btn-secondary btn-sm" onclick="viewStockTake(${t.id})">${window.t ? (window.t('btn_view') || 'View') : 'View'}</button></td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+async function startStockTake() {
+    const tbody = document.getElementById('stockopname-count-body');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">Loading…</td></tr>`;
+
+    const groups = await buildStockTakeGroups();
+    currentStockTakeGroups = groups;
+
+    const sheet = document.getElementById('stockopname-sheet');
+    const history = document.getElementById('stockopname-history');
+    if (sheet) sheet.classList.remove('hidden');
+    if (history) history.classList.add('hidden');
+
+    const notesInput = document.getElementById('stockopname-notes');
+    if (notesInput) notesInput.value = '';
+
+    if (tbody) {
+        tbody.innerHTML = '';
+        groups.forEach((g, i) => {
+            const sysDisplay = g.unit === 'kg' ? g.systemQty.toFixed(1) : g.systemQty;
+            const step = g.unit === 'kg' ? '0.1' : '1';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><span style="font-size:0.72rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:2px 7px; border-radius:6px;">${stockCategoryLabel(g.category)}</span></td>
+                <td><strong>${g.label}</strong></td>
+                <td style="text-align:center;">${sysDisplay} ${g.unit}</td>
+                <td style="text-align:center;"><input type="number" class="form-control stockopname-actual-input" data-group-index="${i}" value="${g.systemQty}" step="${step}" min="0" style="width:110px; text-align:center; margin:0 auto;"></td>
+                <td style="text-align:center;" class="stockopname-variance-cell" data-group-index="${i}">0</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        tbody.querySelectorAll('.stockopname-actual-input').forEach(input => {
+            input.addEventListener('input', () => {
+                const idx = parseInt(input.getAttribute('data-group-index'));
+                const g = currentStockTakeGroups[idx];
+                const actual = parseFloat(input.value);
+                const cell = tbody.querySelector(`.stockopname-variance-cell[data-group-index="${idx}"]`);
+                if (!cell) return;
+                if (isNaN(actual)) { cell.textContent = '-'; cell.style.color = 'var(--text-muted)'; return; }
+                const variance = actual - g.systemQty;
+                const vDisplay = g.unit === 'kg' ? variance.toFixed(1) : variance;
+                cell.textContent = variance > 0 ? `+${vDisplay}` : `${vDisplay}`;
+                cell.style.color = variance === 0 ? 'var(--text-muted)' : (variance > 0 ? 'var(--success)' : 'var(--danger)');
+                cell.style.fontWeight = variance === 0 ? '400' : '700';
+            });
+        });
+    }
+}
+
+function cancelStockTake() {
+    currentStockTakeGroups = null;
+    const sheet = document.getElementById('stockopname-sheet');
+    const history = document.getElementById('stockopname-history');
+    if (sheet) sheet.classList.add('hidden');
+    if (history) history.classList.remove('hidden');
+}
+
+// Push a group's counted total back onto its underlying source rows. Surplus is
+// added to the first row; a shortage is deducted across rows until satisfied.
+function applyStockGroupAdjustment(group, actual) {
+    const changed = [];
+    const field = group.field;
+    let delta = actual - group.systemQty;
+    if (Math.abs(delta) < 1e-9) return changed;
+    if (delta > 0) {
+        const row = group.rows[0];
+        row.rec[field] = (parseFloat(row.rec[field]) || 0) + delta;
+        changed.push(row);
+    } else {
+        let deduct = -delta;
+        for (const row of group.rows) {
+            if (deduct <= 1e-9) break;
+            const avail = parseFloat(row.rec[field]) || 0;
+            const take = Math.min(avail, deduct);
+            if (take > 0) { row.rec[field] = avail - take; deduct -= take; changed.push(row); }
+        }
+    }
+    return changed;
+}
+
+async function finalizeStockTake() {
+    if (!currentStockTakeGroups) return;
+    const tbody = document.getElementById('stockopname-count-body');
+    if (!tbody) return;
+
+    // Read actual counts.
+    const lines = [];
+    const adjustments = [];
+    currentStockTakeGroups.forEach((g, i) => {
+        const input = tbody.querySelector(`.stockopname-actual-input[data-group-index="${i}"]`);
+        let actual = input ? parseFloat(input.value) : NaN;
+        if (isNaN(actual)) actual = g.systemQty; // blank = unchanged
+        const variance = actual - g.systemQty;
+        lines.push({
+            category: g.category,
+            item_name: g.label,
+            unit: g.unit,
+            system_qty: g.systemQty,
+            actual_qty: actual,
+            variance: variance
+        });
+        if (Math.abs(variance) > 1e-9) adjustments.push({ group: g, actual });
+    });
+
+    const varianceCount = lines.filter(l => Math.abs(l.variance) > 1e-9).length;
+    const confirmMsg = (window.t ? (window.t('confirm_stockopname_finalize') || 'Finalize this stock take? System stock will be adjusted to match your counts.') : 'Finalize this stock take? System stock will be adjusted to match your counts.')
+        + `\n\nItems: ${lines.length}  |  Variances: ${varianceCount}`;
+    if (!confirm(confirmMsg)) return;
+
+    // Save the parent record FIRST. If the stock_takes table is missing, bail out
+    // before touching any live stock so nothing gets adjusted half-way.
+    const { data: parent, error: parentErr } = await saveData('stock_takes', {
+        take_date: new Date().toISOString().split('T')[0],
+        performed_by: (currentUser && currentUser.name) ? currentUser.name : 'Unknown',
+        notes: (document.getElementById('stockopname-notes') || {}).value || '',
+        total_items: lines.length,
+        variance_items: varianceCount
+    });
+    if (parentErr || !parent || !parent.id) {
+        alert('Failed to save stock take (has the stock_takes table been created in Supabase?): ' + (parentErr ? parentErr.message : 'no id returned'));
+        return;
+    }
+
+    // Adjust the live source rows.
+    for (const adj of adjustments) {
+        const changedRows = applyStockGroupAdjustment(adj.group, adj.actual);
+        for (const row of changedRows) {
+            await saveData(row.table, row.rec);
+        }
+    }
+
+    // Save the audit line items.
+    for (const line of lines) {
+        await saveData('stock_take_items', { stock_take_id: parent.id, ...line });
+    }
+
+    alert(window.t ? (window.t('alert_stockopname_saved') || 'Stock take finalized and stock adjusted.') : 'Stock take finalized and stock adjusted.');
+    currentStockTakeGroups = null;
+    await loadStockOpnameReport('', '');
+    if (typeof scheduleDashboardRefresh === 'function') scheduleDashboardRefresh();
+}
+
+async function viewStockTake(takeId) {
+    const [
+        { data: takes },
+        { data: items }
+    ] = await Promise.all([
+        fetchData('stock_takes'),
+        fetchData('stock_take_items')
+    ]);
+    const take = (takes || []).find(t => t.id === takeId);
+    const lines = (items || []).filter(it => it.stock_take_id === takeId);
+
+    let rowsHtml = '';
+    lines.forEach(l => {
+        const sys = l.unit === 'kg' ? parseFloat(l.system_qty).toFixed(1) : l.system_qty;
+        const act = l.unit === 'kg' ? parseFloat(l.actual_qty).toFixed(1) : l.actual_qty;
+        const varN = parseFloat(l.variance) || 0;
+        const varDisplay = l.unit === 'kg' ? varN.toFixed(1) : varN;
+        const varColor = varN === 0 ? 'var(--text-muted)' : (varN > 0 ? 'var(--success)' : 'var(--danger)');
+        rowsHtml += `
+            <tr>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border);"><span style="font-size:0.7rem; color:#0891b2; background:rgba(6,182,212,0.1); padding:2px 6px; border-radius:5px;">${stockCategoryLabel(l.category)}</span></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${l.item_name}</td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center;">${sys} ${l.unit}</td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center;">${act} ${l.unit}</td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center; color:${varColor}; font-weight:${varN === 0 ? '400' : '700'};">${varN > 0 ? '+' : ''}${varDisplay}</td>
+            </tr>`;
+    });
+
+    const html = `
+        <div style="margin-bottom:12px; font-size:0.85rem; color:var(--text-secondary);">
+            <strong>${take ? (take.take_date || '') : ''}</strong> — ${take ? (take.performed_by || '') : ''}
+            ${take && take.notes ? `<br>${take.notes}` : ''}
+        </div>
+        <div style="max-height:60vh; overflow-y:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_category') || 'Category') : 'Category'}</th>
+                        <th style="text-align:left; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_item') || 'Item') : 'Item'}</th>
+                        <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_system_qty') || 'System') : 'System'}</th>
+                        <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_actual_qty') || 'Actual') : 'Actual'}</th>
+                        <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_variance') || 'Variance') : 'Variance'}</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml || `<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--text-muted);">No line items.</td></tr>`}</tbody>
+            </table>
+        </div>
+    `;
+    openModal(window.t ? (window.t('stockopname_detail_title') || 'Stock Take Detail') : 'Stock Take Detail', html);
 }
 
 // Fullscreen Table Popup

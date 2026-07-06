@@ -382,6 +382,34 @@ CREATE TABLE IF NOT EXISTS public.sales_orders (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 21. Stock takes (monthly stock opname / physical count sessions) — added 2026-07-06
+CREATE TABLE IF NOT EXISTS public.stock_takes (
+    id SERIAL PRIMARY KEY,
+    take_date DATE DEFAULT CURRENT_DATE,
+    performed_by TEXT,
+    notes TEXT,
+    total_items INTEGER DEFAULT 0,            -- number of counted line items
+    variance_items INTEGER DEFAULT 0,         -- how many of those had a non-zero variance
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 22. Stock take line items — one row per counted unit (audit snapshot) — added 2026-07-06
+--     system_qty is what the app believed at count time; actual_qty is the physical
+--     count; variance = actual_qty - system_qty. On finalize the app writes actual_qty
+--     back into the source table (green_coffee.stock_kg / bulk_roasted_coffee.bulk_available
+--     / packed_coffee.quantity) and keeps this row as the immutable audit trail.
+CREATE TABLE IF NOT EXISTS public.stock_take_items (
+    id SERIAL PRIMARY KEY,
+    stock_take_id INTEGER REFERENCES public.stock_takes(id) ON DELETE CASCADE,
+    category TEXT,                            -- 'greenbean' | 'bulk' | 'packed'
+    item_name TEXT,
+    unit TEXT,                               -- 'kg' | 'bags'
+    system_qty NUMERIC DEFAULT 0,
+    actual_qty NUMERIC DEFAULT 0,
+    variance NUMERIC DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ----------------------------------------------------------------------------
@@ -399,7 +427,8 @@ BEGIN
     'green_coffee_intake','blend_recipes','blend_ingredients','machines',
     'roasting_plans','roast_batches','bulk_roasted_coffee','waste_inventory',
     'packaging_sizes','packed_coffee','packing_records','customers',
-    'sales_agents','request_orders','request_order_items','sales_orders'
+    'sales_agents','request_orders','request_order_items','sales_orders',
+    'stock_takes','stock_take_items'
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);
