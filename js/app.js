@@ -7544,12 +7544,15 @@ async function loadUsersSection() {
     const tbody = document.getElementById('users-table-body');
     tbody.innerHTML = '';
 
-    if (users.length === 0) {
+    // Hide Developer role users from the list (incognito)
+    const visibleUsers = (users || []).filter(u => u.role !== 'Developer');
+
+    if (visibleUsers.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No operator accounts registered.</td></tr>`;
         return;
     }
 
-    const sortedUsers = [...users].sort((a, b) => (b.created_at && a.created_at ? new Date(b.created_at) - new Date(a.created_at) : 0));
+    const sortedUsers = [...visibleUsers].sort((a, b) => (b.created_at && a.created_at ? new Date(b.created_at) - new Date(a.created_at) : 0));
 
     sortedUsers.forEach(user => {
         const tr = document.createElement('tr');
