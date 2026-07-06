@@ -8084,11 +8084,12 @@ document.getElementById('settings-minqty-form').addEventListener('submit', async
         localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
         alert(window.t("alert_settings_saved") || "Settings saved successfully.");
     } else {
-        const { error } = await window.supabaseClient.from('company_settings').update({
+        const { error } = await window.supabaseClient.from('company_settings').upsert({
+            id: 1,
             min_stock_greenbean_kg: companySettings.min_stock_greenbean_kg,
             min_production_potential_kg: companySettings.min_production_potential_kg,
             min_stock_packed_sizes: companySettings.min_stock_packed_sizes
-        }).eq('id', 1);
+        });
 
         if (error) {
             console.error(error);
@@ -8111,9 +8112,13 @@ document.getElementById('settings-company-form').addEventListener('submit', asyn
     if (isMockMode) {
         localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
     } else {
-        await window.supabaseClient.from('company_settings').update(companySettings).eq('id', 1);
+        const { error } = await window.supabaseClient.from('company_settings').upsert({ id: 1, ...companySettings });
+        if (error) {
+            alert("Failed to save company profile: " + error.message);
+            return;
+        }
     }
-    
+
     applyCompanySettings();
     alert(window.t("alert_settings_saved"));
 });
@@ -8127,7 +8132,11 @@ document.getElementById('settings-print-form').addEventListener('submit', async 
     if (isMockMode) {
         localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
     } else {
-        await window.supabaseClient.from('company_settings').update(companySettings).eq('id', 1);
+        const { error } = await window.supabaseClient.from('company_settings').upsert({ id: 1, ...companySettings });
+        if (error) {
+            alert("Failed to save print settings: " + error.message);
+            return;
+        }
     }
 
     applyCompanySettings();
@@ -8149,7 +8158,11 @@ document.getElementById('settings-label-form').addEventListener('submit', async 
     if (isMockMode) {
         localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
     } else {
-        await window.supabaseClient.from('company_settings').update(companySettings).eq('id', 1);
+        const { error } = await window.supabaseClient.from('company_settings').upsert({ id: 1, ...companySettings });
+        if (error) {
+            alert("Failed to save label settings: " + error.message);
+            return;
+        }
     }
 
     applyCompanySettings();
@@ -8166,7 +8179,11 @@ document.getElementById('sett-logo-upload').addEventListener('change', (e) => {
             if (isMockMode) {
                 localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
             } else {
-                await window.supabaseClient.from('company_settings').update({ logo_base64: reader.result }).eq('id', 1);
+                const { error } = await window.supabaseClient.from('company_settings').upsert({ id: 1, logo_base64: reader.result });
+                if (error) {
+                    alert("Failed to save logo: " + error.message);
+                    return;
+                }
             }
             applyCompanySettings();
         };

@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS public.company_settings (
     label_show_weight BOOLEAN DEFAULT TRUE,
     label_show_operator BOOLEAN DEFAULT FALSE,
     label_show_qr BOOLEAN DEFAULT FALSE,
+    label_show_dep BOOLEAN DEFAULT TRUE,        -- added 2026-07-06 (label print: show Depreciation %)
     developer_key TEXT DEFAULT 'dev2026'
 );
 
