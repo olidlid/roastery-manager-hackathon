@@ -1008,6 +1008,32 @@ tbody tr:hover {
         max-height: 92vh;
         overflow-y: auto;
     }
+
+    /* Smaller type on mobile so a page fits more without scrolling as much.
+       Users can always pinch-zoom if something reads too small. */
+    .page-title {
+        font-size: 1.3rem !important;
+    }
+
+    .page-subtitle {
+        font-size: 0.78rem !important;
+    }
+
+    .card-title {
+        font-size: 1rem !important;
+    }
+
+    .overlay-title {
+        font-size: 1.15rem !important;
+    }
+
+    .metric-value {
+        font-size: 1.25rem !important;
+    }
+
+    #mobile-topbar-title {
+        font-size: 0.95rem !important;
+    }
 }
 
 @media print {
