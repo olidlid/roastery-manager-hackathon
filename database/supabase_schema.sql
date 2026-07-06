@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS public.company_settings (
     label_show_operator BOOLEAN DEFAULT FALSE,
     label_show_qr BOOLEAN DEFAULT FALSE,
     label_show_dep BOOLEAN DEFAULT TRUE,        -- added 2026-07-06 (label print: show Depreciation %)
-    developer_key TEXT DEFAULT 'dev2026'
+    developer_key TEXT DEFAULT 'dev2026',
+    slogan TEXT DEFAULT ''                      -- added 2026-07-06 (shown under company name in sidebar)
 );
 
 -- 4. Green bean inventory

@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=8">
+    <link rel="stylesheet" href="css/styles.css?v=9">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -222,7 +222,10 @@
         <aside id="sidebar">
             <div class="sidebar-brand">
                 <img id="sidebar-logo-img" class="sidebar-logo" src="https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?q=80&w=100&auto=format&fit=crop" alt="Logo">
-                <span id="sidebar-company-name" class="sidebar-title">Roastery Pro</span>
+                <div class="sidebar-brand-text">
+                    <span id="sidebar-company-name" class="sidebar-title">Roastery Pro</span>
+                    <span id="sidebar-slogan" class="sidebar-slogan hidden"></span>
+                </div>
             </div>
             
             <ul class="sidebar-menu">
@@ -1673,6 +1676,10 @@
                                                 <label class="form-label" for="sett-company-name" data-i18n="lbl_comp_name">Company / Roastery Name</label>
                                                 <input type="text" id="sett-company-name" class="form-control" required>
                                             </div>
+                                            <div class="form-group">
+                                                <label class="form-label" for="sett-slogan" data-i18n="lbl_comp_slogan">Slogan / Tagline</label>
+                                                <input type="text" id="sett-slogan" class="form-control" placeholder="e.g. Fresh Roasted, Every Day" data-i18n-placeholder="ph_comp_slogan">
+                                            </div>
                                             <div class="form-row">
                                                 <div class="form-group">
                                                     <label class="form-label" for="sett-phone" data-i18n="lbl_comp_phone">Contact Phone</label>
@@ -2209,6 +2216,6 @@
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/app.js?v=24"></script>
+    <script src="js/app.js?v=25"></script>
 </body>
 </html>

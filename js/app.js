@@ -570,8 +570,14 @@ function applyCompanySettings() {
     if (companySettings.logo_base64) {
         document.getElementById('sidebar-logo-img').src = companySettings.logo_base64;
     }
+    const sloganEl = document.getElementById('sidebar-slogan');
+    if (sloganEl) {
+        sloganEl.textContent = companySettings.slogan || '';
+        sloganEl.classList.toggle('hidden', !companySettings.slogan);
+    }
     // Update labels and values in Forms
     document.getElementById('sett-company-name').value = companySettings.company_name;
+    document.getElementById('sett-slogan').value = companySettings.slogan || '';
     document.getElementById('sett-phone').value = companySettings.phone || '';
     document.getElementById('sett-email').value = companySettings.email || '';
     document.getElementById('sett-address').value = companySettings.address || '';
@@ -8379,6 +8385,7 @@ document.getElementById('settings-minqty-form').addEventListener('submit', async
 document.getElementById('settings-company-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     companySettings.company_name = document.getElementById('sett-company-name').value;
+    companySettings.slogan = document.getElementById('sett-slogan').value;
     companySettings.phone = document.getElementById('sett-phone').value;
     companySettings.email = document.getElementById('sett-email').value;
     companySettings.address = document.getElementById('sett-address').value;
