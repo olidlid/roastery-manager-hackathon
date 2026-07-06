@@ -1380,6 +1380,17 @@
 
                     <!-- SUB-TAB: Customers Report -->
                     <div id="tab-rep-customers" class="tab-content hidden">
+                        <div class="form-group" style="max-width:320px; margin-bottom:20px;">
+                            <label class="form-label" for="customer-report-view-select" data-i18n="lbl_customer_report_view">Report View</label>
+                            <select id="customer-report-view-select" class="form-control">
+                                <option value="cust-view-volume" data-i18n="rep_customer_table_title">Top Customers by Volume</option>
+                                <option value="cust-view-type" data-i18n="rep_customer_type_chart_title">Customer Type Breakdown</option>
+                                <option value="cust-view-status" data-i18n="rep_order_status_table_title">Order Status per Customer</option>
+                                <option value="cust-view-pref" data-i18n="rep_coffee_pref_table_title">Coffee Preference by Customer</option>
+                            </select>
+                        </div>
+
+                        <div id="cust-view-volume" class="cust-report-view">
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; flex-wrap: wrap;">
                             <div class="card" style="overflow-x: auto; cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenTable('rep-customer-table','Top Customers by Volume')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
@@ -1420,9 +1431,11 @@
                                 </div>
                             </div>
                         </div>
+                        </div>
 
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; flex-wrap: wrap; margin-top: 24px;">
-                            <div class="card chart-card-expandable" data-chart-id="rep-customer-type-chart" style="cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenChart('rep-customer-type-chart','Customer Type Breakdown')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                        <div id="cust-view-type" class="cust-report-view hidden">
+                        <div style="display: grid; grid-template-columns: 1fr; gap: 24px; align-items: start; flex-wrap: wrap;">
+                            <div class="card chart-card-expandable" data-chart-id="rep-customer-type-chart" style="cursor:pointer; transition:box-shadow 0.2s; max-width:520px;" onclick="openFullscreenChart('rep-customer-type-chart','Customer Type Breakdown')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
                                 <div style="display:flex; justify-content:space-between; align-items:center;">
                                     <h3 class="card-title" style="margin-bottom:0;" data-i18n="rep_customer_type_chart_title">Customer Type Breakdown</h3>
                                     <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Click to expand</span>
@@ -1431,6 +1444,11 @@
                                     <canvas id="rep-customer-type-chart"></canvas>
                                 </div>
                             </div>
+                        </div>
+                        </div>
+
+                        <div id="cust-view-status" class="cust-report-view hidden">
+                        <div style="display: grid; grid-template-columns: 1fr; gap: 24px; align-items: start;">
                             <div class="card" style="overflow-x: auto; cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenTable('rep-order-status-table','Order Status per Customer')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                                     <h3 class="card-title" style="margin-bottom: 0;" data-i18n="rep_order_status_table_title">Order Status per Customer</h3>
@@ -1462,8 +1480,10 @@
                                 </div>
                             </div>
                         </div>
+                        </div>
 
-                        <div style="display: grid; grid-template-columns: 1fr; gap: 24px; align-items: start; margin-top: 24px;">
+                        <div id="cust-view-pref" class="cust-report-view hidden">
+                        <div style="display: grid; grid-template-columns: 1fr; gap: 24px; align-items: start;">
                             <div class="card" style="overflow-x: auto; cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenTable('rep-coffee-pref-table','Coffee Preference by Customer')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                                     <h3 class="card-title" style="margin-bottom: 0;" data-i18n="rep_coffee_pref_table_title">Coffee Preference by Customer</h3>
@@ -1491,6 +1511,7 @@
                                     </table>
                                 </div>
                             </div>
+                        </div>
                         </div>
                     </div>
                 </div>
@@ -2090,6 +2111,6 @@
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/app.js?v=16"></script>
+    <script src="js/app.js?v=17"></script>
 </body>
 </html>

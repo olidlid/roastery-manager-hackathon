@@ -840,6 +840,22 @@ reportsTabBtns.forEach(btn => {
     });
 });
 
+// Customers tab has 4 report views crammed into one page; a dropdown swaps
+// which one is visible instead of showing all of them stacked at once.
+const customerReportViewSelect = document.getElementById('customer-report-view-select');
+if (customerReportViewSelect) {
+    customerReportViewSelect.addEventListener('change', (e) => {
+        const target = e.target.value;
+        document.querySelectorAll('.cust-report-view').forEach(view => {
+            view.classList.toggle('hidden', view.id !== target);
+        });
+        // Chart.js sizes a canvas at creation time; a chart built while its
+        // container was hidden (display:none) renders at 0 size until resized.
+        if (target === 'cust-view-volume' && customerReportChart) customerReportChart.resize();
+        if (target === 'cust-view-type' && customerTypeChart) customerTypeChart.resize();
+    });
+}
+
 // --- SECTION DATA LOADERS ---
 async function loadSectionData(sectionId) {
     switch (sectionId) {
