@@ -155,6 +155,7 @@ button, input, select, textarea {
     cursor: pointer;
     color: var(--text-secondary);
     font-weight: 500;
+    flex-shrink: 0;
     transition: color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
 }
 
@@ -1036,6 +1037,53 @@ tbody tr:hover {
     }
 }
 
+/* Phone landscape: the whole sidebar is squeezed into ~375-430px of height.
+   The brand header + footer (profile widget + logout) alone were eating
+   ~215px of that, leaving only ~160px to scroll the actual nav — barely
+   enough to see 2 items, so the Inventory submenu opened but was buried
+   below the fold with nothing indicating there was more to scroll to.
+   Shrink the fixed chrome so the scrollable menu area gets most of the
+   height back. */
+@media (max-height: 500px) and (orientation: landscape) {
+    .sidebar-brand {
+        padding: 8px 16px;
+    }
+
+    .sidebar-logo {
+        width: 24px;
+        height: 24px;
+    }
+
+    .sidebar-menu {
+        padding: 6px 12px;
+        gap: 2px;
+    }
+
+    .menu-item {
+        padding: 7px 12px;
+    }
+
+    .menu-subitem {
+        padding: 6px 16px 6px 44px;
+    }
+
+    .sidebar-footer {
+        padding: 8px 16px;
+        gap: 6px;
+    }
+
+    .user-profile-widget {
+        padding: 2px;
+        gap: 8px;
+    }
+
+    .user-avatar {
+        width: 28px;
+        height: 28px;
+        font-size: 0.8rem;
+    }
+}
+
 @media print {
     body * {
         visibility: hidden;
@@ -1292,6 +1340,7 @@ tbody tr:hover {
     margin: 0;
     max-height: 0;
     overflow: hidden;
+    flex-shrink: 0;
     transition: max-height 0.3s ease;
 }
 .sidebar-submenu.open {
