@@ -139,7 +139,10 @@
                     <input type="email" id="login-email" class="form-control" placeholder="name@roastery.com" required>
                 </div>
                 <div class="form-group" style="margin-bottom: 16px;">
-                    <label class="form-label" for="login-password" style="font-size: 0.8rem;">Password</label>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <label class="form-label" for="login-password" style="font-size: 0.8rem; margin-bottom:0;">Password</label>
+                        <a href="#" id="link-forgot-password" style="font-size:0.75rem; color:var(--primary); text-decoration:none;" data-i18n="link_forgot_password">Forgot password?</a>
+                    </div>
                     <input type="password" id="login-password" class="form-control" placeholder="••••••••" required>
                 </div>
                 <button type="submit" id="btn-login-submit" class="btn btn-primary" style="width: 100%; padding: 10px; font-weight: 600;">
@@ -2180,6 +2183,6 @@
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/app.js?v=20"></script>
+    <script src="js/app.js?v=21"></script>
 </body>
 </html>

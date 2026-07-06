@@ -495,6 +495,12 @@ function checkAuthentication() {
             authOverlay.classList.remove('hidden');
             document.getElementById('app-container').style.display = 'none';
             currentUser = null;
+        } else if (event === 'PASSWORD_RECOVERY' && session) {
+            authOverlay.classList.add('hidden');
+            document.getElementById('app-container').style.display = 'flex';
+            loadUserProfile(session.user.id);
+            scheduleDashboardRefresh();
+            showSetNewPasswordModal();
         }
     });
 
@@ -8720,6 +8726,77 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
         checkAuthentication();
     }
 });
+
+// --- FORGOT PASSWORD ---
+const linkForgotPassword = document.getElementById('link-forgot-password');
+if (linkForgotPassword) {
+    linkForgotPassword.addEventListener('click', (e) => {
+        e.preventDefault();
+        const html = `
+            <form id="forgot-password-form">
+                <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:16px;" data-i18n="msg_forgot_password_hint">Enter your account email and we'll send you a link to reset your password.</p>
+                <div class="form-group">
+                    <label class="form-label" for="forgot-email" data-i18n="lbl_email">Email</label>
+                    <input type="email" id="forgot-email" class="form-control" placeholder="name@roastery.com" required>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                    <button type="submit" class="btn btn-primary" data-i18n="btn_send_reset_link">Send Reset Link</button>
+                </div>
+            </form>
+        `;
+        openModal(window.t ? (window.t('title_reset_password') || 'Reset Password') : 'Reset Password', html);
+        document.getElementById('forgot-password-form').addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const email = document.getElementById('forgot-email').value;
+            const { error } = await window.supabaseClient.auth.resetPasswordForEmail(email, {
+                redirectTo: window.location.origin
+            });
+            if (error) {
+                alert((window.t ? (window.t('alert_reset_failed') || 'Failed to send reset email: {msg}') : 'Failed to send reset email: {msg}').replace('{msg}', error.message));
+            } else {
+                document.getElementById('btn-close-modal').click();
+                alert(window.t ? (window.t('alert_reset_sent') || 'If an account exists for that email, a password reset link has been sent.') : 'If an account exists for that email, a password reset link has been sent.');
+            }
+        });
+    });
+}
+
+function showSetNewPasswordModal() {
+    const html = `
+        <form id="set-new-password-form">
+            <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:16px;" data-i18n="msg_set_new_password_hint">Enter a new password for your account.</p>
+            <div class="form-group">
+                <label class="form-label" for="new-password" data-i18n="lbl_new_password">New Password</label>
+                <input type="password" id="new-password" class="form-control" placeholder="Minimum 6 characters" required minlength="6">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label class="form-label" for="new-password-confirm" data-i18n="lbl_confirm_password">Confirm Password</label>
+                <input type="password" id="new-password-confirm" class="form-control" required minlength="6">
+            </div>
+            <div style="margin-top:20px;">
+                <button type="submit" class="btn btn-primary" style="width:100%;" data-i18n="btn_set_new_password">Set New Password</button>
+            </div>
+        </form>
+    `;
+    openModal(window.t ? (window.t('title_set_new_password') || 'Set New Password') : 'Set New Password', html);
+    document.getElementById('set-new-password-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pass = document.getElementById('new-password').value;
+        const confirmPass = document.getElementById('new-password-confirm').value;
+        if (pass !== confirmPass) {
+            alert(window.t ? (window.t('alert_password_mismatch') || 'Passwords do not match.') : 'Passwords do not match.');
+            return;
+        }
+        const { error } = await window.supabaseClient.auth.updateUser({ password: pass });
+        if (error) {
+            alert((window.t ? (window.t('alert_password_update_failed') || 'Failed to update password: {msg}') : 'Failed to update password: {msg}').replace('{msg}', error.message));
+        } else {
+            document.getElementById('btn-close-modal').click();
+            alert(window.t ? (window.t('alert_password_updated') || 'Password updated successfully.') : 'Password updated successfully.');
+        }
+    });
+}
 
 // --- LOG OUT ---
 document.getElementById('btn-logout').addEventListener('click', async () => {
