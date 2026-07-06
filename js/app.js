@@ -1615,13 +1615,35 @@ async function openEditGreenbeanStockModal(id) {
 
     const html = `
         <form id="modal-gb-stock-form">
-            <div class="form-group">
-                <label class="form-label">Coffee Name</label>
-                <input type="text" class="form-control" value="${bean.name}" disabled>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Coffee Name</label>
+                    <input type="text" id="m-gb-name" class="form-control" value="${bean.name || ''}" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Code</label>
+                    <input type="text" id="m-gb-code" class="form-control" value="${bean.code || ''}">
+                </div>
             </div>
-            <div class="form-group">
-                <label class="form-label">Current Stock (${companySettings.weight_unit})</label>
-                <input type="number" id="m-gb-stock" class="form-control" step="any" value="${Number(parseFloat(bean.stock_kg || 0).toFixed(2))}" required>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Origin</label>
+                    <input type="text" id="m-gb-origin" class="form-control" value="${bean.origin || ''}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Process</label>
+                    <input type="text" id="m-gb-process" class="form-control" value="${bean.process || ''}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Current Stock (${companySettings.weight_unit})</label>
+                    <input type="number" id="m-gb-stock" class="form-control" step="any" value="${Number(parseFloat(bean.stock_kg || 0).toFixed(2))}" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Supplier</label>
+                    <input type="text" id="m-gb-supplier" class="form-control" value="${bean.supplier || ''}">
+                </div>
             </div>
             <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
@@ -1636,10 +1658,18 @@ async function openEditGreenbeanStockModal(id) {
     document.getElementById('modal-gb-stock-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const newStock = parseFloat(document.getElementById('m-gb-stock').value) || 0;
-        
-        const record = { ...bean, stock_kg: newStock };
+
+        const record = {
+            ...bean,
+            name: document.getElementById('m-gb-name').value.trim(),
+            code: document.getElementById('m-gb-code').value.trim(),
+            origin: document.getElementById('m-gb-origin').value.trim(),
+            process: document.getElementById('m-gb-process').value.trim(),
+            stock_kg: newStock,
+            supplier: document.getElementById('m-gb-supplier').value.trim()
+        };
         const { error } = await saveData('green_coffee', record);
-        
+
         if (error) {
             alert("Failed to save: " + error.message);
         } else {
