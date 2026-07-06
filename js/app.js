@@ -9428,6 +9428,7 @@ let gbReportChart = null;
 let roastReportChart = null;
 let packReportChart = null;
 let salesReportChart = null;
+let customerReportChart = null;
 let fullscreenChart = null;
 
 // ============================================================
@@ -9438,7 +9439,8 @@ function getChartInstanceById(canvasId) {
         'rep-gb-chart': gbReportChart,
         'rep-roast-chart': roastReportChart,
         'rep-pack-chart': packReportChart,
-        'rep-sales-chart': salesReportChart
+        'rep-sales-chart': salesReportChart,
+        'rep-customer-chart': customerReportChart
     };
     return map[canvasId] || null;
 }
@@ -9570,6 +9572,9 @@ async function loadReportsTabSpecificData(tabId) {
             break;
         case 'tab-rep-sales':
             await loadSalesReport(startVal, endVal);
+            break;
+        case 'tab-rep-customers':
+            await loadCustomerReport(startVal, endVal);
             break;
     }
 }
@@ -10299,6 +10304,129 @@ async function loadSalesReport(startDate, endDate) {
                 });
             });
             exportToExcel(exportData, 'Sales_Dispatch_Report');
+        });
+    }
+}
+
+async function loadCustomerReport(startDate, endDate) {
+    const [
+        { data: orders },
+        { data: orderItems },
+        { data: customers }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('customers')
+    ]);
+
+    // Only count orders that actually shipped — mirrors Sales Dispatch report's
+    // definition of "volume" (Pending/Cancelled orders never left the warehouse).
+    const filteredOrders = (orders || []).filter(o => {
+        if (o.status !== 'Dispatched' && o.status !== 'Completed') return false;
+        const d = o.order_date || o.created_at?.split('T')[0];
+        if (!d) return true;
+        if (startDate && d < startDate) return false;
+        if (endDate && d > endDate) return false;
+        return true;
+    });
+
+    // stats[customerId] = { orders: Set<orderId>, bags, kg }
+    const stats = {};
+    filteredOrders.forEach(o => {
+        if (!o.customer_id) return;
+        if (!stats[o.customer_id]) stats[o.customer_id] = { orderIds: new Set(), bags: 0, kg: 0 };
+        stats[o.customer_id].orderIds.add(o.id);
+    });
+
+    const orderIdToCustomerId = {};
+    filteredOrders.forEach(o => { if (o.customer_id) orderIdToCustomerId[o.id] = o.customer_id; });
+
+    (orderItems || []).forEach(item => {
+        const customerId = orderIdToCustomerId[item.request_order_id];
+        if (!customerId) return;
+        const qty = parseInt(item.quantity_requested) || 0;
+        const sizeG = parseInt(item.bag_size_g) || 0;
+        stats[customerId].bags += qty;
+        stats[customerId].kg += (qty * sizeG) / 1000;
+    });
+
+    const rows = Object.keys(stats).map(customerId => {
+        const customer = (customers || []).find(c => c.id === parseInt(customerId));
+        return {
+            name: customer ? customer.name : 'Unknown',
+            code: customer ? customer.customer_id : '-',
+            type: customer ? customer.type : '-',
+            orders: stats[customerId].orderIds.size,
+            bags: stats[customerId].bags,
+            kg: stats[customerId].kg
+        };
+    }).sort((a, b) => b.kg - a.kg);
+
+    const tbody = document.getElementById('rep-customer-table-body');
+    if (tbody) {
+        tbody.innerHTML = '';
+        if (rows.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">No dispatched orders in selected period</td></tr>`;
+        } else {
+            rows.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${r.name}</strong></td>
+                    <td><code>${r.code}</code></td>
+                    <td>${r.type}</td>
+                    <td style="text-align:center;">${r.orders}</td>
+                    <td style="text-align:center;">${r.bags}</td>
+                    <td style="text-align:center; font-weight:700;">${r.kg.toFixed(1)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+    }
+
+    // Chart: top 10 customers by kg
+    const topRows = rows.slice(0, 10);
+    const ctx = document.getElementById('rep-customer-chart');
+    if (ctx) {
+        if (customerReportChart) customerReportChart.destroy();
+        customerReportChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: topRows.map(r => r.name),
+                datasets: [{
+                    label: 'Total Dispatched (kg)',
+                    data: topRows.map(r => r.kg.toFixed(1)),
+                    backgroundColor: 'rgba(45, 90, 22, 0.65)',
+                    borderColor: 'rgb(45, 90, 22)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: 'var(--text-primary)' } }
+                },
+                scales: {
+                    x: { ticks: { color: 'var(--text-secondary)' } },
+                    y: { ticks: { color: 'var(--text-secondary)' } }
+                }
+            }
+        });
+    }
+
+    // Export Excel
+    const exportBtn = document.getElementById('btn-export-customer-report');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', (e) => { e.stopPropagation();
+            const exportData = rows.map(r => ({
+                'Customer Name': r.name,
+                'Code': r.code,
+                'Type': r.type,
+                'Total Orders': r.orders,
+                'Total Bags': r.bags,
+                'Total (kg)': r.kg.toFixed(1)
+            }));
+            exportToExcel(exportData, 'Customer_Volume_Report');
         });
     }
 }

@@ -1194,6 +1194,7 @@
                             <button class="tab-btn" data-tab="tab-rep-roasting" data-i18n="tab_rep_roasting">Roasting</button>
                             <button class="tab-btn" data-tab="tab-rep-packing" data-i18n="tab_rep_packing">Packing</button>
                             <button class="tab-btn" data-tab="tab-rep-sales">Sales Dispatch</button>
+                            <button class="tab-btn" data-tab="tab-rep-customers" data-i18n="tab_rep_customers">Customers</button>
                         </div>
                         <!-- Date Filter (right, compact) -->
                         <div style="display: flex; gap: 8px; align-items: flex-end;">
@@ -1372,6 +1373,50 @@
                                 </div>
                                 <div style="position: relative; height: 300px; width: 100%;">
                                     <canvas id="rep-sales-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB: Customers Report -->
+                    <div id="tab-rep-customers" class="tab-content hidden">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; flex-wrap: wrap;">
+                            <div class="card" style="overflow-x: auto; cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenTable('rep-customer-table','Top Customers by Volume')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <h3 class="card-title" style="margin-bottom: 0;" data-i18n="rep_customer_table_title">Top Customers by Volume</h3>
+                                    <div style="display:flex; gap:8px; align-items:center;">
+                                        <button id="btn-export-customer-report" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;" onclick="event.stopPropagation()">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                            Export Excel
+                                        </button>
+                                        <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Expand</span>
+                                    </div>
+                                </div>
+                                <div class="table-container">
+                                    <table id="rep-customer-table">
+                                        <thead>
+                                            <tr>
+                                                <th data-i18n="col_customer_name">Customer Name</th>
+                                                <th data-i18n="col_customer_code">Code</th>
+                                                <th data-i18n="col_customer_type">Type</th>
+                                                <th style="text-align:center;" data-i18n="col_total_orders">Total Orders</th>
+                                                <th style="text-align:center;" data-i18n="col_total_bags">Total Bags</th>
+                                                <th style="text-align:center;" data-i18n="col_total_kg">Total (kg)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="rep-customer-table-body">
+                                            <!-- Dyn -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card chart-card-expandable" data-chart-id="rep-customer-chart" style="cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenChart('rep-customer-chart','Top Customers by Volume')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <h3 class="card-title" style="margin-bottom:0;" data-i18n="rep_customer_chart_title">Customers</h3>
+                                    <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Click to expand</span>
+                                </div>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="rep-customer-chart"></canvas>
                                 </div>
                             </div>
                         </div>
@@ -1973,6 +2018,6 @@
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/app.js?v=13"></script>
+    <script src="js/app.js?v=14"></script>
 </body>
 </html>
