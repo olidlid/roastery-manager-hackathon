@@ -5327,8 +5327,10 @@ async function printOrderDetail(orderId) {
             </tr>`;
     }
     
-    // Load company settings
-    const cs = JSON.parse(localStorage.getItem('mock_company_settings')) || companySettings;
+    // Use the live companySettings (loaded from Supabase by loadCompanySettings()) —
+    // do NOT read the 'mock_company_settings' localStorage cache here, it is seeded
+    // once on first-ever page load and never refreshed by real saves.
+    const cs = companySettings;
 
     const printContent = `<!DOCTYPE html>
 <html>
@@ -10613,8 +10615,10 @@ async function printWaybill(orderId) {
             </tr>`;
     }
     
-    // Load company settings
-    const cs = JSON.parse(localStorage.getItem('mock_company_settings')) || companySettings;
+    // Use the live companySettings (loaded from Supabase by loadCompanySettings()) —
+    // do NOT read the 'mock_company_settings' localStorage cache here, it is seeded
+    // once on first-ever page load and never refreshed by real saves.
+    const cs = companySettings;
 
     const printContent = `<!DOCTYPE html>
 <html>
