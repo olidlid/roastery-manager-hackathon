@@ -5264,8 +5264,12 @@ async function markOrderItemReady(orderId, itemId, qtyToReady) {
     } else {
         item.item_status = 'Packing';
     }
-    await saveData('request_order_items', item);
-    
+    const { error: itemErr } = await saveData('request_order_items', item);
+    if (itemErr) {
+        alert("Failed to update item status: " + itemErr.message);
+        return;
+    }
+
     loadPackingRequestsSection();
     scheduleDashboardRefresh();
 }

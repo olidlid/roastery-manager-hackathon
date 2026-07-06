@@ -360,7 +360,8 @@ CREATE TABLE IF NOT EXISTS public.request_order_items (
     blend_recipe_id INTEGER,
     request_order_id INTEGER REFERENCES public.request_orders(id) ON DELETE CASCADE, -- added 2026-07-06
     quantity_allocated INTEGER DEFAULT 0,       -- added 2026-07-06
-    quantity_pending INTEGER DEFAULT 0          -- added 2026-07-06
+    quantity_pending INTEGER DEFAULT 0,         -- added 2026-07-06
+    quantity_prepared INTEGER DEFAULT 0         -- added 2026-07-06 (packing progress at Order Requests stage; distinct from quantity_allocated, which is set at Dispatch Approval time)
 );
 
 -- 20. Sales orders — LEGACY table from an earlier generation of the app.
