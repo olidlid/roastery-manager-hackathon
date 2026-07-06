@@ -5,59 +5,73 @@
    ========================================================================== */
 :root {
     --font-primary: 'Outfit', sans-serif;
-    
-    /* Dark Mode Defaults (Primary Theme) - Premium Dark Green & Mint */
-    --bg-app: #0c130f;
-    --bg-sidebar: #111a15;
-    --bg-card: rgba(22, 34, 27, 0.65);
-    --bg-input: #17241e;
-    --bg-overlay: rgba(8, 13, 10, 0.9);
-    --bg-glass-active: rgba(255, 255, 255, 0.08);
-    
-    --border: rgba(183, 228, 199, 0.12); /* translucent mint border */
-    --border-focus: rgba(183, 228, 199, 0.5); /* mint focus */
-    
-    --text-primary: #F8F9FA; /* off-white from palette */
-    --text-secondary: #B7E4C7; /* mint green from palette */
-    --text-muted: #CED4DA; /* medium light gray from palette */
-    
-    --primary: #2D6A4F;       /* Medium Leaf Green */
-    --primary-hover: #40916c; /* lighter leaf green */
-    --primary-glow: rgba(45, 106, 79, 0.35);
-    
-    --success: #52b788;       /* premium success mint */
-    --warning: #ffd166;
-    --danger: #ef4444;
-    --info: #B7E4C7;          /* Mint Cyan */
-    
-    --transition-fast: 0.2s ease;
-    --transition-smooth: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    --border-radius: 12px;
-    --border-radius-sm: 8px;
-    --shadow-premium: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
-    --backdrop-blur: blur(12px);
+
+    /* Dark Mode (default) — neutral minimalist canvas + single green accent */
+    --bg-app: #0a0a0b;
+    --bg-sidebar: #0e0f11;
+    --bg-card: #141517;
+    --bg-input: #17181b;
+    --bg-overlay: rgba(0, 0, 0, 0.7);
+    --bg-glass-active: rgba(255, 255, 255, 0.06);
+
+    --border: rgba(255, 255, 255, 0.09);        /* hairline neutral border */
+    --border-focus: rgba(255, 255, 255, 0.28);
+
+    --text-primary: #ededed;                    /* neutral off-white */
+    --text-secondary: #a1a1a6;                  /* neutral gray (was mint) */
+    --text-muted: #6e6e73;
+
+    --primary: #2d8a5f;                         /* refined green accent */
+    --primary-hover: #37a06f;
+    --primary-glow: rgba(45, 138, 95, 0.28);
+
+    --success: #3fb950;
+    --warning: #d6a323;
+    --danger: #f85149;
+    --info: #58a6ff;                            /* neutral blue (was mint) */
+
+    --transition-fast: 0.18s ease;
+    --transition-smooth: 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --border-radius: 10px;
+    --border-radius-sm: 6px;
+    --radius-lg: 16px;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
+    --shadow-premium: 0 8px 32px rgba(0, 0, 0, 0.45);
+    --backdrop-blur: blur(8px);
+
+    /* Spacing scale (foundation for the responsive redesign phases) */
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 40px;
 }
 
 :root[data-theme="light"], html[data-theme="light"], body[data-theme="light"], [data-theme="light"] {
-    --bg-app: #F8F9FA; /* off-white from palette */
+    --bg-app: #fafafa;                          /* clean near-white canvas */
     --bg-sidebar: #ffffff;
-    --bg-card: rgba(255, 255, 255, 0.85);
+    --bg-card: #ffffff;
     --bg-input: #ffffff;
-    --bg-overlay: rgba(248, 249, 250, 0.85);
-    --bg-glass-active: rgba(0, 0, 0, 0.05);
-    
-    --border: #CED4DA; /* gray from palette */
-    --border-focus: #2D6A4F;
-    
-    --text-primary: #1F3D2B; /* dark forest green text */
-    --text-secondary: #2D6A4F; /* medium green text */
-    --text-muted: #6c757d;
-    
-    --primary: #2D6A4F;       /* Medium Leaf Green */
-    --primary-hover: #1F3D2B; /* dark forest green */
-    --primary-glow: rgba(45, 106, 79, 0.15);
-    
-    --shadow-premium: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+    --bg-overlay: rgba(0, 0, 0, 0.4);
+    --bg-glass-active: rgba(0, 0, 0, 0.04);
+
+    --border: #e6e6e8;                          /* neutral hairline */
+    --border-focus: #171717;
+
+    --text-primary: #171717;                    /* near-black (was forest green) */
+    --text-secondary: #52525b;                  /* neutral gray */
+    --text-muted: #8e8e93;
+
+    --primary: #2d8a5f;
+    --primary-hover: #256f4d;
+    --primary-glow: rgba(45, 138, 95, 0.12);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
+    --shadow-premium: 0 8px 32px rgba(0, 0, 0, 0.07);
 }
 
 /* ==========================================================================
