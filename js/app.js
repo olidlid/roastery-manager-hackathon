@@ -12094,7 +12094,7 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
     // Lookup machine
     const machine = (machines || []).find(m => m.id === machineId);
     const machineName = machine ? machine.name : 'Unknown';
-    if (machine && machine.ideal_batch_g) defaultGreenWeight = machine.ideal_batch_g;
+    if (machine && machine.ideal_batch_size_g) defaultGreenWeight = machine.ideal_batch_size_g;
     
     // Build same form as openBatchLogModal but auto-filled
     const gbSelectOpts = (greenbeans || []).map(g => `<option value="Single-${g.id}" ${g.id === coffeeId && coffeeType === 'Single' ? 'selected' : ''}>${g.name}</option>`).join('');
@@ -12301,27 +12301,89 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
             qc_status: qcStatus,
             notes: notes || null
         };
-        
-        const { error } = await saveData('roast_batches', record);
+
+        const { data: savedBatch, error } = await saveData('roast_batches', record);
         if (error) {
             alert('Failed to save batch: ' + error.message);
             return;
         }
-        
+
+        // Update associated plan(s) — same matching/fulfillment logic as the
+        // regular Roasting Log form (openRoastBatchModal). Without this, a
+        // batch logged via barcode scan never advances its roasting plan's
+        // fulfilled_roasted_kg, so the plan stays stuck at 0/target forever.
+        const { data: plans } = await fetchData('roasting_plans');
+        let matchingPlans = (plans || []).filter(p =>
+            p.coffee_type === type &&
+            (type === 'Single' ? p.single_coffee_id === singleId : p.blend_recipe_id === blendId) &&
+            p.machine_id === mId &&
+            p.status !== 'Completed'
+        );
+
+        if (matchingPlans.length > 0) {
+            matchingPlans.sort((a, b) => new Date(a.plan_date) - new Date(b.plan_date));
+            let remainingOutput = outputKg;
+
+            for (let i = 0; i < matchingPlans.length; i++) {
+                if (remainingOutput <= 0) break;
+                const p = matchingPlans[i];
+                const target = parseFloat(p.target_roasted_kg || 0);
+                const currentFulfilled = parseFloat(p.fulfilled_roasted_kg || 0);
+                const capacity = Math.max(0, target - currentFulfilled);
+
+                if (remainingOutput <= capacity) {
+                    p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
+                    p.status = (p.fulfilled_roasted_kg >= target) ? 'Completed' : 'On Process';
+                    remainingOutput = 0;
+                    await saveData('roasting_plans', p);
+                    await syncPlanStatusToOrderItem(p);
+                } else if (i === matchingPlans.length - 1) {
+                    p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
+                    p.status = 'Completed';
+                    remainingOutput = 0;
+                    await saveData('roasting_plans', p);
+                    await syncPlanStatusToOrderItem(p);
+                } else {
+                    p.fulfilled_roasted_kg = target;
+                    p.status = 'Completed';
+                    remainingOutput -= capacity;
+                    await saveData('roasting_plans', p);
+                    await syncPlanStatusToOrderItem(p);
+                }
+            }
+        }
+
+        // Bulk Roasted Coffee sync — a new Quick Roast batch is always a fresh
+        // insert (never an edit), so the only transition possible is into
+        // 'Success' (or 'Pending' if Batch Test, which adds nothing yet).
+        if (qcStatus === 'Success') {
+            let coffeeName = 'Roasted Coffee';
+            if (type === 'Single') {
+                const gb = (greenbeans || []).find(g => g.id === singleId);
+                coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
+            } else {
+                const r = (recipes || []).find(rec => rec.id === blendId);
+                coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+            }
+            await addWeightToBulkRoastedCoffee(type, singleId, blendId, mId, coffeeName, outputKg);
+        }
+
         // Show success toast
         const toast = document.createElement('div');
         toast.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#16a34a; color:white; padding:12px 20px; border-radius:8px; font-weight:700; z-index:99999; box-shadow:0 4px 12px rgba(0,0,0,0.3); animation: fadeIn 0.3s;';
         toast.textContent = `✅ Batch ${code} saved! Ready for next scan.`;
         document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 3000);
-        
+
         // Close modal
         document.getElementById('btn-close-modal').click();
-        
+
         // Refresh if on roasting page
         if (!document.getElementById('sec-roasting')?.classList.contains('hidden')) {
             loadSectionData('sec-roasting');
         }
+        loadGreenbeanInventory();
+        scheduleDashboardRefresh();
     });
 }
 
