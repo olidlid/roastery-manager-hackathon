@@ -8,8 +8,10 @@
     <link rel="stylesheet" href="css/styles.css?v=4">
     <!-- Lucide Icons CDN -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.344.0/font/lucide.min.css">
-    <!-- Chart.js CDN for Analytics -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chart.js CDN for Analytics (version pinned — an unpinned URL here would
+         auto-serve whatever jsdelivr resolves as "latest" with no code change
+         on our end to review, which is a supply-chain risk) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
     <!-- JsBarcode CDN for Barcode Scanner -->
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
     <style>
@@ -2186,7 +2188,7 @@
     </div>
 
     <!-- Supabase CDN Script (Global Object) -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0"></script>
     <!-- Translation & I18n Scripts -->
     <script src="js/translations.js"></script>
     <script src="js/i18n.js"></script>
