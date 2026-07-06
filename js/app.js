@@ -10731,6 +10731,8 @@ async function loadStockOpnameReport(startDate, endDate) {
     if (cancelBtn) cancelBtn.onclick = cancelStockTake;
     const finalizeBtn = document.getElementById('btn-stockopname-finalize');
     if (finalizeBtn) finalizeBtn.onclick = finalizeStockTake;
+    const printBtn = document.getElementById('btn-stockopname-print');
+    if (printBtn) printBtn.onclick = printStockCountForm;
 
     // Default to history view.
     const sheet = document.getElementById('stockopname-sheet');
@@ -10959,6 +10961,129 @@ async function viewStockTake(takeId) {
         </div>
     `;
     openModal(window.t ? (window.t('stockopname_detail_title') || 'Stock Take Detail') : 'Stock Take Detail', html);
+}
+
+// Print a blank counting form (one page per category) for the team to fill in
+// physically before typing the numbers back into the system.
+async function printStockCountForm() {
+    const groups = await buildStockTakeGroups();
+    const cs = companySettings;
+    const EMPTY_ROWS = 8;
+
+    const byCat = { greenbean: [], bulk: [], packed: [] };
+    groups.forEach(g => { if (byCat[g.category]) byCat[g.category].push(g); });
+
+    const subtitle = window.t ? (window.t('form_stockcount_subtitle') || 'Stock Count Form') : 'Stock Count Form';
+    const tHeaderItem = window.t ? (window.t('col_item') || 'Item') : 'Item';
+    const tHeaderSystem = window.t ? (window.t('col_system_qty') || 'System') : 'System';
+    const tHeaderActual = window.t ? (window.t('col_actual_qty') || 'Actual') : 'Actual';
+    const tHeaderNotes = window.t ? (window.t('col_notes') || 'Notes') : 'Notes';
+    const tDate = window.t ? (window.t('col_date') || 'Date') : 'Date';
+    const tBy = window.t ? (window.t('col_performed_by') || 'Counted By') : 'Counted By';
+
+    function renderPage(catKey, isLast) {
+        const list = byCat[catKey] || [];
+        let rows = '';
+        let idx = 1;
+        list.forEach(g => {
+            const sys = g.unit === 'kg' ? g.systemQty.toFixed(1) : g.systemQty;
+            rows += `<tr>
+                <td class="c">${idx++}</td>
+                <td>${g.label}</td>
+                <td class="c">${sys} ${g.unit}</td>
+                <td class="blank"></td>
+                <td class="blank"></td>
+            </tr>`;
+        });
+        for (let i = 0; i < EMPTY_ROWS; i++) {
+            rows += `<tr>
+                <td class="c">${idx++}</td>
+                <td class="blank"></td>
+                <td class="blank"></td>
+                <td class="blank"></td>
+                <td class="blank"></td>
+            </tr>`;
+        }
+        return `
+        <div class="page" ${isLast ? '' : 'style="page-break-after:always;"'}>
+            <div class="letterhead">
+                <div class="lh-left">
+                    ${cs.show_logo_in_print && cs.logo_base64 ? '<img class="lh-logo" src="' + cs.logo_base64 + '" alt="Logo">' : ''}
+                    <div>
+                        <div class="lh-name">${cs.company_name || 'Coffee Roastery'}</div>
+                        <div class="lh-contact">${cs.address ? cs.address : ''}</div>
+                    </div>
+                </div>
+                <div class="lh-right">
+                    <div class="doc-title">${stockCategoryLabel(catKey)}</div>
+                    <div class="doc-sub">${subtitle}</div>
+                </div>
+            </div>
+            <div class="meta">
+                <span>${tDate}: _______________________</span>
+                <span>${tBy}: _______________________</span>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width:34px;">#</th>
+                        <th>${tHeaderItem}</th>
+                        <th style="width:100px;">${tHeaderSystem}</th>
+                        <th style="width:120px;">${tHeaderActual}</th>
+                        <th style="width:150px;">${tHeaderNotes}</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+            <div class="signoff">
+                <div class="sig"><div class="sig-line"></div><div class="sig-lbl">Counted By</div></div>
+                <div class="sig"><div class="sig-line"></div><div class="sig-lbl">Checked By</div></div>
+                <div class="sig"><div class="sig-line"></div><div class="sig-lbl">Approved By</div></div>
+            </div>
+        </div>`;
+    }
+
+    const pages = renderPage('greenbean', false) + renderPage('bulk', false) + renderPage('packed', true);
+
+    const printContent = `<!DOCTYPE html>
+<html>
+<head>
+    <title>${subtitle}</title>
+    <style>
+        @page { size: A4; margin: 14mm; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; font-size: 12px; }
+        .page { max-width: 210mm; margin: 0 auto; padding: 6px; }
+        .letterhead { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 3px solid #2d5016; margin-bottom: 14px; }
+        .lh-left { display: flex; align-items: center; gap: 12px; }
+        .lh-logo { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; border: 1px solid #e5e5e5; }
+        .lh-name { font-size: 18px; font-weight: 800; color: #2d5016; line-height: 1.2; }
+        .lh-contact { font-size: 10px; color: #777; margin-top: 2px; }
+        .lh-right { text-align: right; }
+        .doc-title { font-size: 17px; font-weight: 800; color: #2d5016; text-transform: uppercase; letter-spacing: 0.5px; }
+        .doc-sub { font-size: 10px; color: #999; margin-top: 2px; }
+        .meta { display: flex; gap: 40px; font-size: 11px; color: #555; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; }
+        thead th { background: #2d5016; color: #fff; padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; text-align: left; border: 1px solid #2d5016; }
+        tbody td { padding: 9px 10px; border: 1px solid #cfcfcf; font-size: 12px; height: 34px; }
+        tbody td.c { text-align: center; }
+        tbody td.blank { background: #fff; }
+        .signoff { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; margin-top: 36px; }
+        .sig { text-align: center; }
+        .sig-line { border-top: 1px solid #333; margin-bottom: 4px; padding-top: 40px; }
+        .sig-lbl { font-size: 10px; text-transform: uppercase; color: #666; font-weight: 600; }
+        @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+    </style>
+</head>
+<body>
+    ${pages}
+    <script>window.onload = function() { window.print(); }<\/script>
+</body>
+</html>`;
+
+    const w = window.open('', '_blank');
+    w.document.write(printContent);
+    w.document.close();
 }
 
 // Fullscreen Table Popup
