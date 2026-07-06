@@ -10891,19 +10891,19 @@ async function printWaybill(orderId) {
             coffeeName = r ? r.name : 'Blend';
         }
         const mach = item.machine_id ? (machines || []).find(m => m.id === item.machine_id) : null;
-        const machName = mach ? mach.name : '-';
+        const machCode = mach ? (mach.code || mach.name) : '-';
         const qty = parseInt(item.quantity_requested) || 0;
         const sizeG = parseInt(item.bag_size_g) || 0;
         const weightKg = (qty * sizeG) / 1000;
         totalBags += qty;
         totalWeightKg += weightKg;
-        
+
         const sizeLabel = sizeG >= 1000 ? `${sizeG/1000}kg` : `${sizeG}g`;
         itemsTableRows += `
             <tr>
                 <td style="text-align:center;">${idx + 1}</td>
                 <td style="font-weight:600;">${coffeeName}</td>
-                <td>${machName}</td>
+                <td>${machCode}</td>
                 <td>${sizeLabel}</td>
                 <td style="text-align:center;">${qty}</td>
                 <td style="text-align:center;">${weightKg.toFixed(1)} kg</td>
@@ -10993,6 +10993,8 @@ async function printWaybill(orderId) {
                 ${customer ? `
                     <div class="customer-name">${customer.name}</div>
                     <div class="customer-code">${customer.customer_id}</div>
+                    ${customer.city ? `<div class="info-row"><span class="info-label">City</span><span class="info-value">${customer.city}</span></div>` : ''}
+                    ${customer.phone ? `<div class="info-row"><span class="info-label">Phone</span><span class="info-value">${customer.phone}</span></div>` : ''}
                 ` : `
                     <div class="customer-name">-</div>
                 `}
@@ -11019,7 +11021,7 @@ async function printWaybill(orderId) {
                 <tr>
                     <th style="width:30px;">#</th>
                     <th>Coffee Name</th>
-                    <th style="width:100px;">Machine</th>
+                    <th style="width:100px;">Type</th>
                     <th style="width:60px;">Size</th>
                     <th style="width:50px; text-align:center;">Qty</th>
                     <th style="width:80px; text-align:center;">Weight</th>
