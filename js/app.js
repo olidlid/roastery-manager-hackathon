@@ -8077,12 +8077,19 @@ const PERMISSION_GROUPS = [
 function loadRoleManagement() {
     const container = document.getElementById('roles-list-container');
     if (!container) return;
-    
+
     const roles = JSON.parse(localStorage.getItem('mock_custom_roles')) || [];
-    
+
+    // Canonical permission key set (the master list). Older roles were seeded
+    // before some keys were added, so their own permissions object may have
+    // fewer keys — counting against Object.keys(role.permissions) made the
+    // denominator inconsistent (e.g. one role "/41", another "/45"). Always
+    // measure against the full canonical set so every row shows the same total.
+    const ALL_PERM_KEYS = PERMISSION_GROUPS.flatMap(g => g.keys.map(k => k.key));
+    const totalPerms = ALL_PERM_KEYS.length;
+
     container.innerHTML = roles.map(role => {
-        const permCount = Object.values(role.permissions).filter(v => v === true).length;
-        const totalPerms = Object.keys(role.permissions).length;
+        const permCount = ALL_PERM_KEYS.filter(key => role.permissions[key] === true).length;
         const pctColor = permCount === totalPerms ? '#16a34a' : permCount > totalPerms / 2 ? '#ca8a04' : '#dc2626';
         
         return `
@@ -8114,6 +8121,15 @@ function loadRoleManagement() {
     container.querySelectorAll('.btn-delete-role').forEach(btn => {
         btn.addEventListener('click', () => deleteRole(parseInt(btn.getAttribute('data-id'))));
     });
+
+    // The enclosing settings accordion locks its max-height to a fixed pixel
+    // value when first opened. Adding/removing roles changes the list height,
+    // so with overflow:hidden the extra rows get clipped (invisible). If the
+    // accordion is currently open, grow its max-height to fit the new content.
+    const accBody = container.closest('.settings-card-body, .settings-accordion-body');
+    if (accBody && accBody.style.maxHeight && accBody.style.maxHeight !== '0px') {
+        accBody.style.maxHeight = accBody.scrollHeight + 'px';
+    }
 }
 
 function openRoleModal(roleId) {
