@@ -60,7 +60,8 @@ window.translations = {
         btn_confirm_ok: "OK",
         status_on_progress: "On Progress",
         status_completed: "Completed",
-        
+        status_ready_to_dispatch: "Ready to Dispatch",
+
         // Greenbean Inventory (Tab 1)
         tab_inventory: "Greenbean Inventory",
         tab_potential: "Production Potential",
@@ -447,7 +448,8 @@ window.translations = {
         btn_confirm_ok: "موافق",
         status_on_progress: "قيد التنفيذ",
         status_completed: "مكتمل",
-        
+        status_ready_to_dispatch: "جاهز للشحن",
+
         // Greenbean Inventory (Tab 1)
         tab_inventory: "مستودع البن الأخضر",
         tab_potential: "الإنتاجية المتوقعة",

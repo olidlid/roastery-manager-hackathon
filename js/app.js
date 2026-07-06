@@ -6168,10 +6168,10 @@ async function loadSalesDispatchRequestsTable() {
         } else {
             const allItemsReady = items.every(item => item.item_status === 'Ready for Handover');
             if (allItemsReady) {
-                const labelCompleted = window.t ? window.t("status_completed") || "Completed" : "Completed";
+                const labelReadyToDispatch = window.t ? window.t("status_ready_to_dispatch") || "Ready to Dispatch" : "Ready to Dispatch";
                 actionColumnContent = `
                     <span style="color: #15803d; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: #dcfce7; border: 1px solid #bbf7d0; border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">
-                        <i class="lucide-check-circle" style="width:14px; height:14px;"></i> ${labelCompleted}
+                        <i class="lucide-check-circle" style="width:14px; height:14px;"></i> ${labelReadyToDispatch}
                     </span>
                 `;
             } else {
