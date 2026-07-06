@@ -9433,6 +9433,7 @@ let roastReportChart = null;
 let packReportChart = null;
 let salesReportChart = null;
 let customerReportChart = null;
+let customerTypeChart = null;
 let fullscreenChart = null;
 
 // ============================================================
@@ -9444,7 +9445,8 @@ function getChartInstanceById(canvasId) {
         'rep-roast-chart': roastReportChart,
         'rep-pack-chart': packReportChart,
         'rep-sales-chart': salesReportChart,
-        'rep-customer-chart': customerReportChart
+        'rep-customer-chart': customerReportChart,
+        'rep-customer-type-chart': customerTypeChart
     };
     return map[canvasId] || null;
 }
@@ -10316,23 +10318,31 @@ async function loadCustomerReport(startDate, endDate) {
     const [
         { data: orders },
         { data: orderItems },
-        { data: customers }
+        { data: customers },
+        { data: greenbeans },
+        { data: recipes }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
-        fetchData('customers')
+        fetchData('customers'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
     ]);
 
-    // Only count orders that actually shipped — mirrors Sales Dispatch report's
-    // definition of "volume" (Pending/Cancelled orders never left the warehouse).
-    const filteredOrders = (orders || []).filter(o => {
-        if (o.status !== 'Dispatched' && o.status !== 'Completed') return false;
+    const inDateRange = (o) => {
         const d = o.order_date || o.created_at?.split('T')[0];
         if (!d) return true;
         if (startDate && d < startDate) return false;
         if (endDate && d > endDate) return false;
         return true;
-    });
+    };
+
+    // Only count orders that actually shipped — mirrors Sales Dispatch report's
+    // definition of "volume" (Pending/Cancelled orders never left the warehouse).
+    const filteredOrders = (orders || []).filter(o => (o.status === 'Dispatched' || o.status === 'Completed') && inDateRange(o));
+
+    // All orders in range regardless of status — used for the status-breakdown table below.
+    const allOrdersInRange = (orders || []).filter(inDateRange);
 
     // stats[customerId] = { orders: Set<orderId>, bags, kg }
     const stats = {};
@@ -10431,6 +10441,154 @@ async function loadCustomerReport(startDate, endDate) {
                 'Total (kg)': r.kg.toFixed(1)
             }));
             exportToExcel(exportData, 'Customer_Volume_Report');
+        });
+    }
+
+    // ==========================================================
+    // Customer Type Breakdown (Retail vs Wholesale, by kg)
+    // ==========================================================
+    const typeTotals = {};
+    rows.forEach(r => { typeTotals[r.type] = (typeTotals[r.type] || 0) + r.kg; });
+    const typeLabels = Object.keys(typeTotals);
+
+    const typeCtx = document.getElementById('rep-customer-type-chart');
+    if (typeCtx) {
+        if (customerTypeChart) customerTypeChart.destroy();
+        customerTypeChart = new Chart(typeCtx, {
+            type: 'doughnut',
+            data: {
+                labels: typeLabels,
+                datasets: [{
+                    data: typeLabels.map(t => typeTotals[t].toFixed(1)),
+                    backgroundColor: ['rgba(45, 90, 22, 0.75)', 'rgba(139, 92, 246, 0.75)', 'rgba(6, 182, 212, 0.75)', 'rgba(234, 179, 8, 0.75)'],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: 'var(--text-primary)' } }
+                }
+            }
+        });
+    }
+
+    // ==========================================================
+    // Order Status per Customer (all statuses, not just dispatched)
+    // ==========================================================
+    const STATUS_KEYS = ['Pending Approval', 'Preparing', 'Dispatched', 'Completed', 'Cancelled'];
+    const statusStats = {};
+    allOrdersInRange.forEach(o => {
+        if (!o.customer_id) return;
+        if (!statusStats[o.customer_id]) statusStats[o.customer_id] = {};
+        statusStats[o.customer_id][o.status] = (statusStats[o.customer_id][o.status] || 0) + 1;
+    });
+
+    const statusRows = Object.keys(statusStats).map(customerId => {
+        const customer = (customers || []).find(c => c.id === parseInt(customerId));
+        const counts = statusStats[customerId];
+        const total = STATUS_KEYS.reduce((sum, k) => sum + (counts[k] || 0), 0);
+        return { name: customer ? customer.name : 'Unknown', counts, total };
+    }).sort((a, b) => b.total - a.total);
+
+    const statusTbody = document.getElementById('rep-order-status-table-body');
+    if (statusTbody) {
+        statusTbody.innerHTML = '';
+        if (statusRows.length === 0) {
+            statusTbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:20px;">No orders in selected period</td></tr>`;
+        } else {
+            statusRows.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${r.name}</strong></td>
+                    <td style="text-align:center;">${r.counts['Pending Approval'] || 0}</td>
+                    <td style="text-align:center;">${r.counts['Preparing'] || 0}</td>
+                    <td style="text-align:center;">${r.counts['Dispatched'] || 0}</td>
+                    <td style="text-align:center;">${r.counts['Completed'] || 0}</td>
+                    <td style="text-align:center; color:var(--danger);">${r.counts['Cancelled'] || 0}</td>
+                    <td style="text-align:center; font-weight:700;">${r.total}</td>
+                `;
+                statusTbody.appendChild(tr);
+            });
+        }
+    }
+
+    const statusExportBtn = document.getElementById('btn-export-order-status-report');
+    if (statusExportBtn) {
+        statusExportBtn.addEventListener('click', (e) => { e.stopPropagation();
+            const exportData = statusRows.map(r => ({
+                'Customer Name': r.name,
+                'Pending': r.counts['Pending Approval'] || 0,
+                'Preparing': r.counts['Preparing'] || 0,
+                'Dispatched': r.counts['Dispatched'] || 0,
+                'Completed': r.counts['Completed'] || 0,
+                'Cancelled': r.counts['Cancelled'] || 0,
+                'Total': r.total
+            }));
+            exportToExcel(exportData, 'Order_Status_per_Customer');
+        });
+    }
+
+    // ==========================================================
+    // Coffee Preference by Customer (top coffee bought, from dispatched orders)
+    // ==========================================================
+    const prefStats = {}; // customerId -> { coffeeName -> { bags, kg } }
+    (orderItems || []).forEach(item => {
+        const customerId = orderIdToCustomerId[item.request_order_id];
+        if (!customerId) return;
+        let coffeeName = '';
+        if (item.coffee_type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === item.single_coffee_id);
+            coffeeName = gb ? gb.name : 'Single Origin';
+        } else {
+            const r = (recipes || []).find(rec => rec.id === item.blend_recipe_id);
+            coffeeName = r ? r.name : 'Blend';
+        }
+        const qty = parseInt(item.quantity_requested) || 0;
+        const sizeG = parseInt(item.bag_size_g) || 0;
+        if (!prefStats[customerId]) prefStats[customerId] = {};
+        if (!prefStats[customerId][coffeeName]) prefStats[customerId][coffeeName] = { bags: 0, kg: 0 };
+        prefStats[customerId][coffeeName].bags += qty;
+        prefStats[customerId][coffeeName].kg += (qty * sizeG) / 1000;
+    });
+
+    const prefRows = Object.keys(prefStats).map(customerId => {
+        const customer = (customers || []).find(c => c.id === parseInt(customerId));
+        const entries = Object.entries(prefStats[customerId]).sort((a, b) => b[1].bags - a[1].bags);
+        const [topCoffee, topStats] = entries[0];
+        return { name: customer ? customer.name : 'Unknown', topCoffee, bags: topStats.bags, kg: topStats.kg };
+    }).sort((a, b) => b.bags - a.bags);
+
+    const prefTbody = document.getElementById('rep-coffee-pref-table-body');
+    if (prefTbody) {
+        prefTbody.innerHTML = '';
+        if (prefRows.length === 0) {
+            prefTbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">No dispatched orders in selected period</td></tr>`;
+        } else {
+            prefRows.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${r.name}</strong></td>
+                    <td>${r.topCoffee}</td>
+                    <td style="text-align:center;">${r.bags}</td>
+                    <td style="text-align:center; font-weight:700;">${r.kg.toFixed(1)}</td>
+                `;
+                prefTbody.appendChild(tr);
+            });
+        }
+    }
+
+    const prefExportBtn = document.getElementById('btn-export-coffee-pref-report');
+    if (prefExportBtn) {
+        prefExportBtn.addEventListener('click', (e) => { e.stopPropagation();
+            const exportData = prefRows.map(r => ({
+                'Customer Name': r.name,
+                'Top Coffee': r.topCoffee,
+                'Total Bags': r.bags,
+                'Total (kg)': r.kg.toFixed(1)
+            }));
+            exportToExcel(exportData, 'Coffee_Preference_by_Customer');
         });
     }
 }
