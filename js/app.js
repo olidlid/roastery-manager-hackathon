@@ -1521,7 +1521,16 @@ async function loadGreenbeanInventory() {
             const name = btn.dataset.name;
             const confirmed = await showWarningModal(`Are you sure you want to delete "${name}" from Green Coffee Stock?\n\nThis action cannot be undone.`);
             if (!confirmed) return;
-            await deleteData('green_coffee', id);
+            const { error } = await deleteData('green_coffee', id);
+            if (error) {
+                const raw = (error.message || '').toLowerCase();
+                const isFk = /foreign key|violates|constraint|referenced|still referenced/.test(raw);
+                const msg = isFk
+                    ? `"${name}" cannot be deleted because it is still used elsewhere — for example in roasting plans, roast batches, blend recipes, or arrival records.\n\nRemove or reassign those records first, then try again.`
+                    : `Failed to delete "${name}": ${error.message}`;
+                await showWarningModal(msg, false, 'Delete Failed');
+                return;
+            }
             await loadGreenbeanInventory();
             scheduleDashboardRefresh();
         });
