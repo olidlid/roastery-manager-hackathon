@@ -10574,10 +10574,12 @@ async function printWaybill(orderId) {
     const { data: greenbeans } = await fetchData('green_coffee');
     const { data: recipes } = await fetchData('blend_recipes');
     const { data: machines } = await fetchData('machines');
-    
+    const { data: customers } = await fetchData('customers');
+
     const order = (orders || []).find(o => o.id === orderId);
     if (!order) return;
     const items = (orderItems || []).filter(i => i.request_order_id === orderId);
+    const customer = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
     
     let itemsTableRows = '';
     let totalBags = 0;
@@ -10699,6 +10701,16 @@ async function printWaybill(orderId) {
                     <span class="info-label">Sales Agent</span>
                     <span class="info-value">${order.sales_name || '-'}</span>
                 </div>
+                ${customer ? `
+                <div class="info-row">
+                    <span class="info-label">Customer</span>
+                    <span class="info-value">${customer.name}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Customer Code</span>
+                    <span class="info-value">${customer.customer_id}</span>
+                </div>
+                ` : ''}
             </div>
         </div>
 
