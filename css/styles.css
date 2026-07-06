@@ -89,6 +89,70 @@ button, input, select, textarea {
 }
 
 /* ==========================================================================
+   GLOBAL SAVING INDICATOR
+   ========================================================================== */
+#global-saving-indicator {
+    position: fixed;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background-color: var(--bg-sidebar);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 9999px;
+    box-shadow: var(--shadow-premium);
+    font-size: 0.85rem;
+    font-weight: 600;
+    animation: savingIndicatorIn 0.2s ease;
+}
+
+.global-saving-spinner {
+    width: 15px;
+    height: 15px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: savingSpin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes savingSpin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes savingIndicatorIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Buttons in a saving state: dim + a spinner replaces/joins the label so the
+   exact control the user pressed shows feedback, not just a global toast. */
+button.is-saving {
+    position: relative;
+    color: transparent !important;
+    pointer-events: none;
+}
+
+button.is-saving::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 15px;
+    height: 15px;
+    margin: -8px 0 0 -8px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: savingSpin 0.7s linear infinite;
+}
+
+/* ==========================================================================
    APP LAYOUT
    ========================================================================== */
 #app-container {

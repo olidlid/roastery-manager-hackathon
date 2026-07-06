@@ -269,7 +269,7 @@ async function fetchData(table) {
     }
 }
 
-async function saveData(table, record) {
+async function saveDataImpl(table, record) {
     if (isMockMode) {
         let tableData = getMockTable(table);
         if (!tableData) {
@@ -306,7 +306,7 @@ async function saveData(table, record) {
     }
 }
 
-async function deleteData(table, id) {
+async function deleteDataImpl(table, id) {
     if (isMockMode) {
         let tableData = getMockTable(table);
         tableData = tableData.filter(item => item.id !== id);
@@ -324,6 +324,66 @@ async function deleteData(table, id) {
         }
     }
 }
+
+// --- Global saving indicator ---------------------------------------------
+// Every mutation in the app goes through saveData()/deleteData(), so wrapping
+// these two functions is enough to show loading feedback everywhere without
+// touching each individual save/delete call site. A counter (not a boolean)
+// is required because some flows fire several saves in a row (e.g. a blend's
+// ingredient rows, or splitting output across multiple roasting plans) —
+// the indicator should stay up for the whole burst, not flicker between calls.
+let _savingCount = 0;
+
+function _showSavingIndicator() {
+    _savingCount++;
+    const el = document.getElementById('global-saving-indicator');
+    if (el) el.classList.remove('hidden');
+}
+
+function _hideSavingIndicator() {
+    _savingCount = Math.max(0, _savingCount - 1);
+    if (_savingCount === 0) {
+        const el = document.getElementById('global-saving-indicator');
+        if (el) el.classList.add('hidden');
+        // Release any submit button that was marked mid-save (see the global
+        // submit listener below). Modals that closed on success already took
+        // the button with them; this only matters for the failure/validation
+        // path where the modal stays open.
+        document.querySelectorAll('button.is-saving').forEach(b => {
+            b.classList.remove('is-saving');
+            b.disabled = false;
+        });
+    }
+}
+
+async function saveData(table, record) {
+    _showSavingIndicator();
+    try {
+        return await saveDataImpl(table, record);
+    } finally {
+        _hideSavingIndicator();
+    }
+}
+
+async function deleteData(table, id) {
+    _showSavingIndicator();
+    try {
+        return await deleteDataImpl(table, id);
+    } finally {
+        _hideSavingIndicator();
+    }
+}
+
+// Mark the pressed submit button as "saving" the instant a form is submitted,
+// so the click feels acknowledged right away instead of the UI looking frozen
+// while the request round-trips. Capture phase so this runs before the
+// form's own submit handler starts its async work.
+document.addEventListener('submit', (e) => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    const btn = form.querySelector('button[type="submit"]');
+    if (btn) btn.classList.add('is-saving');
+}, true);
 
 // ============================================================
 // CUSTOM ROLES SYNC — Supabase is the source of truth; localStorage
