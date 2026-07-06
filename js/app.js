@@ -986,7 +986,7 @@ async function loadCustomersSection(filterType) {
     });
     
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding: 32px 0;">No customers found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color:var(--text-muted); padding: 32px 0;">No customers found</td></tr>';
         return;
     }
     
@@ -1002,7 +1002,10 @@ async function loadCustomersSection(filterType) {
             <td>${typeBadge}</td>
             <td>${c.contact_person || '-'}</td>
             <td>${c.phone || '-'}</td>
+            <td>${c.email || '-'}</td>
             <td>${c.city || '-'}</td>
+            <td><span style="display:inline-block; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom;" title="${(c.address || '').replace(/"/g, '&quot;')}">${c.address || '-'}</span></td>
+            <td><span style="display:inline-block; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom;" title="${(c.notes || '').replace(/"/g, '&quot;')}">${c.notes || '-'}</span></td>
             <td>
                 <div style="display:flex; gap:4px; flex-wrap:wrap;">
                     <button class="btn btn-secondary btn-sm" onclick="viewCustomerHistory(${c.id})" title="Order History">
