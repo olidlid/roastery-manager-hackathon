@@ -866,7 +866,7 @@ tbody tr:hover {
     display: none;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 900px), (max-height: 500px) and (orientation: landscape) {
     #mobile-topbar {
         display: flex;
         align-items: center;
