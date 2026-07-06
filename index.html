@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=3">
+    <link rel="stylesheet" href="css/styles.css?v=4">
     <!-- Lucide Icons CDN -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.344.0/font/lucide.min.css">
     <!-- Chart.js CDN for Analytics -->
@@ -195,7 +195,16 @@
 
     <!-- MAIN APP CONTAINER -->
     <div id="app-container">
-        
+
+        <!-- MOBILE TOP BAR (hidden on desktop) -->
+        <div id="mobile-topbar">
+            <button type="button" id="btn-mobile-menu" aria-label="Open menu">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <span id="mobile-topbar-title">Roastery Pro</span>
+        </div>
+        <div id="sidebar-backdrop"></div>
+
         <!-- SIDEBAR NAVIGATION -->
         <aside id="sidebar">
             <div class="sidebar-brand">
@@ -2183,6 +2192,6 @@
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/app.js?v=22"></script>
+    <script src="js/app.js?v=23"></script>
 </body>
 </html>

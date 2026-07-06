@@ -649,7 +649,28 @@ const PAGE_METADATA = {
     'sec-customers': { title: 'Customer Management', subtitle: 'Manage wholesale and retail customers' }
 };
 
+// --- MOBILE NAV DRAWER (hamburger sidebar) ---
+function closeMobileSidebar() {
+    const sb = document.getElementById('sidebar');
+    const bd = document.getElementById('sidebar-backdrop');
+    if (sb) sb.classList.remove('mobile-open');
+    if (bd) bd.classList.remove('visible');
+}
+(function initMobileNav() {
+    const btn = document.getElementById('btn-mobile-menu');
+    const sb = document.getElementById('sidebar');
+    const bd = document.getElementById('sidebar-backdrop');
+    if (btn && sb && bd) {
+        btn.addEventListener('click', () => {
+            sb.classList.add('mobile-open');
+            bd.classList.add('visible');
+        });
+        bd.addEventListener('click', closeMobileSidebar);
+    }
+})();
+
 function navigateTo(sectionId) {
+    closeMobileSidebar();
     pageSections.forEach(sec => sec.classList.add('hidden'));
     const activeSec = document.getElementById(sectionId);
     if (activeSec) activeSec.classList.remove('hidden');
@@ -693,6 +714,9 @@ function navigateTo(sectionId) {
         activePageSubtitle.textContent = window.t(`header_subtitle_${keyPart}`);
         activePageSubtitle.style.display = '';
     }
+
+    const mobileTitle = document.getElementById('mobile-topbar-title');
+    if (mobileTitle) mobileTitle.textContent = activePageTitle.textContent;
 
     loadSectionData(sectionId);
 }
