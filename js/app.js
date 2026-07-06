@@ -7942,7 +7942,7 @@ async function loadUsersSection() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td><strong>${user.name}</strong></td>
-            <td><code>${user.username}</code></td>
+            <td><code>${user.email || '-'}</code></td>
             <td><span class="potential-badge">${user.role}</span></td>
             <td>${user.created_at ? new Date(user.created_at).toLocaleDateString() : '2026-06-28'}</td>
             <td>
@@ -7986,8 +7986,12 @@ async function editUserRole(userId) {
     openModal('Edit User Role', html);
     document.getElementById('modal-edit-role-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        user.role = document.getElementById('m-edit-role').value;
-        await saveData('profiles', user);
+        const newRole = document.getElementById('m-edit-role').value;
+        const { error } = await saveData('profiles', { id: user.id, role: newRole });
+        if (error) {
+            alert('Failed to save role: ' + error.message);
+            return;
+        }
         document.getElementById('btn-close-modal').click();
         loadUsersSection();
     });

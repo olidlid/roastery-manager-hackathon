@@ -79,7 +79,7 @@ There is no bundler, transpiler, or package build for the main app — `js/app.j
 
 ### `profiles`
 `id (uuid, PK)`, `name`, `email`, `role` (default `'Roaster'`), `avatar_url`, `created_at`.
-RLS: anyone can SELECT; users can UPDATE their own row; INSERT open (for the signup trigger).
+RLS: `full_access` (`FOR ALL USING (true)`), same permissive pattern as every other table — see "Database Schema" rules above (authorization is enforced client-side via `hasPermission('user_management')`, not by RLS). This line previously (incorrectly) documented "own row only" for UPDATE, which was stale/contradicted the schema file's own generic RLS block and caused Admin/Developer edits to another user's role to be silently rejected. If `profiles` UPDATE ever stops working for one user editing another's role, re-run the `full_access` policy for this table specifically (see 2026-07-06 fix).
 
 ### `custom_roles`
 Role definitions with granular permissions. `id`, `name` (unique), `color`, `is_system`, `permissions` (jsonb, ~40 boolean keys like `greenbean_view`, `roasting_batch_approve`, `dispatch_approval_dispatch`, `settings_system`, `user_management`), `created_at`.
