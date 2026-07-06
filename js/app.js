@@ -10901,12 +10901,12 @@ async function printWaybill(orderId) {
         const sizeLabel = sizeG >= 1000 ? `${sizeG/1000}kg` : `${sizeG}g`;
         itemsTableRows += `
             <tr>
-                <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;">${idx + 1}</td>
-                <td style="padding:8px 12px; border:1px solid #ddd; font-weight:600;">${coffeeName}</td>
-                <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;">${machName}</td>
-                <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;">${sizeLabel}</td>
-                <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;">${qty}</td>
-                <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;">${weightKg.toFixed(1)} kg</td>
+                <td style="text-align:center;">${idx + 1}</td>
+                <td style="font-weight:600;">${coffeeName}</td>
+                <td>${machName}</td>
+                <td>${sizeLabel}</td>
+                <td style="text-align:center;">${qty}</td>
+                <td style="text-align:center;">${weightKg.toFixed(1)} kg</td>
             </tr>`;
     }
     
@@ -10920,43 +10920,51 @@ async function printWaybill(orderId) {
 <head>
     <title>Waybill - ${order.order_number || '#ORD-'+order.id}</title>
     <style>
-        @page { size: A4; margin: 18mm; }
+        @page { size: A4; margin: 16mm; }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; font-size: 13px; }
-        .waybill { max-width: 210mm; margin: 0 auto; padding: 20px; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; font-size: 13px; background: #fff; }
+        .waybill { max-width: 210mm; margin: 0 auto; padding: 8px; }
 
         /* Letterhead */
-        .letterhead { display: flex; justify-content: space-between; align-items: center; padding-bottom: 14px; border-bottom: 3px solid #2d5016; margin-bottom: 20px; }
+        .letterhead { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 3px solid #2d5016; margin-bottom: 24px; }
         .letterhead-left { display: flex; align-items: center; gap: 14px; }
-        .letterhead-logo { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; }
-        .letterhead-name { font-size: 20px; font-weight: 800; color: #2d5016; line-height: 1.2; }
-        .letterhead-contact { font-size: 10px; color: #666; line-height: 1.5; margin-top: 2px; }
+        .letterhead-logo { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; border: 1px solid #e5e5e5; }
+        .letterhead-name { font-size: 21px; font-weight: 800; color: #2d5016; line-height: 1.2; }
+        .letterhead-contact { font-size: 10px; color: #777; line-height: 1.6; margin-top: 3px; }
         .letterhead-right { text-align: right; }
-        .letterhead-right .doc-title { font-size: 18px; font-weight: 800; color: #2d5016; letter-spacing: 0.5px; text-transform: uppercase; }
-        .letterhead-right .doc-subtitle { font-size: 10px; color: #888; margin-top: 2px; }
+        .letterhead-right .doc-title { font-size: 19px; font-weight: 800; color: #2d5016; letter-spacing: 0.5px; text-transform: uppercase; }
+        .letterhead-right .doc-subtitle { font-size: 11px; color: #999; margin-top: 3px; font-weight: 600; }
 
-        /* Info section */
-        .info-section { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 22px; }
-        .info-block { text-align: right; }
-        .info-block .info-row { display: flex; justify-content: flex-end; gap: 12px; font-size: 12px; line-height: 2; }
-        .info-block .info-label { color: #888; font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.3px; }
-        .info-block .info-value { color: #1a1a1a; font-weight: 700; min-width: 140px; text-align: left; }
+        /* Info cards */
+        .info-section { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+        .info-card { background: #f7f9f5; border: 1px solid #e2e8dc; border-radius: 8px; padding: 14px 16px; }
+        .info-card .card-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #2d5016; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #dde5d3; }
+        .info-card .info-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 3px 0; }
+        .info-card .info-label { color: #888; font-weight: 600; }
+        .info-card .info-value { color: #1a1a1a; font-weight: 700; text-align: right; }
+        .info-card .customer-name { font-size: 15px; font-weight: 800; color: #1a1a1a; margin-bottom: 2px; }
+        .info-card .customer-code { display: inline-block; font-size: 10px; font-weight: 700; color: #2d5016; background: #e2e8dc; padding: 2px 8px; border-radius: 10px; margin-bottom: 8px; }
 
         /* Table */
-        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-        thead th { background: #2d5016; color: #fff; padding: 9px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid #2d5016; }
-        tbody td { padding: 8px 10px; border: 1px solid #ddd; font-size: 12px; }
-        tfoot td { background: #f0f5eb; font-weight: 700; padding: 9px 10px; border: 1px solid #ddd; font-size: 12px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; border-radius: 8px; overflow: hidden; }
+        thead th { background: #2d5016; color: #fff; padding: 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; text-align: left; }
+        thead th:first-child { text-align: center; }
+        tbody tr:nth-child(even) { background: #f7f9f5; }
+        tbody td { padding: 9px 10px; border-bottom: 1px solid #e5e5e5; font-size: 12px; }
+        tfoot td { background: #eef3e8; font-weight: 700; padding: 10px; border-top: 2px solid #2d5016; font-size: 12px; }
 
         /* Notes */
-        .notes { border: 1px solid #ddd; border-radius: 6px; padding: 12px; margin-top: 16px; }
+        .notes { border: 1px solid #e5e5e5; border-radius: 8px; padding: 12px 14px; margin-bottom: 24px; background: #fafafa; }
         .notes .label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #888; margin-bottom: 4px; }
 
         /* Signature */
-        .signature-area { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; margin-top: 50px; }
+        .signature-area { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; margin-top: 40px; }
         .sig-box { text-align: center; }
         .sig-box .sig-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #666; margin-bottom: 60px; }
         .sig-box .sig-line { border-top: 1px solid #333; padding-top: 6px; font-size: 11px; color: #999; }
+
+        /* Footer */
+        .print-footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #e5e5e5; text-align: center; font-size: 10px; color: #999; }
 
         @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
     </style>
@@ -10980,8 +10988,21 @@ async function printWaybill(orderId) {
         </div>
 
         <div class="info-section">
-            <div></div>
-            <div class="info-block">
+            <div class="info-card">
+                <div class="card-title">Bill To</div>
+                ${customer ? `
+                    <div class="customer-name">${customer.name}</div>
+                    <div class="customer-code">${customer.customer_id}</div>
+                ` : `
+                    <div class="customer-name">-</div>
+                `}
+                <div class="info-row">
+                    <span class="info-label">Sales Agent</span>
+                    <span class="info-value">${order.sales_name || '-'}</span>
+                </div>
+            </div>
+            <div class="info-card">
+                <div class="card-title">Order Details</div>
                 <div class="info-row">
                     <span class="info-label">Order Number</span>
                     <span class="info-value">${order.order_number || '#ORD-'+order.id}</span>
@@ -10990,20 +11011,6 @@ async function printWaybill(orderId) {
                     <span class="info-label">Order Date</span>
                     <span class="info-value">${order.order_date}</span>
                 </div>
-                <div class="info-row">
-                    <span class="info-label">Sales Agent</span>
-                    <span class="info-value">${order.sales_name || '-'}</span>
-                </div>
-                ${customer ? `
-                <div class="info-row">
-                    <span class="info-label">Customer</span>
-                    <span class="info-value">${customer.name}</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">Customer Code</span>
-                    <span class="info-value">${customer.customer_id}</span>
-                </div>
-                ` : ''}
             </div>
         </div>
 
@@ -11014,16 +11021,16 @@ async function printWaybill(orderId) {
                     <th>Coffee Name</th>
                     <th style="width:100px;">Machine</th>
                     <th style="width:60px;">Size</th>
-                    <th style="width:50px;">Qty</th>
-                    <th style="width:80px;">Weight</th>
+                    <th style="width:50px; text-align:center;">Qty</th>
+                    <th style="width:80px; text-align:center;">Weight</th>
                 </tr>
             </thead>
             <tbody>${itemsTableRows}</tbody>
             <tfoot>
                 <tr>
-                    <td colspan="4" style="text-align:right; border:1px solid #ddd;">Total</td>
-                    <td style="text-align:center; border:1px solid #ddd;">${totalBags}</td>
-                    <td style="text-align:center; border:1px solid #ddd;">${totalWeightKg.toFixed(1)} kg</td>
+                    <td colspan="4" style="text-align:right;">Total</td>
+                    <td style="text-align:center;">${totalBags}</td>
+                    <td style="text-align:center;">${totalWeightKg.toFixed(1)} kg</td>
                 </tr>
             </tfoot>
         </table>
@@ -11033,6 +11040,7 @@ async function printWaybill(orderId) {
             <div class="sig-box"><div class="sig-label">Checked By</div><div class="sig-line">Name / Date</div></div>
             <div class="sig-box"><div class="sig-label">Received By</div><div class="sig-line">Name / Date</div></div>
         </div>
+        ${cs.print_footer_text ? '<div class="print-footer">' + cs.print_footer_text + '</div>' : ''}
     </div>
     <script>window.onload = function() { window.print(); }<\/script>
 </body>
