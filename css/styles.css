@@ -981,6 +981,33 @@ tbody tr:hover {
     .form-row {
         grid-template-columns: 1fr;
     }
+
+    /* Icon-only buttons (table column filters, etc.) are 26px on desktop —
+       too small to reliably tap. Bump to a real touch target on mobile.
+       !important: this media query sits earlier in the file than the base
+       .filter-trigger-btn rule, and both have equal specificity, so plain
+       overrides here would lose the cascade. */
+    .filter-trigger-btn {
+        width: 40px !important;
+        height: 40px !important;
+    }
+
+    .filter-trigger-btn svg {
+        width: 16px !important;
+        height: 16px !important;
+    }
+
+    /* Modals: less outer/inner padding so forms get real width to work with
+       on a narrow screen, instead of losing ~30% of it to whitespace. */
+    .overlay {
+        padding: 12px;
+    }
+
+    .overlay-card {
+        padding: 20px;
+        max-height: 92vh;
+        overflow-y: auto;
+    }
 }
 
 @media print {
