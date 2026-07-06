@@ -30,6 +30,22 @@
                 flowType: 'implicit'
             }
         });
+
+        // Password recovery links land here with a #access_token=...&type=recovery
+        // hash. detectSessionInUrl parses it immediately on client creation and
+        // fires 'PASSWORD_RECOVERY' right away — long before app.js finishes its
+        // bootstrap and calls checkAuthentication(). By the time app.js attaches
+        // its own onAuthStateChange listener, that event has already fired and is
+        // gone, so the recovery session would silently look like a normal login.
+        // Catch it here, as early as possible, and let app.js poll the flag once
+        // it's ready to show the "set new password" prompt.
+        window.__pendingPasswordRecovery = false;
+        window.supabaseClient.auth.onAuthStateChange((event) => {
+            if (event === 'PASSWORD_RECOVERY') {
+                window.__pendingPasswordRecovery = true;
+            }
+        });
+
         console.log("Supabase Client initialized successfully.");
         return true;
     }

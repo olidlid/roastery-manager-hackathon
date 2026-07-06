@@ -491,6 +491,10 @@ function checkAuthentication() {
             document.getElementById('app-container').style.display = 'flex';
             loadUserProfile(session.user.id);
             scheduleDashboardRefresh();
+            if (window.__pendingPasswordRecovery) {
+                window.__pendingPasswordRecovery = false;
+                showSetNewPasswordModal();
+            }
         } else if (event === 'SIGNED_OUT') {
             authOverlay.classList.remove('hidden');
             document.getElementById('app-container').style.display = 'none';
@@ -514,6 +518,10 @@ function checkAuthentication() {
             document.getElementById('app-container').style.display = 'flex';
             loadUserProfile(session.user.id);
             scheduleDashboardRefresh();
+            if (window.__pendingPasswordRecovery) {
+                window.__pendingPasswordRecovery = false;
+                showSetNewPasswordModal();
+            }
         }
     });
 }
