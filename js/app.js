@@ -1097,8 +1097,13 @@ async function viewCustomerHistory(customerId) {
     const customer = (customers || []).find(c => c.id === customerId);
     if (!customer) return;
     
-    const { data: orders } = await fetchData('request_orders');
-    const { data: orderItems } = await fetchData('request_order_items');
+    const [
+        { data: orders },
+        { data: orderItems }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items')
+    ]);
     
     const custOrders = (orders || []).filter(o => o.customer_id === customerId);
     
@@ -1214,10 +1219,17 @@ const scheduleDashboardRefresh = () => {
 
 async function initAppDashboard() {
     // 1. Load Metric Counts
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: packed } = await fetchData('packed_coffee');
-    const { data: orders } = await fetchData('request_orders');
+    const [
+        { data: greenbeans },
+        { data: batches },
+        { data: packed },
+        { data: orders }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('roast_batches'),
+        fetchData('packed_coffee'),
+        fetchData('request_orders')
+    ]);
     
     // Greenbean Total Stock
     const totalGreenbean = greenbeans.reduce((acc, item) => acc + parseFloat(item.stock_kg || 0), 0);
@@ -1548,8 +1560,13 @@ async function loadIntakeHistory() {
 }
 
 async function openIntakeModal(editId = null) {
-    const { data: inventory } = await fetchData('green_coffee');
-    const { data: history } = await fetchData('green_coffee_intake');
+    const [
+        { data: inventory },
+        { data: history }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('green_coffee_intake')
+    ]);
     
     let intakeItem = null;
     if (editId) {
@@ -1710,12 +1727,17 @@ async function openIntakeModal(editId = null) {
 
 async function deleteIntake(deleteId) {
     if (await showDeleteConfirmModal('this intake lot')) {
-        const { data: history } = await fetchData('green_coffee_intake');
+        const [
+            { data: history },
+            { data: inventory }
+        ] = await Promise.all([
+            fetchData('green_coffee_intake'),
+            fetchData('green_coffee')
+        ]);
         const item = history.find(i => i.id === deleteId);
         if (!item) return;
 
         // Deduct quantity from warehouse inventory
-        const { data: inventory } = await fetchData('green_coffee');
         const match = inventory.find(g => g.name.toLowerCase() === item.name.toLowerCase() && g.code.toLowerCase() === item.code.toLowerCase());
         if (match) {
             match.stock_kg = Math.max(0, parseFloat(match.stock_kg) - parseFloat(item.quantity));
@@ -1736,10 +1758,17 @@ async function deleteIntake(deleteId) {
 
 // // --- TAB 2: Production Potential ---
 async function loadRecipeProductionPotential() {
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: ingredients } = await fetchData('blend_ingredients');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: greenbeans },
+        { data: recipes },
+        { data: ingredients },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('blend_ingredients'),
+        fetchData('machines')
+    ]);
     
     const tbody = document.getElementById('potential-table-body');
     tbody.innerHTML = '';
@@ -1860,10 +1889,17 @@ async function loadRecipeProductionPotential() {
 // DAILY ACHIEVEMENT TABLE
 // ============================================================
 async function loadDailyAchievementTable() {
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: machines } = await fetchData('machines');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
+    const [
+        { data: batches },
+        { data: machines },
+        { data: greenbeans },
+        { data: recipes }
+    ] = await Promise.all([
+        fetchData('roast_batches'),
+        fetchData('machines'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
+    ]);
 
     const thead = document.getElementById('daily-achievement-thead');
     const tbody = document.getElementById('daily-achievement-tbody');
@@ -2116,9 +2152,15 @@ function exportDailyAchievementToExcel(batches, machineList, greenbeans, recipes
 }
 
 async function openLowComponentModal(recipeId) {
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: ingredients } = await fetchData('blend_ingredients');
-    const { data: greenbeans } = await fetchData('green_coffee');
+    const [
+        { data: recipes },
+        { data: ingredients },
+        { data: greenbeans }
+    ] = await Promise.all([
+        fetchData('blend_recipes'),
+        fetchData('blend_ingredients'),
+        fetchData('green_coffee')
+    ]);
 
     const recipe = recipes.find(r => r.id === recipeId);
     if (!recipe) return;
@@ -2213,10 +2255,17 @@ async function openLowComponentModal(recipeId) {
 
 // --- TAB 3: Blend Recipes ---
 async function loadBlendRecipes() {
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: ingredients } = await fetchData('blend_ingredients');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: recipes },
+        { data: ingredients },
+        { data: greenbeans },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('blend_recipes'),
+        fetchData('blend_ingredients'),
+        fetchData('green_coffee'),
+        fetchData('machines')
+    ]);
 
     const tbody = document.getElementById('recipe-table-body');
     tbody.innerHTML = '';
@@ -2284,10 +2333,17 @@ async function loadBlendRecipes() {
 }
 
 async function openViewRecipeModal(id) {
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: ingredients } = await fetchData('blend_ingredients');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: recipes },
+        { data: ingredients },
+        { data: greenbeans },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('blend_recipes'),
+        fetchData('blend_ingredients'),
+        fetchData('green_coffee'),
+        fetchData('machines')
+    ]);
 
     const recipe = recipes.find(r => r.id === id);
     if (!recipe) return;
@@ -2626,9 +2682,15 @@ async function deleteGreenbean(id) {
 
 // --- modal: ADD / EDIT BLEND RECIPE ---
 async function openRecipeModal(id = null) {
-    const { data: machines } = await fetchData('machines');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: ingredients } = await fetchData('blend_ingredients');
+    const [
+        { data: machines },
+        { data: greenbeans },
+        { data: ingredients }
+    ] = await Promise.all([
+        fetchData('machines'),
+        fetchData('green_coffee'),
+        fetchData('blend_ingredients')
+    ]);
 
     const defaultMachine = machines[0];
     const defaultCapacity = defaultMachine ? parseFloat(defaultMachine.ideal_batch_size_g) || 5000 : 5000;
@@ -2845,10 +2907,17 @@ async function loadRoastingSection() {
 }
 
 async function loadRoastingPlans() {
-    const { data: plans } = await fetchData('roasting_plans');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: plans },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('roasting_plans'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines')
+    ]);
     
     const tbody = document.getElementById('plan-table-body');
     tbody.innerHTML = '';
@@ -2926,10 +2995,17 @@ async function loadRoastingPlans() {
 }
 
 async function loadRoastingBatches() {
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: batches },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines')
+    ]);
 
     const tbody = document.getElementById('batch-table-body');
     tbody.innerHTML = '';
@@ -3112,11 +3188,19 @@ if (document.getElementById('btn-custom-packing')) {
 }
 
 async function openRoastPlanModal(editId = null) {
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: ingredients } = await fetchData('blend_ingredients');
-    const { data: plans } = await fetchData('roasting_plans');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: greenbeans },
+        { data: recipes },
+        { data: ingredients },
+        { data: plans },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('blend_ingredients'),
+        fetchData('roasting_plans'),
+        fetchData('machines')
+    ]);
 
     let existingPlan = null;
     if (editId) {
@@ -3612,8 +3696,13 @@ async function completePlan(id) {
 }
 
 async function adjustGreenbeanStock(type, id, targetRoastedKg, sign = 1) {
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: ingredients } = await fetchData('blend_ingredients');
+    const [
+        { data: greenbeans },
+        { data: ingredients }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('blend_ingredients')
+    ]);
     
     const requiredTotalGb = (targetRoastedKg / 0.85) * sign;
     
@@ -3651,8 +3740,13 @@ async function deletePlan(id) {
 
 async function deleteBatch(id) {
     if (await showDeleteConfirmModal('this roasting batch log')) {
-        const { data: batches } = await fetchData('roast_batches');
-        const { data: greenbeans } = await fetchData('green_coffee');
+        const [
+            { data: batches },
+            { data: greenbeans }
+        ] = await Promise.all([
+            fetchData('roast_batches'),
+            fetchData('green_coffee')
+        ]);
         const batch = batches.find(b => b.id === id);
         
         if (batch) {
@@ -3751,8 +3845,13 @@ async function approveTestBatch(id) {
             await saveData('roast_batches', updateRecord);
 
             // Fetch coffee name
-            const { data: greenbeans } = await fetchData('green_coffee');
-            const { data: recipes } = await fetchData('blend_recipes');
+            const [
+                { data: greenbeans },
+                { data: recipes }
+            ] = await Promise.all([
+                fetchData('green_coffee'),
+                fetchData('blend_recipes')
+            ]);
             let coffeeName = '';
             if (batch.coffee_type === 'Single') {
                 const gb = greenbeans.find(g => g.id === batch.single_coffee_id);
@@ -3839,9 +3938,15 @@ async function openExportBatchesModal() {
             return;
         }
 
-        const { data: greenbeans } = await fetchData('green_coffee');
-        const { data: recipes } = await fetchData('blend_recipes');
-        const { data: machines } = await fetchData('machines');
+        const [
+            { data: greenbeans },
+            { data: recipes },
+            { data: machines }
+        ] = await Promise.all([
+            fetchData('green_coffee'),
+            fetchData('blend_recipes'),
+            fetchData('machines')
+        ]);
 
         const filtered = (batches || [])
             .filter(b => b.roast_date >= fromDate && b.roast_date <= toDate)
@@ -4059,9 +4164,15 @@ async function openExportLotHistoryModal() {
 
 // === Export: Blend Recipes ===
 document.getElementById('btn-export-blend-recipes').addEventListener('click', async () => {
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: ingredients } = await fetchData('blend_ingredients');
-    const { data: greenbeans } = await fetchData('green_coffee');
+    const [
+        { data: recipes },
+        { data: ingredients },
+        { data: greenbeans }
+    ] = await Promise.all([
+        fetchData('blend_recipes'),
+        fetchData('blend_ingredients'),
+        fetchData('green_coffee')
+    ]);
 
     if (!recipes || recipes.length === 0) {
         await showWarningModal('No blend recipe data to export.', false);
@@ -4084,11 +4195,19 @@ document.getElementById('btn-export-blend-recipes').addEventListener('click', as
 });
 
 async function openRoastBatchModal(plan = null, editId = null) {
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: ingredients } = await fetchData('blend_ingredients');
-    const { data: machines } = await fetchData('machines');
-    const { data: batches } = await fetchData('roast_batches');
+    const [
+        { data: greenbeans },
+        { data: recipes },
+        { data: ingredients },
+        { data: machines },
+        { data: batches }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('blend_ingredients'),
+        fetchData('machines'),
+        fetchData('roast_batches')
+    ]);
 
     let existingBatch = null;
     if (editId) {
@@ -4660,10 +4779,17 @@ async function openRoastBatchModal(plan = null, editId = null) {
 }
 
 async function printStickerLabel(id) {
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: batches },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines')
+    ]);
 
     const batch = batches.find(b => b.id === id);
     if (!batch) return;
@@ -4824,11 +4950,19 @@ async function loadPackingSection() {
         packingDateEl.value = new Date().toISOString().split('T')[0];
     }
 
-    const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
-    const { data: packagingSizes } = await fetchData('packaging_sizes');
+    const [
+        { data: bulkList },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines },
+        { data: packagingSizes }
+    ] = await Promise.all([
+        fetchData('bulk_roasted_coffee'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines'),
+        fetchData('packaging_sizes')
+    ]);
     
     const rowsContainer = document.getElementById('packing-sheet-rows');
     if (!rowsContainer) return;
@@ -4967,14 +5101,25 @@ async function openExportPackingRecordsModal() {
 }
 
 async function loadPackingRequestsSection() {
-    const { data: orders } = await fetchData('request_orders');
-    const { data: orderItems } = await fetchData('request_order_items');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: packedGoods } = await fetchData('packed_coffee');
-    const { data: roastBatches } = await fetchData('roast_batches');
-    const { data: machines } = await fetchData('machines');
-    const { data: customers } = await fetchData('customers');
+    const [
+        { data: orders },
+        { data: orderItems },
+        { data: greenbeans },
+        { data: recipes },
+        { data: packedGoods },
+        { data: roastBatches },
+        { data: machines },
+        { data: customers }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('packed_coffee'),
+        fetchData('roast_batches'),
+        fetchData('machines'),
+        fetchData('customers')
+    ]);
     
     const tbody = document.getElementById('packing-requests-table-body');
     if (!tbody) return;
@@ -5202,11 +5347,19 @@ async function loadPackingRequestsSection() {
 }
 
 async function markOrderItemReady(orderId, itemId, qtyToReady) {
-    const { data: orderItems } = await fetchData('request_order_items');
-    const { data: packedGoods } = await fetchData('packed_coffee');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: roastBatches } = await fetchData('roast_batches');
+    const [
+        { data: orderItems },
+        { data: packedGoods },
+        { data: greenbeans },
+        { data: recipes },
+        { data: roastBatches }
+    ] = await Promise.all([
+        fetchData('request_order_items'),
+        fetchData('packed_coffee'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('roast_batches')
+    ]);
     
     const item = orderItems.find(i => i.id === itemId);
     if (!item) return;
@@ -5278,11 +5431,19 @@ async function markOrderItemReady(orderId, itemId, qtyToReady) {
 // PRINT ORDER DETAIL - Sales Order Request A4
 // ============================================================
 async function printOrderDetail(orderId) {
-    const { data: orders } = await fetchData('request_orders');
-    const { data: orderItems } = await fetchData('request_order_items');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: orders },
+        { data: orderItems },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines')
+    ]);
     
     const order = (orders || []).find(o => o.id === orderId);
     if (!order) return;
@@ -5658,10 +5819,17 @@ function validatePackingStock() {
 }
 
 async function submitPackingSheet() {
-    const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-    const { data: packedList } = await fetchData('packed_coffee');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
+    const [
+        { data: bulkList },
+        { data: packedList },
+        { data: greenbeans },
+        { data: recipes }
+    ] = await Promise.all([
+        fetchData('bulk_roasted_coffee'),
+        fetchData('packed_coffee'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
+    ]);
     
     const subrows = document.querySelectorAll('.machine-pack-subrow');
     if (subrows.length === 0) return;
@@ -5999,14 +6167,25 @@ async function loadHandoverSection() {
 }
 
 async function loadSalesDispatchRequestsTable() {
-    const { data: orders } = await fetchData('request_orders');
-    const { data: orderItems } = await fetchData('request_order_items');
-    const { data: packedGoods } = await fetchData('packed_coffee');
-    const { data: roastBatches } = await fetchData('roast_batches');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
-    const { data: customers } = await fetchData('customers');
+    const [
+        { data: orders },
+        { data: orderItems },
+        { data: packedGoods },
+        { data: roastBatches },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines },
+        { data: customers }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('packed_coffee'),
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines'),
+        fetchData('customers')
+    ]);
     const tbody = document.getElementById('request-orders-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
@@ -6259,12 +6438,21 @@ async function loadSalesDispatchRequestsTable() {
 }
 
 async function loadDispatchApprovalTable() {
-    const { data: orders } = await fetchData('request_orders');
-    const { data: orderItems } = await fetchData('request_order_items');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
-    const { data: customers } = await fetchData('customers');
+    const [
+        { data: orders },
+        { data: orderItems },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines },
+        { data: customers }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines'),
+        fetchData('customers')
+    ]);
     const tbody = document.getElementById('approval-orders-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
@@ -6585,13 +6773,23 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
 
 // Approve sales request order and allocate packed stock
 async function approveSalesOrder(orderId) {
-    const { data: orders } = await fetchData('request_orders');
-    const { data: orderItems } = await fetchData('request_order_items');
-    const { data: packedGoods } = await fetchData('packed_coffee');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: roastBatches } = await fetchData('roast_batches');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: orders },
+        { data: orderItems },
+        { data: packedGoods },
+        { data: greenbeans },
+        { data: recipes },
+        { data: roastBatches },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('packed_coffee'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('roast_batches'),
+        fetchData('machines')
+    ]);
     
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
@@ -6853,15 +7051,27 @@ document.getElementById('btn-create-request').addEventListener('click', async ()
 });
 
 async function openSalesRequestModal(orderId = null) {
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: ingredients } = await fetchData('blend_ingredients');
-    const { data: agents } = await fetchData('sales_agents');
-    const { data: requestOrders } = await fetchData('request_orders');
-    const { data: requestOrderItems } = await fetchData('request_order_items');
-    const { data: packed } = await fetchData('packed_coffee');
-    const { data: roastBatches } = await fetchData('roast_batches');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: greenbeans },
+        { data: recipes },
+        { data: ingredients },
+        { data: agents },
+        { data: requestOrders },
+        { data: requestOrderItems },
+        { data: packed },
+        { data: roastBatches },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('blend_ingredients'),
+        fetchData('sales_agents'),
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('packed_coffee'),
+        fetchData('roast_batches'),
+        fetchData('machines')
+    ]);
 
     let existingOrder = null;
     let existingItems = [];
@@ -8770,12 +8980,16 @@ function applyBatchColumnVisibility() {
 }
 
 async function loadBulkRoastedSection() {
-    const { data: bulkList } = await fetchData('bulk_roasted_coffee');
+    const [
+        { data: bulkList },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('bulk_roasted_coffee'),
+        fetchData('machines')
+    ]);
     const tbody = document.getElementById('bulk-roasted-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
-
-    const { data: machines } = await fetchData('machines');
 
     // Rewrite Header Dynamically
     const thead = tbody.parentElement.querySelector('thead');
@@ -8854,8 +9068,13 @@ async function loadBulkRoastedSection() {
 }
 
 async function openEditBulkModal(coffeeName) {
-    const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: bulkList },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('bulk_roasted_coffee'),
+        fetchData('machines')
+    ]);
     
     const records = bulkList.filter(b => b.coffee_name === coffeeName);
     
@@ -8908,12 +9127,21 @@ async function openEditBulkModal(coffeeName) {
 }
 
 async function loadPackedCoffeeSection() {
-    const { data: packed } = await fetchData('packed_coffee');
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
-    const { data: sizes } = await fetchData('packaging_sizes');
+    const [
+        { data: packed },
+        { data: batches },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines },
+        { data: sizes }
+    ] = await Promise.all([
+        fetchData('packed_coffee'),
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines'),
+        fetchData('packaging_sizes')
+    ]);
     const activeSizes = (sizes || []).filter(s => s.is_visible).sort((a, b) => a.gram - b.gram);
     const tbody = document.getElementById('packed-coffee-stock-table-body');
     if (!tbody) return;
@@ -9096,11 +9324,19 @@ async function loadPackedCoffeeSection() {
 }
 
 async function openEditPackedModal(coffeeName) {
-    const { data: packed } = await fetchData('packed_coffee');
-    const { data: machines } = await fetchData('machines');
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
+    const [
+        { data: packed },
+        { data: machines },
+        { data: batches },
+        { data: greenbeans },
+        { data: recipes }
+    ] = await Promise.all([
+        fetchData('packed_coffee'),
+        fetchData('machines'),
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
+    ]);
     
     const resolved = packed.map(item => {
         let name = item.custom_coffee_name || 'Roasted Coffee';
@@ -9339,11 +9575,19 @@ async function loadReportsTabSpecificData(tabId) {
 }
 
 async function loadGreenbeanReport(startDate, endDate) {
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: intakes } = await fetchData('green_coffee_intake');
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: ingredients } = await fetchData('blend_ingredients');
-    const { data: recipes } = await fetchData('blend_recipes');
+    const [
+        { data: greenbeans },
+        { data: intakes },
+        { data: batches },
+        { data: ingredients },
+        { data: recipes }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('green_coffee_intake'),
+        fetchData('roast_batches'),
+        fetchData('blend_ingredients'),
+        fetchData('blend_recipes')
+    ]);
 
     // Helper: build a map from green_coffee name (lowercase) -> id
     const nameToIdMap = {};
@@ -9527,9 +9771,15 @@ async function loadGreenbeanReport(startDate, endDate) {
 }
 
 async function loadRoastingReport(startDate, endDate) {
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
+    const [
+        { data: batches },
+        { data: greenbeans },
+        { data: recipes }
+    ] = await Promise.all([
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
+    ]);
 
     const filtered = (batches || []).filter(b => {
         const d = b.roast_date || b.created_at?.split('T')[0];
@@ -9660,11 +9910,19 @@ async function loadRoastingReport(startDate, endDate) {
 }
 
 async function loadPackingReport(startDate, endDate) {
-    const { data: packed } = await fetchData('packed_coffee');
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: packed },
+        { data: batches },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('packed_coffee'),
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines')
+    ]);
 
     const resolved = (packed || []).map(item => {
         let coffeeName = item.custom_coffee_name || 'Roasted Coffee';
@@ -9856,11 +10114,19 @@ async function loadPackingReport(startDate, endDate) {
 }
 
 async function loadSalesReport(startDate, endDate) {
-    const { data: orders } = await fetchData('request_orders');
-    const { data: orderItems } = await fetchData('request_order_items');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: orders },
+        { data: orderItems },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines')
+    ]);
 
     // Filter orders that are dispatched within date range
     const filteredOrders = (orders || []).filter(o => {
@@ -10342,10 +10608,17 @@ function resetTranslations() {
 }
 
 async function openCustomPackingModal() {
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
-    const { data: sizes } = await fetchData('packaging_sizes');
+    const [
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines },
+        { data: sizes }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines'),
+        fetchData('packaging_sizes')
+    ]);
     const activeSizes = (sizes || []).filter(s => s.is_visible).sort((a, b) => a.gram - b.gram);
 
     // List of coffee name suggestions
@@ -10460,11 +10733,19 @@ async function openCustomPackingModal() {
 }
 
 async function loadPackingHistorySection() {
-    const { data: orders } = await fetchData('request_orders');
-    const { data: orderItems } = await fetchData('request_order_items');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: orders },
+        { data: orderItems },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines')
+    ]);
     const tbody = document.getElementById('packing-history-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
@@ -10572,12 +10853,21 @@ async function loadPackingHistorySection() {
 // PRINT WAYBILL - A4 Format
 // ============================================================
 async function printWaybill(orderId) {
-    const { data: orders } = await fetchData('request_orders');
-    const { data: orderItems } = await fetchData('request_order_items');
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
-    const { data: customers } = await fetchData('customers');
+    const [
+        { data: orders },
+        { data: orderItems },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines },
+        { data: customers }
+    ] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines'),
+        fetchData('customers')
+    ]);
 
     const order = (orders || []).find(o => o.id === orderId);
     if (!order) return;
@@ -10825,11 +11115,19 @@ async function handleBarcodeScan(barcode) {
 // ==========================================================================
 async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
     // Fetch required data
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
-    const { data: batches } = await fetchData('roast_batches');
-    const { data: ingredients } = await fetchData('blend_ingredients');
+    const [
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines },
+        { data: batches },
+        { data: ingredients }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines'),
+        fetchData('roast_batches'),
+        fetchData('blend_ingredients')
+    ]);
     
     // Lookup coffee name
     let coffeeName = 'Unknown';
@@ -11161,9 +11459,15 @@ function printSingleBarcode(barcodeValue, coffeeName, machineName) {
 }
 
 async function printAllBarcodes() {
-    const { data: greenbeans } = await fetchData('green_coffee');
-    const { data: recipes } = await fetchData('blend_recipes');
-    const { data: machines } = await fetchData('machines');
+    const [
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines')
+    ]);
     
     if (!machines || machines.length === 0) {
         alert('No machines configured.');
