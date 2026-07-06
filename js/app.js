@@ -3992,6 +3992,10 @@ async function openExportBatchesModal() {
 }
 
 function exportToExcel(data, filename) {
+    if (!data || data.length === 0) {
+        alert(window.t ? (window.t('alert_no_data_export') || 'No data to export.') : 'No data to export.');
+        return;
+    }
     const headers = Object.keys(data[0]);
     
     // Build HTML table that Excel can open with proper formatting
