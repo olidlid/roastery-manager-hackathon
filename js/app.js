@@ -1451,7 +1451,9 @@ async function initAppDashboard() {
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
 
-            const pct = Math.min(100, ((parseFloat(plan.fulfilled_roasted_kg) / parseFloat(plan.target_roasted_kg)) * 100));
+            const fulfilledDisplay = parseFloat(parseFloat(plan.fulfilled_roasted_kg || 0).toFixed(2));
+            const targetDisplay = parseFloat(parseFloat(plan.target_roasted_kg || 0).toFixed(2));
+            const pct = Math.min(100, targetDisplay > 0 ? (fulfilledDisplay / targetDisplay) * 100 : 0);
 
             const planEl = document.createElement('div');
             planEl.style.display = 'flex';
@@ -1460,7 +1462,7 @@ async function initAppDashboard() {
             planEl.innerHTML = `
                 <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
                     <strong>${coffeeName}</strong>
-                    <span>${plan.fulfilled_roasted_kg}/${plan.target_roasted_kg} kg</span>
+                    <span>${fulfilledDisplay}/${targetDisplay} kg</span>
                 </div>
                 <div style="width: 100%; background: var(--border); height: 8px; border-radius: 4px; overflow: hidden;">
                     <div style="width: ${pct}%; background: var(--primary); height: 100%;"></div>
@@ -3015,8 +3017,11 @@ async function loadRoastingPlans() {
         const machineName = mach ? mach.name : '<span style="color:var(--text-muted);font-style:italic;">—</span>';
 
         // Automatic Status update if fulfilled >= target
-        const targetKg = parseFloat(plan.target_roasted_kg || 0);
-        const fulfilledKg = parseFloat(plan.fulfilled_roasted_kg || 0);
+        // Rounded to 2dp: repeated += from multiple batch logs accumulates
+        // binary floating-point error (e.g. 18.299999999999997), which showed
+        // up raw in the Fulfilled column.
+        const targetKg = parseFloat(parseFloat(plan.target_roasted_kg || 0).toFixed(2));
+        const fulfilledKg = parseFloat(parseFloat(plan.fulfilled_roasted_kg || 0).toFixed(2));
         if (fulfilledKg >= targetKg && targetKg > 0) {
             if (plan.status !== 'Completed') {
                 plan.status = 'Completed';
@@ -4758,11 +4763,14 @@ async function openRoastBatchModal(plan = null, editId = null) {
         );
 
         if (matchingPlans.length > 0) {
-            // Sort by ID or Date to fill oldest plans first
-            matchingPlans.sort((a, b) => new Date(a.plan_date) - new Date(b.plan_date));
-            
+            // Fill the earliest plan_date first; when multiple plans share the
+            // same date (common — see roasting plan list), fall back to id
+            // ascending, since id is a serial that reflects creation order and
+            // plan_date alone doesn't disambiguate which was created first.
+            matchingPlans.sort((a, b) => (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id));
+
             let remainingOutput = outputKg;
-            
+
             for (let i = 0; i < matchingPlans.length; i++) {
                 if (remainingOutput <= 0) break;
                 
@@ -12321,7 +12329,9 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
         );
 
         if (matchingPlans.length > 0) {
-            matchingPlans.sort((a, b) => new Date(a.plan_date) - new Date(b.plan_date));
+            // Same tiebreak as openRoastBatchModal: earliest plan_date first,
+            // then id ascending for same-date plans (id reflects creation order).
+            matchingPlans.sort((a, b) => (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id));
             let remainingOutput = outputKg;
 
             for (let i = 0; i < matchingPlans.length; i++) {
