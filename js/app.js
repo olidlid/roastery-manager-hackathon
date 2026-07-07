@@ -381,6 +381,12 @@ function _showSavingIndicator() {
     if (el) el.classList.remove('hidden');
 }
 
+function _clearSavingButton(b) {
+    b.classList.remove('is-saving');
+    b.disabled = false;
+    if (b._savingWatchdog) { clearTimeout(b._savingWatchdog); b._savingWatchdog = null; }
+}
+
 function _hideSavingIndicator() {
     _savingCount = Math.max(0, _savingCount - 1);
     if (_savingCount === 0) {
@@ -390,10 +396,7 @@ function _hideSavingIndicator() {
         // submit listener below). Modals that closed on success already took
         // the button with them; this only matters for the failure/validation
         // path where the modal stays open.
-        document.querySelectorAll('button.is-saving').forEach(b => {
-            b.classList.remove('is-saving');
-            b.disabled = false;
-        });
+        document.querySelectorAll('button.is-saving').forEach(_clearSavingButton);
     }
 }
 
@@ -415,6 +418,23 @@ async function deleteData(table, id) {
     }
 }
 
+// Upsert wrapper for the handful of places that legitimately need
+// insert-or-update semantics (company_settings single row, custom_roles) and
+// therefore can't go through saveData() (which is update-by-id only). Routing
+// them here means they still participate in the saving indicator, so their
+// submit button's spinner clears when the write finishes — the bug where the
+// Settings "Save" button span forever otherwise.
+async function upsertData(table, record) {
+    _showSavingIndicator();
+    try {
+        return await window.supabaseClient.from(table).upsert(record);
+    } catch (e) {
+        return { data: null, error: e };
+    } finally {
+        _hideSavingIndicator();
+    }
+}
+
 // Mark the pressed submit button as "saving" the instant a form is submitted,
 // so the click feels acknowledged right away instead of the UI looking frozen
 // while the request round-trips. Capture phase so this runs before the
@@ -423,7 +443,16 @@ document.addEventListener('submit', (e) => {
     const form = e.target;
     if (!(form instanceof HTMLFormElement)) return;
     const btn = form.querySelector('button[type="submit"]');
-    if (btn) btn.classList.add('is-saving');
+    if (!btn) return;
+    btn.classList.add('is-saving');
+    // Safety net: if this form's handler never routes through saveData/
+    // deleteData/upsertData (e.g. the login/forgot-password forms, which just
+    // call supabaseClient.auth directly), _hideSavingIndicator would never
+    // fire and the spinner would be stuck forever. Force-clear after a bounded
+    // wait; the fast path (_hideSavingIndicator) clears it in milliseconds and
+    // cancels this timer.
+    if (btn._savingWatchdog) clearTimeout(btn._savingWatchdog);
+    btn._savingWatchdog = setTimeout(() => _clearSavingButton(btn), 8000);
 }, true);
 
 // ============================================================
@@ -8598,7 +8627,7 @@ async function saveRole() {
     const record = { name: roleName, color: roleColor, is_system: false, permissions };
     if (roleId) record.id = parseInt(roleId);
 
-    const { error } = await window.supabaseClient.from('custom_roles').upsert(record);
+    const { error } = await upsertData('custom_roles', record);
     if (error) {
         console.error('Failed to save role to Supabase:', error);
         alert('Failed to save role: ' + error.message);
@@ -8763,7 +8792,7 @@ document.getElementById('settings-minqty-form').addEventListener('submit', async
         localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
         alert(window.t("alert_settings_saved") || "Settings saved successfully.");
     } else {
-        const { error } = await window.supabaseClient.from('company_settings').upsert({
+        const { error } = await upsertData('company_settings', {
             id: 1,
             min_stock_greenbean_kg: companySettings.min_stock_greenbean_kg,
             min_production_potential_kg: companySettings.min_production_potential_kg,
@@ -8792,7 +8821,7 @@ document.getElementById('settings-company-form').addEventListener('submit', asyn
     if (isMockMode) {
         localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
     } else {
-        const { error } = await window.supabaseClient.from('company_settings').upsert({ id: 1, ...companySettings });
+        const { error } = await upsertData('company_settings', { id: 1, ...companySettings });
         if (error) {
             alert("Failed to save company profile: " + error.message);
             return;
@@ -8812,7 +8841,7 @@ document.getElementById('settings-print-form').addEventListener('submit', async 
     if (isMockMode) {
         localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
     } else {
-        const { error } = await window.supabaseClient.from('company_settings').upsert({ id: 1, ...companySettings });
+        const { error } = await upsertData('company_settings', { id: 1, ...companySettings });
         if (error) {
             alert("Failed to save print settings: " + error.message);
             return;
@@ -8838,7 +8867,7 @@ document.getElementById('settings-label-form').addEventListener('submit', async 
     if (isMockMode) {
         localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
     } else {
-        const { error } = await window.supabaseClient.from('company_settings').upsert({ id: 1, ...companySettings });
+        const { error } = await upsertData('company_settings', { id: 1, ...companySettings });
         if (error) {
             alert("Failed to save label settings: " + error.message);
             return;
@@ -8859,7 +8888,7 @@ document.getElementById('sett-logo-upload').addEventListener('change', (e) => {
             if (isMockMode) {
                 localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
             } else {
-                const { error } = await window.supabaseClient.from('company_settings').upsert({ id: 1, logo_base64: reader.result });
+                const { error } = await upsertData('company_settings', { id: 1, logo_base64: reader.result });
                 if (error) {
                     alert("Failed to save logo: " + error.message);
                     return;
