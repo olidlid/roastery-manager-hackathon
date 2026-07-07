@@ -19,6 +19,28 @@ function getCookie(name) {
     return null;
 }
 
+// --- INSTANT BRAND PRIME (avoid flash of "Roastery Pro" placeholder) ---
+// loadCompanySettings() only runs after the profile fetch resolves, so on a
+// hard reload the hardcoded placeholder in index.html is visible for one or
+// two network round-trips. Prime the sidebar synchronously from whatever we
+// cached last time (same pattern already used for custom_roles), then let
+// the real Supabase fetch silently correct/refresh it in the background.
+(function primeBrandFromCache() {
+    try {
+        const cached = JSON.parse(localStorage.getItem('cached_company_brand') || 'null');
+        if (!cached) return;
+        const nameEl = document.getElementById('sidebar-company-name');
+        const sloganEl = document.getElementById('sidebar-slogan');
+        const logoEl = document.getElementById('sidebar-logo-img');
+        if (nameEl && cached.company_name) nameEl.textContent = cached.company_name;
+        if (sloganEl) {
+            sloganEl.textContent = cached.slogan || '';
+            sloganEl.classList.toggle('hidden', !cached.slogan);
+        }
+        if (logoEl && cached.logo_base64) logoEl.src = cached.logo_base64;
+    } catch (e) { /* corrupt cache — ignore, real fetch will populate it */ }
+})();
+
 // --- STATE MANAGEMENT ---
 let isMockMode = false;
 let currentUser = null;
@@ -635,6 +657,16 @@ function applyCompanySettings() {
         sloganEl.textContent = companySettings.slogan || '';
         sloganEl.classList.toggle('hidden', !companySettings.slogan);
     }
+    // Refresh the instant-load cache (see primeBrandFromCache at the top of
+    // this file) so the NEXT hard reload shows the current name/logo/slogan
+    // immediately instead of the hardcoded HTML placeholder.
+    try {
+        localStorage.setItem('cached_company_brand', JSON.stringify({
+            company_name: companySettings.company_name,
+            slogan: companySettings.slogan || '',
+            logo_base64: companySettings.logo_base64 || ''
+        }));
+    } catch (e) { /* localStorage full/unavailable — non-critical, skip caching */ }
     // Update labels and values in Forms
     document.getElementById('sett-company-name').value = companySettings.company_name;
     document.getElementById('sett-slogan').value = companySettings.slogan || '';
