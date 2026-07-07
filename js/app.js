@@ -31,13 +31,15 @@ function getCookie(name) {
         if (!cached) return;
         const nameEl = document.getElementById('sidebar-company-name');
         const sloganEl = document.getElementById('sidebar-slogan');
-        const logoEl = document.getElementById('sidebar-logo-img');
         if (nameEl && cached.company_name) nameEl.textContent = cached.company_name;
         if (sloganEl) {
             sloganEl.textContent = cached.slogan || '';
             sloganEl.classList.toggle('hidden', !cached.slogan);
         }
-        if (logoEl && cached.logo_base64) logoEl.src = cached.logo_base64;
+        // Logo is intentionally NOT primed from cache (user preference): a
+        // blank logo box every reload beats a stale one flashing to the
+        // current logo right after it's been changed. applyCompanySettings()
+        // still fills it in once the real fetch resolves.
     } catch (e) { /* corrupt cache — ignore, real fetch will populate it */ }
 })();
 
