@@ -1109,6 +1109,124 @@ async function loadSectionData(sectionId) {
             }
             break;
     }
+    // After loading any section, enforce granular button/tab permissions
+    enforceGranularPermissions();
+}
+
+// ============================================================
+// GRANULAR PERMISSION ENFORCEMENT
+// Hides/shows action buttons, tabs, and cards based on role permissions.
+// Called after every section load so dynamically rendered content is covered.
+// ============================================================
+function enforceGranularPermissions() {
+    // --- ROASTING TABS ---
+    const TAB_PERMISSIONS = {
+        'tab-roast-logs': 'roasting_batch_view',
+        'tab-blend-recipes': 'blend_view',
+        'tab-recipe-potential': 'production_potential_view',
+        // Greenbean tabs
+        'tab-add-gb-history': 'greenbean_arrival_view',
+        // Packing tabs (use data-target instead of data-tab)
+        'tab-order-request': 'packing_order_view',
+        'tab-packing-records': 'packing_records_view',
+        'tab-packing-history': 'packing_completed_view',
+        // Handover tabs
+        'tab-dispatch-approval': 'dispatch_approval_view',
+        // Settings tabs
+        'tab-sett-general': 'settings_general',
+        'tab-sett-production': 'settings_production',
+        'tab-sett-system': 'settings_system',
+    };
+
+    // Hide tab buttons based on permissions (data-tab attribute)
+    document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+        const tabId = btn.getAttribute('data-tab');
+        if (TAB_PERMISSIONS[tabId]) {
+            btn.style.display = hasPermission(TAB_PERMISSIONS[tabId]) ? '' : 'none';
+        }
+    });
+
+    // Hide tab buttons based on permissions (data-target attribute, used in packing)
+    document.querySelectorAll('.tab-btn[data-target]').forEach(btn => {
+        const tabId = btn.getAttribute('data-target');
+        if (TAB_PERMISSIONS[tabId]) {
+            btn.style.display = hasPermission(TAB_PERMISSIONS[tabId]) ? '' : 'none';
+        }
+    });
+
+    // --- BATCH LOG BUTTONS ---
+    document.querySelectorAll('.btn-edit-batch').forEach(btn => {
+        btn.style.display = hasPermission('roasting_batch_edit') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-delete-batch').forEach(btn => {
+        btn.style.display = hasPermission('roasting_batch_delete') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-approve-test-batch').forEach(btn => {
+        btn.style.display = hasPermission('roasting_batch_approve') ? '' : 'none';
+    });
+    const btnAddBatch = document.getElementById('btn-add-batch');
+    if (btnAddBatch) btnAddBatch.style.display = hasPermission('roasting_batch_add') ? '' : 'none';
+
+    // --- BLEND RECIPE BUTTONS ---
+    document.querySelectorAll('.btn-edit-recipe').forEach(btn => {
+        btn.style.display = hasPermission('blend_edit') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-delete-recipe').forEach(btn => {
+        btn.style.display = hasPermission('blend_delete') ? '' : 'none';
+    });
+    const btnAddRecipe = document.getElementById('btn-add-recipe');
+    if (btnAddRecipe) btnAddRecipe.style.display = hasPermission('blend_add') ? '' : 'none';
+
+    // --- PACKING BUTTONS ---
+    const btnCustomPacking = document.getElementById('btn-custom-packing');
+    if (btnCustomPacking) btnCustomPacking.style.display = hasPermission('packing_daily') ? '' : 'none';
+    // Unpack buttons in packed coffee rows
+    document.querySelectorAll('.btn-unpack, [onclick*="unpack"]').forEach(btn => {
+        btn.style.display = hasPermission('packing_unpack') ? '' : 'none';
+    });
+
+    // --- SALES / DISPATCH REQUEST BUTTONS ---
+    const btnCreateRequest = document.getElementById('btn-create-request');
+    if (btnCreateRequest) btnCreateRequest.style.display = hasPermission('sales_request_create') ? '' : 'none';
+    document.querySelectorAll('.btn-edit-order').forEach(btn => {
+        btn.style.display = hasPermission('sales_request_edit') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-delete-order').forEach(btn => {
+        btn.style.display = hasPermission('sales_request_delete') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-print-order').forEach(btn => {
+        btn.style.display = hasPermission('sales_request_print') ? '' : 'none';
+    });
+
+    // --- DISPATCH APPROVAL BUTTONS ---
+    document.querySelectorAll('.btn-approve-order').forEach(btn => {
+        btn.style.display = hasPermission('dispatch_approval_approve') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-dispatch-order').forEach(btn => {
+        btn.style.display = hasPermission('dispatch_approval_dispatch') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-print-waybill').forEach(btn => {
+        btn.style.display = hasPermission('dispatch_approval_print') ? '' : 'none';
+    });
+
+    // --- CUSTOMER BUTTONS ---
+    // "Add Customer" button in HTML (onclick="openCustomerModal()")
+    const custSection = document.getElementById('sec-customers');
+    if (custSection) {
+        const addCustBtn = custSection.querySelector('[onclick="openCustomerModal()"]');
+        if (addCustBtn) addCustBtn.style.display = hasPermission('customer_add') ? '' : 'none';
+        // Edit & Delete buttons in customer table rows (use onclick attributes)
+        custSection.querySelectorAll('[onclick^="openCustomerModal("]').forEach(btn => {
+            // Only hide edit buttons (those with a numeric argument), not the "Add" button
+            const onclick = btn.getAttribute('onclick');
+            if (onclick && onclick.match(/openCustomerModal\(\d+\)/)) {
+                btn.style.display = hasPermission('customer_edit') ? '' : 'none';
+            }
+        });
+        custSection.querySelectorAll('[onclick^="deleteCustomer("]').forEach(btn => {
+            btn.style.display = hasPermission('customer_delete') ? '' : 'none';
+        });
+    }
 }
 
 async function loadHandoverTabSpecificData(tabId) {
@@ -1120,6 +1238,7 @@ async function loadHandoverTabSpecificData(tabId) {
             await loadDispatchApprovalTable();
             break;
     }
+    enforceGranularPermissions();
 }
 
 // ========== CUSTOMER MANAGEMENT ==========
@@ -1384,6 +1503,7 @@ async function loadTabSpecificData(tabId) {
             await loadIntakeHistory();
             break;
     }
+    enforceGranularPermissions();
 }
 
 async function loadRoastingTabSpecificData(tabId) {
@@ -1404,6 +1524,7 @@ async function loadRoastingTabSpecificData(tabId) {
             await loadDailyAchievementTable();
             break;
     }
+    enforceGranularPermissions();
 }
 
 
@@ -1424,6 +1545,7 @@ async function loadSettingTabSpecificData(tabId) {
             await loadTranslationManager();
             break;
     }
+    enforceGranularPermissions();
 }
 
 // ==========================================================================
@@ -1663,9 +1785,9 @@ async function loadGreenbeanInventory() {
                 <button class="btn btn-outline btn-sm" onclick="openEditGreenbeanStockModal(${bean.id})">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit
                 </button>
-                <button class="btn btn-danger btn-sm btn-delete-greenbean" data-id="${bean.id}" data-name="${bean.name}" style="margin-left: 4px;">
+                ${hasPermission('greenbean_delete') ? `<button class="btn btn-danger btn-sm btn-delete-greenbean" data-id="${bean.id}" data-name="${bean.name}" style="margin-left: 4px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-                </button>
+                </button>` : ''}
                 <button class="btn btn-secondary btn-sm btn-barcode-gb" data-id="${bean.id}" data-name="${bean.name}" title="Generate Barcodes" style="margin-left: 4px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="16"/></svg>
                 </button>
@@ -1803,8 +1925,8 @@ async function loadIntakeHistory() {
             <td><strong>${parseFloat(item.quantity).toFixed(1)} ${companySettings.weight_unit}</strong></td>
             <td>${item.supplier || '-'}</td>
             <td>
-                <button class="btn btn-secondary btn-sm btn-edit-intake" data-id="${item.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
-                <button class="btn btn-danger btn-sm btn-delete-intake" data-id="${item.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+                ${hasPermission('greenbean_arrival_edit') ? `<button class="btn btn-secondary btn-sm btn-edit-intake" data-id="${item.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>` : ''}
+                ${hasPermission('greenbean_arrival_delete') ? `<button class="btn btn-danger btn-sm btn-delete-intake" data-id="${item.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
             </td>
         `;
         tbody.appendChild(tr);
@@ -3243,8 +3365,8 @@ async function loadRoastingPlans() {
                 'background: rgba(255,255,255,0.05); color: var(--text-muted);'
             }">${plan.status}</span></td>
             <td>
-                <button class="btn btn-secondary btn-sm btn-edit-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
-                <button class="btn btn-danger btn-sm btn-delete-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+                ${hasPermission('roasting_plan_edit') ? `<button class="btn btn-secondary btn-sm btn-edit-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>` : ''}
+                ${hasPermission('roasting_plan_delete') ? `<button class="btn btn-danger btn-sm btn-delete-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
             </td>
         `;
         tbody.appendChild(tr);
@@ -3446,6 +3568,7 @@ async function loadRoastingBatches() {
 document.getElementById('btn-add-plan').addEventListener('click', () => {
     openRoastPlanModal();
 });
+if (!hasPermission('roasting_plan_add')) document.getElementById('btn-add-plan').style.display = 'none';
 if (document.getElementById('btn-custom-packing')) {
     document.getElementById('btn-custom-packing').addEventListener('click', () => {
         openCustomPackingModal();
@@ -8781,7 +8904,12 @@ if (btnAddGb) {
 const btnAddLot = document.getElementById('btn-add-lot');
 if (btnAddLot) {
     btnAddLot.addEventListener('click', () => openIntakeModal());
+    btnAddLot.style.display = hasPermission('greenbean_arrival_add') ? '' : 'none';
 }
+
+// RBAC: hide Arrival tab if no permission
+const arrivalTabBtn = document.querySelector('#sec-greenbean .tab-btn[data-tab="tab-add-gb-history"]');
+if (arrivalTabBtn) arrivalTabBtn.style.display = hasPermission('greenbean_arrival_view') ? '' : 'none';
 
 const btnAddRec = document.getElementById('btn-add-recipe');
 if (btnAddRec) {
