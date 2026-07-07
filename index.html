@@ -8,7 +8,7 @@
          third party from another domain is refused by the browser. Kept as a
          meta tag (not just a server header) so the protection survives a
          future hosting migration. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co; object-src 'none'; base-uri 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
     <link rel="stylesheet" href="css/styles.css?v=10">
@@ -221,7 +221,7 @@
             <button type="button" id="btn-mobile-menu" aria-label="Open menu">
                 <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
             </button>
-            <span id="mobile-topbar-title">Roastery Pro</span>
+            <span id="mobile-topbar-title"></span>
         </div>
         <div id="sidebar-backdrop"></div>
 
@@ -230,7 +230,11 @@
             <div class="sidebar-brand">
                 <img id="sidebar-logo-img" class="sidebar-logo" src="https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?q=80&w=100&auto=format&fit=crop" alt="Logo">
                 <div class="sidebar-brand-text">
-                    <span id="sidebar-company-name" class="sidebar-title">Roastery Pro</span>
+                    <!-- Intentionally empty: showing nothing for a moment beats
+                         flashing the wrong ("Roastery Pro") name. Filled by
+                         primeBrandFromCache() instantly on repeat visits, or by
+                         applyCompanySettings() after the first fetch. -->
+                    <span id="sidebar-company-name" class="sidebar-title"></span>
                     <span id="sidebar-slogan" class="sidebar-slogan hidden"></span>
                 </div>
             </div>
