@@ -576,15 +576,20 @@ function getFirstAllowedSection() {
     return 'sec-dashboard'; // fallback
 }
 
-function applyRoleAccess() {
+// Just the visibility toggling (menu items + permission-gated settings cards).
+// Split out from applyRoleAccess() so it can also be run the instant a cached
+// role is available on page load — see primeMenuAccessFromCache below —
+// without the "force redirect off a forbidden section" logic that isn't safe
+// to run before the rest of the app has actually bootstrapped.
+function applyMenuVisibility() {
     if (!currentUser) return;
-    
+
     // Sidebar menu items
     document.querySelectorAll('.menu-item[data-target], .menu-subitem[data-target]').forEach(item => {
         const target = item.getAttribute('data-target');
         const perm = SECTION_PERMISSIONS[target];
         if (!perm) return;
-        
+
         let visible = false;
         if (Array.isArray(perm)) {
             visible = perm.some(p => hasPermission(p));
@@ -604,13 +609,13 @@ function applyRoleAccess() {
         });
         menuInventory.style.display = anyVisible ? '' : 'none';
     }
-    
+
     // Debug Tools card — Developer only
     const debugCard = document.getElementById('card-sett-debug');
     if (debugCard) {
         debugCard.style.display = (currentUser.role === 'Developer') ? '' : 'none';
     }
-    
+
     // User Management & Role cards — only for user_management permission
     const usersCard = document.getElementById('card-sett-users');
     if (usersCard) {
@@ -620,6 +625,11 @@ function applyRoleAccess() {
     if (rolesCard) {
         rolesCard.style.display = hasPermission('user_management') ? '' : 'none';
     }
+}
+
+function applyRoleAccess() {
+    if (!currentUser) return;
+    applyMenuVisibility();
 
     // Force redirection if they are on a forbidden section
     const currentSection = Array.from(pageSections).find(sec => !sec.classList.contains('hidden'))?.id;
@@ -633,6 +643,23 @@ function applyRoleAccess() {
         }
     }
 }
+
+// Instant menu-visibility prime, same rationale as primeBrandFromCache/
+// primeUserFromCache: the full sidebar menu (including sections a restricted
+// role shouldn't see, e.g. Reports/Settings for a Roaster) was visible for
+// one or two round-trips until loadUserProfile() resolved and called the
+// real applyRoleAccess(). Placed here (not at the top of the file) because it
+// needs SECTION_PERMISSIONS/hasPermission/applyMenuVisibility, which are
+// declared above this point — accessing a const before its own declaration
+// line executes throws, so this can't run any earlier than this.
+(function primeMenuAccessFromCache() {
+    try {
+        const cachedUser = JSON.parse(localStorage.getItem('cached_user_identity') || 'null');
+        if (!cachedUser || !cachedUser.role) return;
+        currentUser = { role: cachedUser.role };
+        applyMenuVisibility();
+    } catch (e) { /* corrupt cache — ignore, real fetch will populate it */ }
+})();
 
 function checkAuthentication() {
     if (!checkDatabaseConnection()) return;
