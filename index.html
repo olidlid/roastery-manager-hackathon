@@ -291,10 +291,15 @@
 
             <div class="sidebar-footer">
                 <div class="user-profile-widget">
-                    <div id="user-avatar-lbl" class="user-avatar">D</div>
+                    <!-- Intentionally empty: same rationale as sidebar-company-name
+                         above — a blank moment beats flashing a wrong/fake
+                         identity ("Developer Mode"). Primed instantly from
+                         cache by primeBrandFromCache(), or filled by
+                         loadUserProfile() after the first fetch. -->
+                    <div id="user-avatar-lbl" class="user-avatar"></div>
                     <div class="user-info">
-                        <span id="user-name-lbl" class="user-name">Developer Mode</span>
-                        <span id="user-role-lbl" class="user-role">Developer</span>
+                        <span id="user-name-lbl" class="user-name"></span>
+                        <span id="user-role-lbl" class="user-role"></span>
                     </div>
                 </div>
                 <button id="btn-logout" class="btn btn-secondary btn-sm" style="width: 100%;">
@@ -2227,6 +2232,6 @@
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/app.js?v=34"></script>
+    <script src="js/app.js?v=35"></script>
 </body>
 </html>

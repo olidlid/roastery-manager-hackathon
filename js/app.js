@@ -41,6 +41,23 @@ function getCookie(name) {
     } catch (e) { /* corrupt cache — ignore, real fetch will populate it */ }
 })();
 
+// Same rationale, for the logged-in user's name/role/avatar initial in the
+// sidebar footer — index.html used to hardcode "Developer Mode" there,
+// which flashed for every real user until loadUserProfile()'s fetch
+// resolved. Primed here, refreshed by loadUserProfile(), cleared on logout.
+(function primeUserFromCache() {
+    try {
+        const cached = JSON.parse(localStorage.getItem('cached_user_identity') || 'null');
+        if (!cached) return;
+        const nameEl = document.getElementById('user-name-lbl');
+        const roleEl = document.getElementById('user-role-lbl');
+        const avatarEl = document.getElementById('user-avatar-lbl');
+        if (nameEl && cached.name) nameEl.textContent = cached.name;
+        if (roleEl && cached.role) roleEl.textContent = cached.role;
+        if (avatarEl && cached.name) avatarEl.textContent = cached.name.charAt(0).toUpperCase();
+    } catch (e) { /* corrupt cache — ignore, real fetch will populate it */ }
+})();
+
 // --- STATE MANAGEMENT ---
 let isMockMode = false;
 let currentUser = null;
@@ -672,6 +689,9 @@ async function loadUserProfile(userId) {
         updateGreeting(currentUser.name);
         applyRoleAccess();
         loadCompanySettings();
+        try {
+            localStorage.setItem('cached_user_identity', JSON.stringify({ name: currentUser.name, role: currentUser.role }));
+        } catch (e) { /* localStorage full/unavailable — non-critical, skip caching */ }
     } catch (e) {
         console.error("UserProfile load failed, falling back:", e);
         currentUser = { id: userId, username: 'user', role: 'Leader', name: 'Production Leader' };
@@ -9195,6 +9215,9 @@ function showSetNewPasswordModal() {
 
 // --- LOG OUT ---
 document.getElementById('btn-logout').addEventListener('click', async () => {
+    // Clear the cached identity so a different account logging in on this
+    // same browser doesn't briefly flash the previous user's name/role.
+    localStorage.removeItem('cached_user_identity');
     if (isMockMode) {
         localStorage.removeItem('is_mock_mode');
         isMockMode = true; // resets state
