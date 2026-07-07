@@ -143,7 +143,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
-                reports_view: true,
+                reports_view: true, reports_stockopname_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
                 user_management: true
             }
@@ -162,7 +162,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
-                reports_view: true,
+                reports_view: true, reports_stockopname_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
                 user_management: true
             }
@@ -181,7 +181,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: false, customer_edit: false, customer_delete: false,
-                reports_view: true,
+                reports_view: true, reports_stockopname_view: true,
                 settings_general: false, settings_production: true, settings_system: false,
                 user_management: false
             }
@@ -200,7 +200,7 @@ const MOCK_DB = {
                 sales_request_view: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
-                reports_view: false,
+                reports_view: false, reports_stockopname_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false
             }
@@ -219,7 +219,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
-                reports_view: false,
+                reports_view: false, reports_stockopname_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false
             }
@@ -238,7 +238,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: false,
-                reports_view: true,
+                reports_view: true, reports_stockopname_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false
             }
@@ -569,13 +569,33 @@ const SECTION_PERMISSIONS = {
     'sec-settings': ['settings_general', 'settings_production', 'settings_system'],
 };
 
+// When a permission is split out of a broader one, roles saved before the new
+// key existed won't have it — hasPermission would then return false and the
+// feature would silently disappear for everyone until re-granted. Mapping the
+// new key to its parent here means those older roles keep their existing access
+// (they inherit the parent's value) until an admin explicitly toggles the new
+// key on or off.
+const PERMISSION_FALLBACKS = {
+    reports_stockopname_view: 'reports_view',
+};
+
+// Effective permission for a specific role object, honouring PERMISSION_FALLBACKS
+// when the granular key isn't explicitly stored on the role yet.
+function roleHasPermission(role, key) {
+    if (!role) return false;
+    if (role.permissions[key] !== undefined) return role.permissions[key] === true;
+    const fallback = PERMISSION_FALLBACKS[key];
+    if (fallback) return roleHasPermission(role, fallback);
+    return false;
+}
+
 function hasPermission(key) {
     if (!currentUser) return false;
     const roleName = currentUser.role;
     const roles = JSON.parse(localStorage.getItem('mock_custom_roles')) || [];
     const role = roles.find(r => r.name === roleName);
     if (!role) return true; // if role not found, default allow (for backward compat)
-    return role.permissions[key] === true;
+    return roleHasPermission(role, key);
 }
 
 function getFirstAllowedSection() {
@@ -1214,6 +1234,8 @@ function enforceGranularPermissions() {
         'tab-sett-general': 'settings_general',
         'tab-sett-production': 'settings_production',
         'tab-sett-system': 'settings_system',
+        // Reports tabs
+        'tab-rep-stockopname': 'reports_stockopname_view',
     };
 
     // Hide tab buttons based on permissions (data-tab attribute)
@@ -8475,7 +8497,10 @@ const PERMISSION_GROUPS = [
         { key: 'customer_edit', label: 'Edit Customer' },
         { key: 'customer_delete', label: 'Delete Customer' }
     ]},
-    { label: '📈 Reports', keys: [{ key: 'reports_view', label: 'View Reports' }] },
+    { label: '📈 Reports', keys: [
+        { key: 'reports_view', label: 'View Reports' },
+        { key: 'reports_stockopname_view', label: 'Stock Opname Tab' }
+    ]},
     { label: '⚙️ Settings', keys: [
         { key: 'settings_general', label: 'General' },
         { key: 'settings_production', label: 'Production' },
@@ -8499,7 +8524,7 @@ function loadRoleManagement() {
     const totalPerms = ALL_PERM_KEYS.length;
 
     container.innerHTML = roles.map(role => {
-        const permCount = ALL_PERM_KEYS.filter(key => role.permissions[key] === true).length;
+        const permCount = ALL_PERM_KEYS.filter(key => roleHasPermission(role, key)).length;
         const pctColor = permCount === totalPerms ? '#16a34a' : permCount > totalPerms / 2 ? '#ca8a04' : '#dc2626';
         
         return `
@@ -8557,7 +8582,11 @@ function openRoleModal(roleId) {
     
     const permGroups = PERMISSION_GROUPS.map(group => {
         const checkboxes = group.keys.map(k => {
-            const checked = role ? (role.permissions[k.key] === true) : false;
+            // roleHasPermission (not the raw stored value) so a role that
+            // inherits a split-out permission via fallback shows the box
+            // checked — otherwise saving the role would silently strip that
+            // inherited access by writing the key as false.
+            const checked = role ? roleHasPermission(role, k.key) : false;
             const disabled = isSystem ? 'disabled' : '';
             return `<label style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;color:var(--text-secondary);cursor:${isSystem ? 'not-allowed' : 'pointer'};min-width:140px;">
                 <input type="checkbox" name="perm_${k.key}" ${checked ? 'checked' : ''} ${disabled} style="accent-color:var(--primary);"> ${k.label}
