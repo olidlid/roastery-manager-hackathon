@@ -559,8 +559,8 @@ function updateGreeting(userName) {
 const SECTION_PERMISSIONS = {
     'sec-dashboard': 'dashboard',
     'sec-greenbean': 'greenbean_view',
-    'sec-bulk-roasted': 'greenbean_view',
-    'sec-packed-coffee': 'greenbean_view',
+    'sec-bulk-roasted': 'bulk_view',
+    'sec-packed-coffee': 'packed_view',
     'sec-roasting': 'roasting_view',
     'sec-packing': 'packing_view',
     'sec-customers': ['customer_view'],
@@ -577,6 +577,17 @@ const SECTION_PERMISSIONS = {
 // key on or off.
 const PERMISSION_FALLBACKS = {
     reports_stockopname_view: 'reports_view',
+    // All of these actions were previously ungated — anyone who could see the
+    // section could do them. Falling back (chained, resolved recursively) to
+    // the section's view permission preserves that exactly, so no existing
+    // role loses access; admins can now tighten each one explicitly.
+    greenbean_edit: 'greenbean_view',
+    bulk_view: 'greenbean_view',
+    bulk_edit: 'bulk_view',
+    bulk_delete: 'bulk_view',
+    packed_view: 'greenbean_view',
+    packed_edit: 'packed_view',
+    packed_delete: 'packed_view',
 };
 
 // Effective permission for a specific role object, honouring PERMISSION_FALLBACKS
@@ -1254,6 +1265,27 @@ function enforceGranularPermissions() {
         }
     });
 
+    // --- GREENBEAN INVENTORY BUTTONS ---
+    document.querySelectorAll('.btn-edit-greenbean').forEach(btn => {
+        btn.style.display = hasPermission('greenbean_edit') ? '' : 'none';
+    });
+
+    // --- BULK ROASTED COFFEE BUTTONS ---
+    document.querySelectorAll('.btn-edit-bulk').forEach(btn => {
+        btn.style.display = hasPermission('bulk_edit') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-delete-bulk').forEach(btn => {
+        btn.style.display = hasPermission('bulk_delete') ? '' : 'none';
+    });
+
+    // --- PACKED COFFEE BUTTONS ---
+    document.querySelectorAll('.btn-edit-packed').forEach(btn => {
+        btn.style.display = hasPermission('packed_edit') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-delete-packed').forEach(btn => {
+        btn.style.display = hasPermission('packed_delete') ? '' : 'none';
+    });
+
     // --- BATCH LOG BUTTONS ---
     document.querySelectorAll('.btn-edit-batch').forEach(btn => {
         btn.style.display = hasPermission('roasting_batch_edit') ? '' : 'none';
@@ -1882,7 +1914,7 @@ async function loadGreenbeanInventory() {
             <td style="${stockStyle}"><strong>${parseFloat(bean.stock_kg).toFixed(1)} ${companySettings.weight_unit}</strong></td>
             <td>${bean.supplier || '-'}</td>
             <td style="white-space: nowrap;">
-                <button class="btn btn-outline btn-sm" onclick="openEditGreenbeanStockModal(${bean.id})">
+                <button class="btn btn-outline btn-sm btn-edit-greenbean" onclick="openEditGreenbeanStockModal(${bean.id})">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit
                 </button>
                 ${hasPermission('greenbean_delete') ? `<button class="btn btn-danger btn-sm btn-delete-greenbean" data-id="${bean.id}" data-name="${bean.name}" style="margin-left: 4px;">
@@ -8440,7 +8472,18 @@ const PERMISSION_GROUPS = [
     { label: '📊 Dashboard', keys: [{ key: 'dashboard', label: 'Access Dashboard' }] },
     { label: '🌿 Greenbean — Inventory', keys: [
         { key: 'greenbean_view', label: 'View Stock' },
+        { key: 'greenbean_edit', label: 'Edit / Adjust Stock' },
         { key: 'greenbean_delete', label: 'Delete Greenbean' }
+    ]},
+    { label: '☕ Bulk Roasted Coffee', keys: [
+        { key: 'bulk_view', label: 'View' },
+        { key: 'bulk_edit', label: 'Edit' },
+        { key: 'bulk_delete', label: 'Delete' }
+    ]},
+    { label: '📦 Packed Coffee Stock', keys: [
+        { key: 'packed_view', label: 'View' },
+        { key: 'packed_edit', label: 'Edit' },
+        { key: 'packed_delete', label: 'Delete' }
     ]},
     { label: '🌿 Greenbean — Arrival', keys: [
         { key: 'greenbean_arrival_view', label: 'View' },
