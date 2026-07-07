@@ -507,8 +507,20 @@ function updateGreeting(userName) {
 }
 
 // ============================================================
-// RBAC — PERMISSION HELPERS
-// ============================================================
+// SECTION PERMISSIONS MAPPING
+const SECTION_PERMISSIONS = {
+    'sec-dashboard': 'dashboard',
+    'sec-greenbean': 'greenbean_view',
+    'sec-bulk-roasted': 'greenbean_view',
+    'sec-packed-coffee': 'greenbean_view',
+    'sec-roasting': 'roasting_view',
+    'sec-packing': 'packing_view',
+    'sec-customers': ['customer_view'],
+    'sec-handover': ['sales_request_view', 'dispatch_approval_view'],
+    'sec-reports': 'reports_view',
+    'sec-settings': ['settings_general', 'settings_production', 'settings_system'],
+};
+
 function hasPermission(key) {
     if (!currentUser) return false;
     const roleName = currentUser.role;
@@ -518,24 +530,41 @@ function hasPermission(key) {
     return role.permissions[key] === true;
 }
 
+function getFirstAllowedSection() {
+    const sections = [
+        'sec-dashboard',
+        'sec-greenbean',
+        'sec-bulk-roasted',
+        'sec-packed-coffee',
+        'sec-roasting',
+        'sec-packing',
+        'sec-customers',
+        'sec-handover',
+        'sec-reports',
+        'sec-settings'
+    ];
+    for (const sec of sections) {
+        const perm = SECTION_PERMISSIONS[sec];
+        if (!perm) return sec; // default allow
+        let allowed = false;
+        if (Array.isArray(perm)) {
+            allowed = perm.some(p => hasPermission(p));
+        } else {
+            allowed = hasPermission(perm);
+        }
+        if (allowed) return sec;
+    }
+    return 'sec-dashboard'; // fallback
+}
+
 function applyRoleAccess() {
     if (!currentUser) return;
     
     // Sidebar menu items
-    const menuMap = {
-        'sec-greenbean': 'greenbean_view',
-        'sec-roasting': 'roasting_view',
-        'sec-packing': 'packing_view',
-        'sec-customers': ['customer_view'],
-        'sec-handover': ['sales_request_view', 'dispatch_approval_view'],
-        'sec-reports': 'reports_view',
-        'sec-settings': ['settings_general', 'settings_production', 'settings_system'],
-    };
-    
     document.querySelectorAll('.menu-item[data-target], .menu-subitem[data-target]').forEach(item => {
         const target = item.getAttribute('data-target');
-        const perm = menuMap[target];
-        if (!perm) return; // dashboard always visible
+        const perm = SECTION_PERMISSIONS[target];
+        if (!perm) return;
         
         let visible = false;
         if (Array.isArray(perm)) {
@@ -545,6 +574,17 @@ function applyRoleAccess() {
         }
         item.style.display = visible ? '' : 'none';
     });
+
+    // Handle inventory parent menu item dropdown: if all subitems are hidden, hide parent
+    const menuInventory = document.getElementById('menu-inventory');
+    if (menuInventory) {
+        const subItems = ['sec-greenbean', 'sec-bulk-roasted', 'sec-packed-coffee'];
+        const anyVisible = subItems.some(sec => {
+            const perm = SECTION_PERMISSIONS[sec];
+            return perm ? hasPermission(perm) : true;
+        });
+        menuInventory.style.display = anyVisible ? '' : 'none';
+    }
     
     // Debug Tools card — Developer only
     const debugCard = document.getElementById('card-sett-debug');
@@ -560,6 +600,18 @@ function applyRoleAccess() {
     const rolesCard = document.getElementById('card-sett-roles');
     if (rolesCard) {
         rolesCard.style.display = hasPermission('user_management') ? '' : 'none';
+    }
+
+    // Force redirection if they are on a forbidden section
+    const currentSection = Array.from(pageSections).find(sec => !sec.classList.contains('hidden'))?.id;
+    if (currentSection) {
+        const perm = SECTION_PERMISSIONS[currentSection];
+        if (perm) {
+            let hasAccess = Array.isArray(perm) ? perm.some(p => hasPermission(p)) : hasPermission(perm);
+            if (!hasAccess) {
+                navigateTo(getFirstAllowedSection());
+            }
+        }
     }
 }
 
@@ -769,6 +821,20 @@ function closeMobileSidebar() {
 
 function navigateTo(sectionId) {
     closeMobileSidebar();
+    
+    // Check permission for this section
+    const perm = SECTION_PERMISSIONS[sectionId];
+    if (perm) {
+        let hasAccess = Array.isArray(perm) ? perm.some(p => hasPermission(p)) : hasPermission(perm);
+        if (!hasAccess) {
+            const firstAllowed = getFirstAllowedSection();
+            if (firstAllowed && firstAllowed !== sectionId) {
+                navigateTo(firstAllowed);
+            }
+            return;
+        }
+    }
+
     pageSections.forEach(sec => sec.classList.add('hidden'));
     const activeSec = document.getElementById(sectionId);
     if (activeSec) activeSec.classList.remove('hidden');
