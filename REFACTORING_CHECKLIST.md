@@ -90,7 +90,7 @@ Pengecekan V1 aktual menemukan 2 masalah di plan asli yang akan memicu banyak de
 
 ## ✅ Task #4: Split UI files (PLAIN SCRIPTS, one commit each)
 **Depends on:** #2, #3
-- [ ] `js/greenbean.js` → check + test + klik semua tombol → commit
+- [x] `js/greenbean.js` (539 lines) → check + test + klik semua tombol → commit `8e877ef`. Bukan blok kontigu (kode roasting terselip di antaranya) — dipindah sebagai 3 sub-blok terpisah. Diverifikasi: render inventory+intake dari data asli, modal edit sungguhan (isi field→submit→cek record tersimpan benar), adjustGreenbeanStock matematikanya benar (100kg−8.5/0.85=90kg). app.js: 12,517→11,983 baris.
 - [ ] `js/roasting.js` → check + test + klik semua tombol → commit
 - [ ] `js/packing.js` → check + test + klik semua tombol → commit
 - [ ] `js/sales.js` → check + test + klik semua tombol → commit
