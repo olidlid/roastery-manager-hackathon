@@ -104,7 +104,7 @@ async function loadPackingRecordsTable() {
     tbody.innerHTML = '';
 
     if (!records || records.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No packing records found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">No packing records found.</td></tr>`;
         return;
     }
 
@@ -147,7 +147,7 @@ async function openExportPackingRecordsModal() {
                 </div>
             </div>
             <div id="export-pack-preview-count" style="margin-bottom: 16px; font-size: 0.85rem; color: var(--text-muted); font-style: italic;"></div>
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 6px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -230,7 +230,7 @@ async function loadPackingRequestsSection() {
     const preparingOrders = (orders || []).filter(o => o.status === 'Preparing');
     
     if (preparingOrders.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">${window.t ? window.t("msg_no_preparing") : "No preparing orders found."}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" class="text-center-muted">${window.t ? window.t("msg_no_preparing") : "No preparing orders found."}</td></tr>`;
         return;
     }
     
@@ -372,16 +372,16 @@ async function loadPackingRequestsSection() {
         
         tbodyHtml += `
         <tr>
-            <td style="vertical-align: top; padding-top: 12px;">
+            <td class="va-top-pt-3">
                 ${order.order_date}<br/>
                 <code>${order.order_number || '#ORD-'+order.id}</code>
             </td>
-            <td style="vertical-align: top; padding-top: 12px;">
+            <td class="va-top-pt-3">
                 <strong>${order.sales_name}</strong>
-                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span style="font-size:0.75rem; color:var(--text-secondary);">👤 ${cust.name}</span>` : ''; })()}
+                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span class="text-secondary-xs">👤 ${cust.name}</span>` : ''; })()}
             </td>
-            <td style="vertical-align: top; padding-top: 12px;">${itemsHtml}${dispatchBtnHtml}</td>
-            <td style="vertical-align: top; padding-top: 12px;">
+            <td class="va-top-pt-3">${itemsHtml}${dispatchBtnHtml}</td>
+            <td class="va-top-pt-3">
                 <button class="btn btn-secondary btn-sm btn-print-order" data-id="${order.id}" style="display:inline-flex; align-items:center; gap:4px; white-space:nowrap;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
                     Print Order
@@ -760,7 +760,7 @@ function addPackingRow(bulkList, greenbeans, recipes, machines, packagingSizes, 
     
     rowDiv.innerHTML = `
         <div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 8px;">
-            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <div class="form-group flex-1-mb-0" >
                 <label class="form-label" style="font-size: 0.8rem; margin-bottom: 2px; font-weight: 600;" data-i18n="col_p_name">${window.t ? window.t("col_p_name") : "Coffee Name"}</label>
                 <select class="form-control pack-coffee-select" style="width: 100%; padding: 4px 8px; height: 32px;" required>
                     ${optionsHtml}
@@ -1112,7 +1112,7 @@ async function openPackingModal(bulkId) {
                 <input type="number" step="0.01" id="m-pack-price" class="form-control" value="12.00">
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Run Packaging</button>
             </div>
@@ -1230,7 +1230,7 @@ if (btnCustomPack) {
                 <input type="number" step="0.01" id="m-cp-price" class="form-control" value="15.00">
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Add Custom Stock</button>
             </div>
@@ -1285,7 +1285,7 @@ async function loadBulkRoastedSection() {
 
     if (activeBulk.length === 0) {
         const colCount = 2 + machines.length;
-        tbody.innerHTML = `<tr><td colspan="${colCount}" style="text-align:center; color:var(--text-muted);">${window.t ? window.t("msg_no_bulk_avail") || "No bulk coffee available." : "No bulk coffee available."}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${colCount}" class="text-center-muted">${window.t ? window.t("msg_no_bulk_avail") || "No bulk coffee available." : "No bulk coffee available."}</td></tr>`;
         return;
     }
 
@@ -1312,13 +1312,13 @@ async function loadBulkRoastedSection() {
         
         machines.forEach(m => {
             const val = grp.machineTotals[m.id] || 0;
-            tds += `<td>${val > 0 ? `<strong>${val.toFixed(1)} kg</strong>` : '<span style="color:var(--text-muted);">-</span>'}</td>`;
+            tds += `<td>${val > 0 ? `<strong>${val.toFixed(1)} kg</strong>` : '<span class="text-muted-color">-</span>'}</td>`;
         });
         
         tds += `
-            <td style="white-space: nowrap;">
-                <button class="btn btn-outline btn-sm btn-edit-bulk" data-coffee="${encodeURIComponent(grp.coffee_name)}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>
-                <button class="btn btn-danger btn-sm btn-delete-bulk" data-coffee="${encodeURIComponent(grp.coffee_name)}" style="margin-left: 4px;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+            <td class="text-nowrap">
+                <button class="btn btn-outline btn-sm btn-edit-bulk" data-coffee="${encodeURIComponent(grp.coffee_name)}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>
+                <button class="btn btn-danger btn-sm btn-delete-bulk ml-1" data-coffee="${encodeURIComponent(grp.coffee_name)}" ><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
             </td>
         `;
         tr.innerHTML = tds;
@@ -1363,7 +1363,7 @@ async function openEditBulkModal(coffeeName) {
         
         rowsHtml += `
             <div class="form-group" style="display:flex; justify-content:space-between; align-items:center; gap: 10px;">
-                <label class="form-label" style="flex:1; margin-bottom:0;">${machineName}</label>
+                <label class="form-label flex-1-mb-0" >${machineName}</label>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <input type="number" class="form-control bulk-edit-input" data-id="${rec.id}" value="${parseFloat(rec.bulk_available).toFixed(2)}" step="0.01" min="0" style="width: 100px;">
                     <span style="font-size:0.85rem; color:var(--text-secondary);">kg</span>
@@ -1529,14 +1529,14 @@ async function loadPackedCoffeeSection() {
     if (theadRow) {
         let thHtml = `<th data-i18n="col_name">${window.t ? window.t('col_name') : 'Coffee Name'}</th>`;
         activeMachinesList.forEach(m => {
-            thHtml += `<th style="text-align: center;">${m.name}</th>`;
+            thHtml += `<th class="text-center">${m.name}</th>`;
         });
         thHtml += `<th data-i18n="col_action">${window.t ? window.t('col_action') : 'Action'}</th>`;
         theadRow.innerHTML = thHtml;
     }
 
     if (Object.keys(grouped).length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${activeMachinesList.length + 2}" style="text-align:center; color:var(--text-muted);">${window.t ? window.t("msg_no_packed_avail") : 'No packed coffee available.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${activeMachinesList.length + 2}" class="text-center-muted">${window.t ? window.t("msg_no_packed_avail") : 'No packed coffee available.'}</td></tr>`;
         return;
     }
 
@@ -1569,10 +1569,10 @@ async function loadPackedCoffeeSection() {
         html += `
             <td style="vertical-align: middle; padding: 12px 20px; white-space: nowrap;">
                 <button class="btn btn-outline btn-sm btn-edit-packed" data-coffee="${encodeURIComponent(group.coffeeName)}">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit
                 </button>
-                <button class="btn btn-danger btn-sm btn-delete-packed" data-coffee="${encodeURIComponent(group.coffeeName)}" style="margin-left: 4px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                <button class="btn btn-danger btn-sm btn-delete-packed ml-1" data-coffee="${encodeURIComponent(group.coffeeName)}" >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                 </button>
             </td>
         `;
@@ -1655,7 +1655,7 @@ async function openEditPackedModal(coffeeName) {
         
         rowsHtml += `
             <div class="form-group" style="display:flex; justify-content:space-between; align-items:center; gap: 10px; border-bottom: 1px dashed var(--border); padding-bottom: 10px; margin-bottom: 10px;">
-                <label class="form-label" style="flex:1; margin-bottom:0;">
+                <label class="form-label flex-1-mb-0" >
                     <div style="font-size: 0.8rem; color: var(--text-secondary);">${machineName}</div>
                     <div style="font-weight: 600;">Size: ${rec.bag_size_g}g</div>
                 </label>
@@ -1725,7 +1725,7 @@ async function openCustomPackingModal() {
     const machineOptions = machines.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 
     const sizesHtml = activeSizes.map(sz => `
-        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+        <div class="form-group flex-1-mb-0" >
             <label class="form-label">${sz.gram}g</label>
             <input type="number" min="0" class="form-control custom-pack-size-input" data-gram="${sz.gram}" value="0" placeholder="0">
         </div>
@@ -1741,7 +1741,7 @@ async function openCustomPackingModal() {
                 </datalist>
             </div>
             
-            <div class="form-row" style="margin-top: 15px;">
+            <div class="form-row mt-3" >
                 <div class="form-group">
                     <label class="form-label">Roaster Machine</label>
                     <select id="m-custpack-machine" class="form-control" required>
@@ -1758,7 +1758,7 @@ async function openCustomPackingModal() {
                 </div>
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 25px;">
+            <div class="modal-footer-actions-lg">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Packing</button>
             </div>
@@ -1846,7 +1846,7 @@ async function loadPackingHistorySection() {
     tbody.innerHTML = '';
 
     if (!orders || orders.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No completed orders found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center-muted">No completed orders found.</td></tr>`;
         return;
     }
 
@@ -1862,7 +1862,7 @@ async function loadPackingHistorySection() {
         .sort((a, b) => new Date(b.order_date) - new Date(a.order_date) || b.id - a.id);
 
     if (historyOrders.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No completed orders found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center-muted">No completed orders found.</td></tr>`;
         return;
     }
 
@@ -1900,7 +1900,7 @@ async function loadPackingHistorySection() {
             }
             itemsDetailHtml += `</div>`;
         } else {
-            itemsDetailHtml = '<span style="color:var(--text-muted);">-</span>';
+            itemsDetailHtml = '<span class="text-muted-color">-</span>';
         }
         
         // Ready date
@@ -1996,12 +1996,12 @@ async function printWaybill(orderId) {
         const sizeLabel = sizeG >= 1000 ? `${sizeG/1000}kg` : `${sizeG}g`;
         itemsTableRows += `
             <tr>
-                <td style="text-align:center;">${idx + 1}</td>
+                <td class="text-center">${idx + 1}</td>
                 <td style="font-weight:600;">${coffeeName}</td>
                 <td>${machCode}</td>
                 <td>${sizeLabel}</td>
-                <td style="text-align:center;">${qty}</td>
-                <td style="text-align:center;">${weightKg.toFixed(1)} kg</td>
+                <td class="text-center">${qty}</td>
+                <td class="text-center">${weightKg.toFixed(1)} kg</td>
             </tr>`;
     }
     
@@ -2126,8 +2126,8 @@ async function printWaybill(orderId) {
             <tfoot>
                 <tr>
                     <td colspan="4" style="text-align:right;">Total</td>
-                    <td style="text-align:center;">${totalBags}</td>
-                    <td style="text-align:center;">${totalWeightKg.toFixed(1)} kg</td>
+                    <td class="text-center">${totalBags}</td>
+                    <td class="text-center">${totalWeightKg.toFixed(1)} kg</td>
                 </tr>
             </tfoot>
         </table>

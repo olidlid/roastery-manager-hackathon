@@ -115,7 +115,7 @@ async function loadRecipeProductionPotential() {
     });
 
     if (list.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No potential stock or recipes configured.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">No potential stock or recipes configured.</td></tr>`;
         return;
     }
 
@@ -138,7 +138,7 @@ async function loadRecipeProductionPotential() {
             tr.className = 'table-row-hover';
 
             if (item.hasAlmostEmptyComponent) {
-                componentWarning = `<span style="display:inline-block; margin-left: 8px; background:var(--danger); color:white; font-size:0.7rem; padding: 2px 6px; border-radius:12px;" title="one or more of this blend component is almost runs out"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;vertical-align:middle;margin-right:4px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Low Component</span>`;
+                componentWarning = `<span style="display:inline-block; margin-left: 8px; background:var(--danger); color:white; font-size:0.7rem; padding: 2px 6px; border-radius:12px;" title="one or more of this blend component is almost runs out"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-inline-xs"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Low Component</span>`;
             }
             
             tr.addEventListener('click', () => {
@@ -181,7 +181,7 @@ async function loadDailyAchievementTable() {
     const machineList = machines || [];
 
     // Build thead - 2 rows
-    let headerRow1 = '<tr><th rowspan="2" style="vertical-align: middle;">Date</th>';
+    let headerRow1 = '<tr><th rowspan="2" class="va-middle">Date</th>';
     let headerRow2 = '<tr>';
     machineList.forEach(m => {
         headerRow1 += `<th colspan="2" style="text-align: center; border-bottom: 1px solid var(--border);">${m.name}</th>`;
@@ -220,8 +220,8 @@ async function loadDailyAchievementTable() {
             grandInput += totalInput;
             grandOutput += totalOutput;
 
-            html += `<td style="text-align: center;">${totalInput > 0 ? totalInput.toFixed(1) + ' kg' : '<span style="color:var(--text-muted);">-</span>'}</td>`;
-            html += `<td style="text-align: center;">${totalOutput > 0 ? totalOutput.toFixed(1) + ' kg <span style="font-size:0.7rem; color:var(--text-muted);">(' + yieldPct + '%)</span>' : '<span style="color:var(--text-muted);">-</span>'}</td>`;
+            html += `<td class="text-center">${totalInput > 0 ? totalInput.toFixed(1) + ' kg' : '<span class="text-muted-color">-</span>'}</td>`;
+            html += `<td class="text-center">${totalOutput > 0 ? totalOutput.toFixed(1) + ' kg <span style="font-size:0.7rem; color:var(--text-muted);">(' + yieldPct + '%)</span>' : '<span class="text-muted-color">-</span>'}</td>`;
         });
 
         const grandYieldPct = grandInput > 0 ? ((grandOutput / grandInput) * 100).toFixed(1) : '-';
@@ -274,7 +274,7 @@ function openDailyDetailPopup(date, dayBatches, machineList, greenbeans, recipes
 
     // thead
     let thRow = '<tr><th>Coffee Name</th>';
-    machineList.forEach(m => { thRow += `<th style="text-align: center;">${m.name}</th>`; });
+    machineList.forEach(m => { thRow += `<th class="text-center">${m.name}</th>`; });
     thRow += '<th style="text-align: center; font-weight: 800;">Total</th></tr>';
     thead.innerHTML = thRow;
 
@@ -294,7 +294,7 @@ function openDailyDetailPopup(date, dayBatches, machineList, greenbeans, recipes
             const output = data ? data.output : 0;
             rowTotal += output;
             machineTotals[m.id] += output;
-            html += `<td style="text-align: center;">${output > 0 ? output.toFixed(1) + ' kg' : '<span style="color:var(--text-muted);">-</span>'}</td>`;
+            html += `<td class="text-center">${output > 0 ? output.toFixed(1) + ' kg' : '<span class="text-muted-color">-</span>'}</td>`;
         });
 
         totalAll += rowTotal;
@@ -309,7 +309,7 @@ function openDailyDetailPopup(date, dayBatches, machineList, greenbeans, recipes
     let totalHtml = '<td><strong>Total</strong></td>';
     machineList.forEach(m => {
         const val = machineTotals[m.id];
-        totalHtml += `<td style="text-align: center;">${val > 0 ? val.toFixed(1) + ' kg' : '-'}</td>`;
+        totalHtml += `<td class="text-center">${val > 0 ? val.toFixed(1) + ' kg' : '-'}</td>`;
     });
     totalHtml += `<td style="text-align: center; color: var(--primary);">${totalAll > 0 ? totalAll.toFixed(1) + ' kg' : '-'}</td>`;
     totalTr.innerHTML = totalHtml;
@@ -327,11 +327,11 @@ function exportDailyAchievementToExcel(batches, machineList, greenbeans, recipes
         <div class="overlay-card" style="max-width: 380px; text-align: center; padding: 24px;">
             <h3 style="margin-bottom: 16px; font-weight: 700; color: var(--text-primary);">Export Daily Achievement</h3>
             <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-                <div style="flex: 1;">
+                <div class="flex-1">
                     <label class="form-label">From</label>
                     <input type="date" id="exp-da-from" class="form-control">
                 </div>
-                <div style="flex: 1;">
+                <div class="flex-1">
                     <label class="form-label">To</label>
                     <input type="date" id="exp-da-to" class="form-control">
                 </div>
@@ -544,7 +544,7 @@ async function loadBlendRecipes() {
     tbody.innerHTML = '';
 
     if (recipes.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No custom blend recipes configured.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center-muted">No custom blend recipes configured.</td></tr>`;
         return;
     }
 
@@ -562,13 +562,13 @@ async function loadBlendRecipes() {
         tr.style.cursor = 'pointer';
         tr.className = 'table-row-hover';
         tr.innerHTML = `
-            <td style="vertical-align: middle;"><code>${recipe.code}</code></td>
-            <td style="vertical-align: middle;"><strong>${recipe.name}</strong></td>
-            <td style="vertical-align: middle;"><div style="display: flex; flex-direction: column;">${ingTexts || '<span style="color: var(--text-muted)">No Ingredients</span>'}</div></td>
-            <td style="vertical-align: middle;">
-                <button class="btn btn-secondary btn-sm btn-edit-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
-                <button class="btn btn-danger btn-sm btn-delete-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
-                <button class="btn btn-secondary btn-sm btn-barcode-recipe" data-id="${recipe.id}" data-name="${recipe.name}" title="Generate Barcodes" style="margin-left: 4px;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="16"/></svg></button>
+            <td class="va-middle"><code>${recipe.code}</code></td>
+            <td class="va-middle"><strong>${recipe.name}</strong></td>
+            <td class="va-middle"><div style="display: flex; flex-direction: column;">${ingTexts || '<span style="color: var(--text-muted)">No Ingredients</span>'}</div></td>
+            <td class="va-middle">
+                <button class="btn btn-secondary btn-sm btn-edit-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+                <button class="btn btn-danger btn-sm btn-delete-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+                <button class="btn btn-secondary btn-sm btn-barcode-recipe ml-1" data-id="${recipe.id}" data-name="${recipe.name}" title="Generate Barcodes" ><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="va-middle"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="16"/></svg></button>
             </td>
         `;
         
@@ -735,7 +735,7 @@ async function openRecipeModal(id = null) {
                 <textarea id="m-rec-desc" class="form-control" rows="2" placeholder="e.g. target roast level: Medium-Dark, profile notes...">${recipe.description || ''}</textarea>
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Recipe</button>
             </div>
@@ -775,7 +775,7 @@ async function openRecipeModal(id = null) {
                     ${greenbeanOpts}
                 </select>
             </div>
-            <div class="form-group" style="flex: 1;">
+            <div class="form-group flex-1" >
                 <input type="number" step="0.1" class="form-control comp-ratio" value="${percentageVal.toFixed(1)}" placeholder="Ratio (%)" required>
             </div>
             <button type="button" class="btn-remove-row">&times;</button>
@@ -920,7 +920,7 @@ async function loadRoastingPlans() {
     tbody.innerHTML = '';
 
     if (plans.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">${window.t("msg_no_plans")}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center-muted">${window.t("msg_no_plans")}</td></tr>`;
         return;
     }
 
@@ -978,8 +978,8 @@ async function loadRoastingPlans() {
                 'background: rgba(255,255,255,0.05); color: var(--text-muted);'
             }">${plan.status}</span></td>
             <td>
-                ${hasPermission('roasting_plan_edit') ? `<button class="btn btn-secondary btn-sm btn-edit-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>` : ''}
-                ${hasPermission('roasting_plan_delete') ? `<button class="btn btn-danger btn-sm btn-delete-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
+                ${hasPermission('roasting_plan_edit') ? `<button class="btn btn-secondary btn-sm btn-edit-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>` : ''}
+                ${hasPermission('roasting_plan_delete') ? `<button class="btn btn-danger btn-sm btn-delete-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
             </td>
         `;
         tbody.appendChild(tr);
@@ -1011,7 +1011,7 @@ async function loadRoastingBatches() {
     tbody.innerHTML = '';
 
     if (batches.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-muted);">${window.t("msg_no_batches")}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" class="text-center-muted">${window.t("msg_no_batches")}</td></tr>`;
         return;
     }
 
@@ -1120,10 +1120,10 @@ async function loadRoastingBatches() {
                     <span style="font-size:0.75rem; padding: 2px 8px; border-radius: 9999px; font-weight:700; background: rgba(245,158,11,0.15); color: var(--warning);">${batch.roast_type}</span>
                     ${batch.qc_status === 'Pending' ? `
                         <button class="btn btn-success btn-sm btn-approve-test-batch" data-id="${batch.id}" style="padding: 2px 6px; font-size: 0.7rem; font-weight: 700; border-radius: 4px;">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;vertical-align:middle;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg> Approve
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="icon-inline-xs"><polyline points="20 6 9 17 4 12"/></svg> Approve
                         </button>
                     ` : `
-                        <span style="color:var(--success); font-size:0.7rem; font-weight:700; white-space:nowrap;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;vertical-align:middle;margin-right:4px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Approved</span>
+                        <span style="color:var(--success); font-size:0.7rem; font-weight:700; white-space:nowrap;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="icon-inline-xs"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Approved</span>
                     `}
                 </div>
             `;
@@ -1145,8 +1145,8 @@ async function loadRoastingBatches() {
                 <button class="btn btn-secondary btn-sm btn-print-sticker" data-id="${batch.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px; vertical-align:middle;"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Label</button>
             </td>
             <td>
-                <button class="btn btn-secondary btn-sm btn-edit-batch" data-id="${batch.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
-                <button class="btn btn-danger btn-sm btn-delete-batch" data-id="${batch.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+                <button class="btn btn-secondary btn-sm btn-edit-batch" data-id="${batch.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+                <button class="btn btn-danger btn-sm btn-delete-batch" data-id="${batch.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
             </td>
         `;
         tbody.appendChild(tr);
@@ -1237,7 +1237,7 @@ async function openRoastPlanModal(editId = null) {
                 </div>
             </div>
             ${editId ? `
-            <div class="form-row" style="margin-top: 15px;">
+            <div class="form-row mt-3" >
                 <div class="form-group">
                     <label class="form-label">Status</label>
                     <select id="m-plan-status" class="form-control">
@@ -1249,7 +1249,7 @@ async function openRoastPlanModal(editId = null) {
                 </div>
             </div>` : ''}
             
-            <div class="form-group" style="margin-top: 15px;">
+            <div class="form-group mt-3" >
                 <label class="form-label">Coffee Items to Roast</label>
                 <div id="coffee-plans-list" style="max-height: 250px; overflow-y: auto; padding-right: 4px; margin-bottom: 8px;">
                     <!-- Dynamic Coffee Rows -->
@@ -1261,7 +1261,7 @@ async function openRoastPlanModal(editId = null) {
                 `}
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 25px;">
+            <div class="modal-footer-actions-lg">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">${editId ? 'Save Changes' : 'Schedule Plan'}</button>
             </div>
@@ -1528,11 +1528,11 @@ async function openRoastPlanModal(editId = null) {
                     </optgroup>
                 </select>
             </div>
-            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <div class="form-group flex-1-mb-0" >
                 <label class="form-label">Available Stock (kg)</label>
                 <input type="text" class="form-control plan-avail-stock" value="0.0" readonly>
             </div>
-            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <div class="form-group flex-1-mb-0" >
                 <label class="form-label">Potential Prod (kg)</label>
                 <input type="text" class="form-control plan-potential-prod" value="0.0" readonly>
             </div>
@@ -1873,7 +1873,7 @@ async function openExportBatchesModal() {
                 </div>
             </div>
             <div id="export-preview-count" style="margin-bottom: 16px; font-size: 0.85rem; color: var(--text-muted); font-style: italic;"></div>
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 6px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -1990,7 +1990,7 @@ async function openExportLotHistoryModal() {
                 </div>
             </div>
             <div id="export-lot-preview-count" style="margin-bottom: 16px; font-size: 0.85rem; color: var(--text-muted); font-style: italic;"></div>
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 6px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -2119,7 +2119,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 </div>
             </div>
 
-            <div class="form-row" style="margin-top: 15px;">
+            <div class="form-row mt-3" >
                 <div class="form-group">
                     <label class="form-label">Roaster Machine</label>
                     <select id="m-bat-machine" class="form-control" required>
@@ -2143,7 +2143,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
             </div>
 
             <div class="form-row" style="align-items: flex-end; gap: 15px; margin-top: 15px;">
-                <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                <div class="form-group flex-1-mb-0" >
                     <label class="form-label">Coffee</label>
                     <select id="m-bat-coffee" class="form-control" required>
                         <option value="" disabled selected>-- Select Coffee --</option>
@@ -2157,7 +2157,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 </div>
             </div>
 
-            <div class="form-row" style="margin-top: 15px;">
+            <div class="form-row mt-3" >
                 <div class="form-group">
                     <label class="form-label">Greenbean Weight (gram)</label>
                     <input type="number" step="1" id="m-bat-greenbean" class="form-control" required>
@@ -2168,19 +2168,19 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 </div>
             </div>
 
-            <div class="form-row" style="margin-top: 15px;">
-                <div class="form-group" style="flex: 1;">
+            <div class="form-row mt-3" >
+                <div class="form-group flex-1" >
                     <label class="form-label">Depreciation (%)</label>
                     <input type="text" id="m-bat-depreciation" class="form-control" style="background:var(--border); font-weight:700; color:var(--warning);" readonly value="0.0%">
                 </div>
             </div>
 
-            <div class="form-group" style="margin-top: 15px;">
+            <div class="form-group mt-3" >
                 <label class="form-label">Notes</label>
                 <textarea id="m-bat-notes" class="form-control" rows="2" placeholder="First crack timings, end temperature, etc."></textarea>
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 25px;">
+            <div class="modal-footer-actions-lg">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">${editId ? 'Save Changes' : 'ROASTED!!'}</button>
             </div>
@@ -2707,12 +2707,12 @@ async function printStickerLabel(id) {
 
     let fieldsHtml = '';
     if (showCode) fieldsHtml += `<div style="font-size:0.75rem; font-weight:bold; border-bottom:1px solid #000; padding-bottom:2px; margin-bottom:4px; font-family:monospace;">${batch.batch_code}</div>`;
-    if (showCoffee) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Coffee:</strong> ${coffeeName}</div>`;
-    if (showDate) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Date:</strong> ${batch.roast_date}</div>`;
-    if (showMachine) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Machine:</strong> ${machineName}</div>`;
-    if (showWeight) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Yield:</strong> ${(batch.output_weight_kg * 1000).toFixed(0)} g</div>`;
-    if (showDep) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Depreciation:</strong> ${(100 - batch.yield_percentage).toFixed(1)}%</div>`;
-    if (showOperator) fieldsHtml += `<div style="margin-bottom:2px;"><strong>Operator:</strong> ${batch.roaster_operator}</div>`;
+    if (showCoffee) fieldsHtml += `<div class="mb-05"><strong>Coffee:</strong> ${coffeeName}</div>`;
+    if (showDate) fieldsHtml += `<div class="mb-05"><strong>Date:</strong> ${batch.roast_date}</div>`;
+    if (showMachine) fieldsHtml += `<div class="mb-05"><strong>Machine:</strong> ${machineName}</div>`;
+    if (showWeight) fieldsHtml += `<div class="mb-05"><strong>Yield:</strong> ${(batch.output_weight_kg * 1000).toFixed(0)} g</div>`;
+    if (showDep) fieldsHtml += `<div class="mb-05"><strong>Depreciation:</strong> ${(100 - batch.yield_percentage).toFixed(1)}%</div>`;
+    if (showOperator) fieldsHtml += `<div class="mb-05"><strong>Operator:</strong> ${batch.roaster_operator}</div>`;
 
     const html = `
         <div style="display:flex; flex-direction:column; align-items:center; gap:20px; padding:10px;">
@@ -2924,7 +2924,7 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
                     <input type="date" id="m-bat-date" class="form-control" value="${todayStr}" required>
                 </div>
             </div>
-            <div class="form-row" style="margin-top: 15px;">
+            <div class="form-row mt-3" >
                 <div class="form-group">
                     <label class="form-label">Roaster Machine</label>
                     <select id="m-bat-machine" class="form-control" required>
@@ -2942,7 +2942,7 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
                 </div>
             </div>
             <div class="form-row" style="align-items: flex-end; gap: 15px; margin-top: 15px;">
-                <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                <div class="form-group flex-1-mb-0" >
                     <label class="form-label">Coffee</label>
                     <select id="m-bat-coffee" class="form-control" required>
                         <option value="" disabled>-- Select Coffee --</option>
@@ -2955,7 +2955,7 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
                     </select>
                 </div>
             </div>
-            <div class="form-row" style="margin-top: 15px;">
+            <div class="form-row mt-3" >
                 <div class="form-group">
                     <label class="form-label">Greenbean Weight (gram)</label>
                     <input type="number" step="1" id="m-bat-greenbean" class="form-control" value="${defaultGreenWeight}" required>
@@ -2965,17 +2965,17 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
                     <input type="number" step="1" id="m-bat-roasted" class="form-control" required style="border: 2px solid var(--primary); font-weight: 700; font-size: 1.1rem;">
                 </div>
             </div>
-            <div class="form-row" style="margin-top: 15px;">
-                <div class="form-group" style="flex: 1;">
+            <div class="form-row mt-3" >
+                <div class="form-group flex-1" >
                     <label class="form-label">Depreciation (%)</label>
                     <input type="text" id="m-bat-depreciation" class="form-control" style="background:var(--border); font-weight:700; color:var(--warning);" readonly value="0.0%">
                 </div>
             </div>
-            <div class="form-group" style="margin-top: 15px;">
+            <div class="form-group mt-3" >
                 <label class="form-label">Notes</label>
                 <textarea id="m-bat-notes" class="form-control" rows="2" placeholder="First crack timings, end temperature, etc."></textarea>
             </div>
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 25px;">
+            <div class="modal-footer-actions-lg">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">ROASTED!!</button>
             </div>

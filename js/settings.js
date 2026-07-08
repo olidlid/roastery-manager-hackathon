@@ -24,7 +24,7 @@ async function loadUsersSection() {
     const visibleUsers = (users || []).filter(u => u.role !== 'Developer');
 
     if (visibleUsers.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No operator accounts registered.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">No operator accounts registered.</td></tr>`;
         return;
     }
 
@@ -38,7 +38,7 @@ async function loadUsersSection() {
             <td><span class="potential-badge">${user.role}</span></td>
             <td>${user.created_at ? new Date(user.created_at).toLocaleDateString() : '2026-06-28'}</td>
             <td>
-                <button class="btn btn-secondary btn-sm btn-edit-user" data-id="${user.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+                <button class="btn btn-secondary btn-sm btn-edit-user" data-id="${user.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
             </td>
         `;
         tbody.appendChild(tr);
@@ -69,7 +69,7 @@ async function editUserRole(userId) {
                 <label class="form-label">Assign Role</label>
                 <select id="m-edit-role" class="form-control">${roleOptions}</select>
             </div>
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Role</button>
             </div>
@@ -97,7 +97,7 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
     ).join('');
 
     const passwordFieldHtml = !isMockMode ? `
-        <div class="form-group" style="margin-top: 12px;">
+        <div class="form-group mt-25" >
             <label class="form-label">Initial Password</label>
             <input type="password" id="m-inv-pass" class="form-control" placeholder="Minimum 6 characters" required minlength="6">
         </div>
@@ -109,17 +109,17 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
                 <label class="form-label">Full Name</label>
                 <input type="text" id="m-inv-name" class="form-control" placeholder="e.g. Alice Roaster" required>
             </div>
-            <div class="form-group" style="margin-top: 12px;">
+            <div class="form-group mt-25" >
                 <label class="form-label">Email Address</label>
                 <input type="email" id="m-inv-user" class="form-control" placeholder="e.g. alice@roastery.com" required>
             </div>
             ${passwordFieldHtml}
-            <div class="form-group" style="margin-top: 12px;">
+            <div class="form-group mt-25" >
                 <label class="form-label">Assigned Work Role</label>
                 <select id="m-inv-role" class="form-control">${roleOptionsHtml}</select>
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 25px;">
+            <div class="modal-footer-actions-lg">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Create Account</button>
             </div>
@@ -323,10 +323,10 @@ function loadRoleManagement() {
             </div>
             <div style="display: flex; gap: 6px;">
                 <button class="btn btn-secondary btn-sm btn-edit-role" data-id="${role.id}" style="padding: 4px 10px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
                 </button>
                 ${!role.is_system ? `<button class="btn btn-danger btn-sm btn-delete-role" data-id="${role.id}" style="padding: 4px 10px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                 </button>` : ''}
             </div>
         </div>`;
@@ -483,7 +483,7 @@ async function loadMachinesSection() {
     tbody.innerHTML = '';
 
     if (machines.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">${window.t("msg_no_machines")}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">${window.t("msg_no_machines")}</td></tr>`;
         return;
     }
 
@@ -497,8 +497,8 @@ async function loadMachinesSection() {
             <td>${mach.capacity_g ? mach.capacity_g + ' g' : mach.ideal_batch_size_g + ' g'}</td>
             <td>${mach.ideal_batch_size_g} g</td>
             <td>
-                <button class="btn btn-secondary btn-sm btn-edit-machine" data-id="${mach.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
-                <button class="btn btn-danger btn-sm btn-delete-machine" data-id="${mach.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+                <button class="btn btn-secondary btn-sm btn-edit-machine" data-id="${mach.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+                <button class="btn btn-danger btn-sm btn-delete-machine" data-id="${mach.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
             </td>
         `;
         tbody.appendChild(tr);
@@ -540,7 +540,7 @@ async function openMachineModal(id = null) {
                 </div>
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Machine</button>
             </div>
@@ -807,7 +807,7 @@ async function loadPackagingSizesTable() {
     }
 
     if (!sizes || sizes.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No packaging sizes found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" class="text-center-muted">No packaging sizes found.</td></tr>`;
         return;
     }
     
@@ -828,8 +828,8 @@ function renderPackagingSizesRows(tbody, sizes) {
             </td>
             <td>
                 <div class="action-buttons">
-                    <button class="btn btn-outline btn-sm btn-edit-pack-size" data-id="${s.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>
-                    <button class="btn btn-danger btn-sm btn-delete-pack-size" data-id="${s.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+                    <button class="btn btn-outline btn-sm btn-edit-pack-size" data-id="${s.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>
+                    <button class="btn btn-danger btn-sm btn-delete-pack-size" data-id="${s.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
                 </div>
             </td>
         `;

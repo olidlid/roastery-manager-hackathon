@@ -1034,7 +1034,7 @@ async function initAppDashboard() {
         mtdRoastTbody.innerHTML = '';
         const sortedRoastGroups = Object.entries(roastingGroup).sort((a, b) => b[1].yield - a[1].yield);
         if (sortedRoastGroups.length === 0) {
-            mtdRoastTbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">${window.t ? window.t("msg_no_roast_mtd") || "No roasting output this month" : "No roasting output this month"}</td></tr>`;
+            mtdRoastTbody.innerHTML = `<tr><td colspan="4" class="text-center-muted">${window.t ? window.t("msg_no_roast_mtd") || "No roasting output this month" : "No roasting output this month"}</td></tr>`;
         } else {
             sortedRoastGroups.forEach(([name, val]) => {
                 const tr = document.createElement('tr');
@@ -2301,7 +2301,7 @@ async function loadPackingReport(startDate, endDate) {
     if (theadRow) {
         let thHtml = '<th style="min-width:140px;">Coffee Name</th>';
         activeMachines.forEach(m => {
-            thHtml += `<th style="text-align: center;">${m}</th>`;
+            thHtml += `<th class="text-center">${m}</th>`;
         });
         thHtml += '<th style="text-align: center; font-weight:800;">Total</th>';
         theadRow.innerHTML = thHtml;
@@ -2314,7 +2314,7 @@ async function loadPackingReport(startDate, endDate) {
     const coffeeNames = Object.keys(grouped).sort();
 
     if (coffeeNames.length === 0 && tbody) {
-        tbody.innerHTML = `<tr><td colspan="${activeMachines.length + 2}" style="text-align:center; color:var(--text-muted); padding:20px;">No packed data in selected period</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${activeMachines.length + 2}" class="table-empty-state">No packed data in selected period</td></tr>`;
     }
 
     const labels = [];
@@ -2499,7 +2499,7 @@ async function loadSalesReport(startDate, endDate) {
     if (theadRow) {
         let thHtml = '<th style="min-width:140px;">Coffee Name</th>';
         activeMachines.forEach(m => {
-            thHtml += `<th style="text-align: center;">${m}</th>`;
+            thHtml += `<th class="text-center">${m}</th>`;
         });
         theadRow.innerHTML = thHtml + '<th style="text-align: center; font-weight:800;">Total</th>';
     }
@@ -2511,7 +2511,7 @@ async function loadSalesReport(startDate, endDate) {
     const coffeeNames = Object.keys(grouped).sort();
 
     if (coffeeNames.length === 0 && tbody) {
-        tbody.innerHTML = `<tr><td colspan="${activeMachines.length + 2}" style="text-align:center; color:var(--text-muted); padding:20px;">No dispatched orders in selected period</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${activeMachines.length + 2}" class="table-empty-state">No dispatched orders in selected period</td></tr>`;
     }
 
     const labels = [];
@@ -2686,7 +2686,7 @@ async function loadCustomerReport(startDate, endDate) {
     if (tbody) {
         tbody.innerHTML = '';
         if (rows.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">No dispatched orders in selected period</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" class="table-empty-state">No dispatched orders in selected period</td></tr>`;
         } else {
             rows.forEach(r => {
                 const tr = document.createElement('tr');
@@ -2694,8 +2694,8 @@ async function loadCustomerReport(startDate, endDate) {
                     <td><strong>${r.name}</strong></td>
                     <td><code>${r.code}</code></td>
                     <td>${r.type}</td>
-                    <td style="text-align:center;">${r.orders}</td>
-                    <td style="text-align:center;">${r.bags}</td>
+                    <td class="text-center">${r.orders}</td>
+                    <td class="text-center">${r.bags}</td>
                     <td style="text-align:center; font-weight:700;">${r.kg.toFixed(1)}</td>
                 `;
                 tbody.appendChild(tr);
@@ -2802,16 +2802,16 @@ async function loadCustomerReport(startDate, endDate) {
     if (statusTbody) {
         statusTbody.innerHTML = '';
         if (statusRows.length === 0) {
-            statusTbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:20px;">No orders in selected period</td></tr>`;
+            statusTbody.innerHTML = `<tr><td colspan="7" class="table-empty-state">No orders in selected period</td></tr>`;
         } else {
             statusRows.forEach(r => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td><strong>${r.name}</strong></td>
-                    <td style="text-align:center;">${r.counts['Pending Approval'] || 0}</td>
-                    <td style="text-align:center;">${r.counts['Preparing'] || 0}</td>
-                    <td style="text-align:center;">${r.counts['Dispatched'] || 0}</td>
-                    <td style="text-align:center;">${r.counts['Completed'] || 0}</td>
+                    <td class="text-center">${r.counts['Pending Approval'] || 0}</td>
+                    <td class="text-center">${r.counts['Preparing'] || 0}</td>
+                    <td class="text-center">${r.counts['Dispatched'] || 0}</td>
+                    <td class="text-center">${r.counts['Completed'] || 0}</td>
                     <td style="text-align:center; color:var(--danger);">${r.counts['Cancelled'] || 0}</td>
                     <td style="text-align:center; font-weight:700;">${r.total}</td>
                 `;
@@ -2870,14 +2870,14 @@ async function loadCustomerReport(startDate, endDate) {
     if (prefTbody) {
         prefTbody.innerHTML = '';
         if (prefRows.length === 0) {
-            prefTbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">No dispatched orders in selected period</td></tr>`;
+            prefTbody.innerHTML = `<tr><td colspan="4" class="table-empty-state">No dispatched orders in selected period</td></tr>`;
         } else {
             prefRows.forEach(r => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td><strong>${r.name}</strong></td>
                     <td>${r.topCoffee}</td>
-                    <td style="text-align:center;">${r.bags}</td>
+                    <td class="text-center">${r.bags}</td>
                     <td style="text-align:center; font-weight:700;">${r.kg.toFixed(1)}</td>
                 `;
                 prefTbody.appendChild(tr);
@@ -3040,7 +3040,7 @@ async function loadStockOpnameReport(startDate, endDate) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">${window.t ? (window.t('stockopname_empty') || 'No stock takes recorded yet.') : 'No stock takes recorded yet.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="table-empty-state">${window.t ? (window.t('stockopname_empty') || 'No stock takes recorded yet.') : 'No stock takes recorded yet.'}</td></tr>`;
         return;
     }
     filtered.forEach(t => {
@@ -3048,10 +3048,10 @@ async function loadStockOpnameReport(startDate, endDate) {
         tr.innerHTML = `
             <td><strong>${t.take_date || '-'}</strong></td>
             <td>${t.performed_by || '-'}</td>
-            <td style="text-align:center;">${t.total_items || 0}</td>
+            <td class="text-center">${t.total_items || 0}</td>
             <td style="text-align:center; ${(t.variance_items || 0) > 0 ? 'color:var(--danger); font-weight:700;' : ''}">${t.variance_items || 0}</td>
             <td>${t.notes || '-'}</td>
-            <td style="text-align:center;"><button class="btn btn-secondary btn-sm" onclick="viewStockTake(${t.id})">${window.t ? (window.t('btn_view') || 'View') : 'View'}</button></td>
+            <td class="text-center"><button class="btn btn-secondary btn-sm" onclick="viewStockTake(${t.id})">${window.t ? (window.t('btn_view') || 'View') : 'View'}</button></td>
         `;
         tbody.appendChild(tr);
     });
@@ -3081,9 +3081,9 @@ async function startStockTake() {
             tr.innerHTML = `
                 <td><span style="font-size:0.72rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:2px 7px; border-radius:6px;">${stockCategoryLabel(g.category)}</span></td>
                 <td><strong>${g.label}</strong></td>
-                <td style="text-align:center;">${sysDisplay} ${g.unit}</td>
-                <td style="text-align:center;"><input type="number" class="form-control stockopname-actual-input" data-group-index="${i}" value="${g.systemQty}" step="${step}" min="0" style="width:110px; text-align:center; margin:0 auto;"></td>
-                <td style="text-align:center;" class="stockopname-variance-cell" data-group-index="${i}">0</td>
+                <td class="text-center">${sysDisplay} ${g.unit}</td>
+                <td class="text-center"><input type="number" class="form-control stockopname-actual-input" data-group-index="${i}" value="${g.systemQty}" step="${step}" min="0" style="width:110px; text-align:center; margin:0 auto;"></td>
+                <td  class="stockopname-variance-cell text-center" data-group-index="${i}">0</td>
             `;
             tbody.appendChild(tr);
         });

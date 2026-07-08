@@ -93,11 +93,11 @@ async function openCustomerModal(editId = null) {
     const html = `
         <form id="modal-customer-form" novalidate>
             <div class="form-row">
-                <div class="form-group" style="flex:1;">
+                <div class="form-group flex-1" >
                     <label class="form-label">Customer ID</label>
                     <input type="text" id="m-cust-id" class="form-control" readonly placeholder="Auto Generated" value="${existing ? existing.customer_id : ''}">
                 </div>
-                <div class="form-group" style="flex:1;">
+                <div class="form-group flex-1" >
                     <label class="form-label">Type</label>
                     <select id="m-cust-type" class="form-control" ${editId ? 'disabled' : ''} required>
                         <option value="Wholesale" ${existing?.type === 'Wholesale' ? 'selected' : ''}>🏭 Wholesale</option>
@@ -110,21 +110,21 @@ async function openCustomerModal(editId = null) {
                 <input type="text" id="m-cust-name" class="form-control" required value="${existing ? existing.name : ''}" placeholder="e.g. PT Kopi Nusantara">
             </div>
             <div class="form-row">
-                <div class="form-group" style="flex:1;">
+                <div class="form-group flex-1" >
                     <label class="form-label">Contact Person</label>
                     <input type="text" id="m-cust-contact" class="form-control" value="${existing?.contact_person || ''}" placeholder="PIC name">
                 </div>
-                <div class="form-group" style="flex:1;">
+                <div class="form-group flex-1" >
                     <label class="form-label">Phone</label>
                     <input type="text" id="m-cust-phone" class="form-control" value="${existing?.phone || ''}" placeholder="08xxx">
                 </div>
             </div>
             <div class="form-row">
-                <div class="form-group" style="flex:1;">
+                <div class="form-group flex-1" >
                     <label class="form-label">Email</label>
                     <input type="email" id="m-cust-email" class="form-control" value="${existing?.email || ''}" placeholder="email@example.com">
                 </div>
-                <div class="form-group" style="flex:1;">
+                <div class="form-group flex-1" >
                     <label class="form-label">City</label>
                     <input type="text" id="m-cust-city" class="form-control" value="${existing?.city || ''}" placeholder="Jakarta">
                 </div>
@@ -137,7 +137,7 @@ async function openCustomerModal(editId = null) {
                 <label class="form-label">Notes</label>
                 <input type="text" id="m-cust-notes" class="form-control" value="${existing?.notes || ''}" placeholder="Additional notes">
             </div>
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">${editId ? 'Save Changes' : 'Add Customer'}</button>
             </div>
@@ -224,7 +224,7 @@ async function viewCustomerHistory(customerId) {
     
     let historyHtml = '';
     if (custOrders.length === 0) {
-        historyHtml = '<p style="text-align:center; color:var(--text-muted); padding:20px;">No order history for this customer</p>';
+        historyHtml = '<p class="table-empty-state">No order history for this customer</p>';
     } else {
         historyHtml = `<table class="data-table" style="width:100%;">
             <thead><tr>
@@ -304,7 +304,7 @@ async function loadSalesDispatchRequestsTable() {
     tbody.innerHTML = '';
 
     if (!orders || orders.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">${window.t ? window.t("msg_no_orders") : "No orders found."}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">${window.t ? window.t("msg_no_orders") : "No orders found."}</td></tr>`;
         return;
     }
 
@@ -442,8 +442,8 @@ async function loadSalesDispatchRequestsTable() {
         if (isPending) {
             actionColumnContent = `
                 <div style="display:flex; flex-direction:column; gap:6px;">
-                    <button class="btn btn-primary btn-sm btn-edit-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>
-                    <button class="btn btn-danger btn-sm btn-delete-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> Delete</button>
+                    <button class="btn btn-primary btn-sm btn-edit-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>
+                    <button class="btn btn-danger btn-sm btn-delete-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> Delete</button>
                 </div>
             `;
         } else if (order.status === 'Cancelled') {
@@ -517,12 +517,12 @@ async function loadSalesDispatchRequestsTable() {
         <tr>
             <td>
                 <code>${order.order_number || '#ORD-'+order.id}</code><br/>
-                <span style="font-size:0.75rem; color:var(--text-secondary);">${order.order_date}</span>
+                <span class="text-secondary-xs">${order.order_date}</span>
                 ${needsRoast ? `<div style="margin-top: 4px;"><span style="font-size:0.65rem; color: var(--danger); font-weight: bold;">⚠️ ${window.t ? window.t('badge_auto_roast') : 'Auto-Roast Required'}</span></div>` : ''}
             </td>
             <td>
                 <strong>${order.sales_name}</strong>
-                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span style="font-size:0.75rem; color:var(--text-secondary);">👤 ${cust.name} <code style="font-size:0.65rem;">${cust.customer_id}</code></span>` : ''; })()}
+                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span class="text-secondary-xs">👤 ${cust.name} <code style="font-size:0.65rem;">${cust.customer_id}</code></span>` : ''; })()}
             </td>
             <td>${itemsHtml}</td>
             <td>
@@ -571,7 +571,7 @@ async function loadDispatchApprovalTable() {
     tbody.innerHTML = '';
 
     if (!orders || orders.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">${window.t ? window.t("msg_no_orders") : "No orders found."}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center-muted">${window.t ? window.t("msg_no_orders") : "No orders found."}</td></tr>`;
         return;
     }
 
@@ -696,8 +696,8 @@ async function loadDispatchApprovalTable() {
         if (isPending) {
             actionColumnContent = `
                 <div style="display:flex; flex-direction:column; gap:6px;">
-                    <button class="btn btn-success btn-sm btn-approve-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;vertical-align:middle;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg> Approve</button>
-                    <button class="btn btn-primary btn-sm btn-edit-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>
+                    <button class="btn btn-success btn-sm btn-approve-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="icon-inline-xs"><polyline points="20 6 9 17 4 12"/></svg> Approve</button>
+                    <button class="btn btn-primary btn-sm btn-edit-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>
                 </div>
             `;
         } else if (order.status === 'Cancelled') {
@@ -716,7 +716,7 @@ async function loadDispatchApprovalTable() {
                     <span style="color: #8b5cf6; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: rgba(139,92,246,0.1); border: 1px solid rgba(139,92,246,0.3); border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">
                         <span style="display:inline-block; width:6px; height:6px; background:#8b5cf6; border-radius:50%;"></span> Preparing
                     </span>
-                    ${canEdit ? `<button class="btn btn-primary btn-sm btn-edit-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>` : ''}
+                    ${canEdit ? `<button class="btn btn-primary btn-sm btn-edit-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>` : ''}
                 </div>
             `;
         } else {
@@ -732,11 +732,11 @@ async function loadDispatchApprovalTable() {
         <tr data-order-id="${order.id}" style="cursor: pointer;" class="table-row-hover">
             <td>
                 <code>${order.order_number || '#ORD-'+order.id}</code><br/>
-                <span style="font-size:0.75rem; color:var(--text-secondary);">${order.order_date}</span>
+                <span class="text-secondary-xs">${order.order_date}</span>
             </td>
             <td>
                 <strong>${order.sales_name}</strong>
-                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span style="font-size:0.75rem; color:var(--text-secondary);">👤 ${cust.name} <code style="font-size:0.65rem;">${cust.customer_id}</code></span>` : ''; })()}
+                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span class="text-secondary-xs">👤 ${cust.name} <code style="font-size:0.65rem;">${cust.customer_id}</code></span>` : ''; })()}
             </td>
             <td>${itemsHtml}</td>
             <td>
@@ -808,12 +808,12 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
 
         itemsHtml += `
             <tr>
-                <td style="text-align: center;">${idx + 1}</td>
+                <td class="text-center">${idx + 1}</td>
                 <td><strong>${coffeeName}</strong></td>
-                <td style="text-align: center;">${item.coffee_type || '-'}</td>
-                <td style="text-align: center;">${machName}</td>
-                <td style="text-align: center;">${sizeLabel}</td>
-                <td style="text-align: center;"><strong>${item.quantity_requested || 0}</strong></td>
+                <td class="text-center">${item.coffee_type || '-'}</td>
+                <td class="text-center">${machName}</td>
+                <td class="text-center">${sizeLabel}</td>
+                <td class="text-center"><strong>${item.quantity_requested || 0}</strong></td>
             </tr>
         `;
     });
@@ -837,22 +837,22 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
 
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; margin-bottom: 20px; font-size: 0.85rem;">
                 <div>
-                    <span style="color: var(--text-muted); font-size: 0.75rem;">Order Number</span>
+                    <span class="text-muted-xs">Order Number</span>
                     <div style="font-weight: 700;">${order.order_number || '#ORD-' + order.id}</div>
                 </div>
                 <div>
-                    <span style="color: var(--text-muted); font-size: 0.75rem;">Sales Agent</span>
+                    <span class="text-muted-xs">Sales Agent</span>
                     <div style="font-weight: 700;">${order.sales_name}</div>
                 </div>
                 <div>
-                    <span style="color: var(--text-muted); font-size: 0.75rem;">Order Date</span>
+                    <span class="text-muted-xs">Order Date</span>
                     <div style="font-weight: 700;">${order.order_date}</div>
                 </div>
                 <div>
-                    <span style="color: var(--text-muted); font-size: 0.75rem;">Status</span>
+                    <span class="text-muted-xs">Status</span>
                     <div><span style="font-size:0.75rem; padding: 2px 8px; border-radius: 9999px; font-weight:700; background: ${badgeColor}; color: ${textCol};">${order.status}</span></div>
                 </div>
-                ${order.notes ? `<div style="grid-column: 1 / -1;"><span style="color: var(--text-muted); font-size: 0.75rem;">Notes</span><div style="font-weight: 600;">${order.notes}</div></div>` : ''}
+                ${order.notes ? `<div style="grid-column: 1 / -1;"><span class="text-muted-xs">Notes</span><div style="font-weight: 600;">${order.notes}</div></div>` : ''}
             </div>
 
             <h4 style="font-size: 0.85rem; font-weight: 700; margin-bottom: 8px; color: var(--text-primary);">Order Items (${items.length})</h4>
@@ -862,10 +862,10 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                         <tr>
                             <th style="text-align: center; width: 40px;">#</th>
                             <th>Coffee Name</th>
-                            <th style="text-align: center;">Type</th>
-                            <th style="text-align: center;">Machine</th>
-                            <th style="text-align: center;">Size</th>
-                            <th style="text-align: center;">Qty (bags)</th>
+                            <th class="text-center">Type</th>
+                            <th class="text-center">Machine</th>
+                            <th class="text-center">Size</th>
+                            <th class="text-center">Qty (bags)</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -970,19 +970,19 @@ async function approveSalesOrder(orderId) {
             <div class="approval-item-row" data-id="${item.id}" style="background: rgba(0,0,0,0.02); border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
                 <div style="font-weight: bold; margin-bottom: 8px; color: var(--text-primary);">${coffeeName} - ${size}g${machineLabel}</div>
                 <div style="display: flex; gap: 20px; font-size: 0.85rem; align-items: center;">
-                    <div style="flex:1;">
+                    <div class="flex-1">
                         <span style="color: var(--text-secondary);" data-i18n="lbl_requested">Requested:</span> <strong>${item.quantity_requested}</strong>
                     </div>
-                    <div style="flex:1;">
+                    <div class="flex-1">
                         <span style="color: var(--text-secondary);" data-i18n="lbl_packed_stock">Packed Stock:</span> <strong style="${packedStock < item.quantity_requested ? 'color: var(--danger);' : ''}">${packedStock}</strong>
                     </div>
                 </div>
                 <div style="display: flex; gap: 15px; margin-top: 15px; align-items: flex-end;">
-                    <div style="flex: 1;">
+                    <div class="flex-1">
                         <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_fulfill_packed">Fulfill from Packed</label>
                         <input type="number" class="form-control inp-fulfill" min="0" max="${packedStock}" value="${fulfillQty}" required>
                     </div>
-                    <div style="flex: 1;">
+                    <div class="flex-1">
                         <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_send_prod">Send to Production</label>
                         <input type="number" class="form-control inp-prod" min="0" value="${prodQty}" required>
                     </div>
@@ -1354,7 +1354,7 @@ async function openSalesRequestModal(orderId = null) {
     const html = `
         <form id="modal-request-form" novalidate>
             <div class="form-row">
-                <div class="form-group" style="flex: 1;">
+                <div class="form-group flex-1" >
                     <label class="form-label" data-i18n="lbl_req_order_no">Order Number</label>
                     <input type="text" id="m-req-orderno" class="form-control" readonly placeholder="Auto Generated" data-i18n-placeholder="ph_req_auto_gen" value="${existingOrder ? existingOrder.order_number : ''}">
                 </div>
@@ -1364,7 +1364,7 @@ async function openSalesRequestModal(orderId = null) {
                     <datalist id="agent-list">${agentListHTML}</datalist>
                 </div>
             </div>
-            <div class="form-group" style="margin-top: 12px;">
+            <div class="form-group mt-25" >
                 <label class="form-label">Customer</label>
                 <select id="m-req-customer" class="form-control" required>
                     <option value="" disabled selected>-- Select Customer --</option>
@@ -1372,7 +1372,7 @@ async function openSalesRequestModal(orderId = null) {
                 </select>
             </div>
             
-            <div class="form-group" style="margin-top: 15px;">
+            <div class="form-group mt-3" >
                 <label class="form-label" data-i18n="lbl_req_items_list">Order Items</label>
                 <div id="sales-items-list" style="max-height: 45vh; overflow-y: auto; padding-right: 12px; margin-right: -4px;">
                     <!-- Dynamic Rows -->
@@ -1387,7 +1387,7 @@ async function openSalesRequestModal(orderId = null) {
                 <input type="text" id="m-req-notes" class="form-control" placeholder="e.g. Customer Coffee Shop Gayo" data-i18n-placeholder="ph_req_notes" value="${existingOrder ? (existingOrder.notes || '') : ''}">
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
                 <button type="submit" class="btn btn-primary">${orderId !== null ? 'Save Edit' : 'Submit Request'}</button>
             </div>
@@ -1551,19 +1551,19 @@ async function openSalesRequestModal(orderId = null) {
         row.innerHTML = `
             <div style="display: flex; gap: 10px; align-items: flex-end; width: 100%;">
                 <div style="flex: 2 1 160px; min-width: 0;">
-                    <label class="form-label" style="font-size: 0.78rem; margin-bottom: 4px; white-space: nowrap;" data-i18n="lbl_req_coffee_sel">Coffee</label>
+                    <label class="form-label label-xs-nowrap"  data-i18n="lbl_req_coffee_sel">Coffee</label>
                     <select class="form-control item-select" required>
                         ${coffeeOptionsHtml}
                     </select>
                 </div>
                 <div style="flex: 1.5 1 130px; min-width: 0;">
-                    <label class="form-label" style="font-size: 0.78rem; margin-bottom: 4px; white-space: nowrap;">Machine</label>
+                    <label class="form-label label-xs-nowrap" >Machine</label>
                     <select class="form-control item-machine" required>
                         ${machineOptionsHtml}
                     </select>
                 </div>
                 <div style="flex: 0 0 75px;">
-                    <label class="form-label" style="font-size: 0.78rem; margin-bottom: 4px; white-space: nowrap;" data-i18n="lbl_req_size">Size</label>
+                    <label class="form-label label-xs-nowrap"  data-i18n="lbl_req_size">Size</label>
                     <select class="form-control item-size" required>
                         <option value="250">250g</option>
                         <option value="500">500g</option>
@@ -1571,7 +1571,7 @@ async function openSalesRequestModal(orderId = null) {
                     </select>
                 </div>
                 <div style="flex: 0 0 65px;">
-                    <label class="form-label" style="font-size: 0.78rem; margin-bottom: 4px; white-space: nowrap;" data-i18n="lbl_req_qty">Qty</label>
+                    <label class="form-label label-xs-nowrap"  data-i18n="lbl_req_qty">Qty</label>
                     <input type="number" class="form-control item-qty" min="1" value="1" required>
                 </div>
                 <button type="button" class="btn btn-danger btn-remove-row" style="padding: 0; width: 34px; height: 34px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">&times;</button>
