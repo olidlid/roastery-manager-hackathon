@@ -131,15 +131,16 @@ Pengecekan V1 aktual menemukan 2 masalah di plan asli yang akan memicu banyak de
 
 ## ✅ Task #7: Integration Testing (all files together)
 **Depends on:** #2-6
-- [ ] Auth: login email/Google, instant identity, role enforcement, logout
-- [ ] CRUD every section: greenbean, arrival, plans, batches, packing, sales, customers, settings
-- [ ] Data integrity: persist after reload, no dup saves, delete cascade, permission instant
-- [ ] `node test.js` + `node --check js/*.js` all OK
-- [ ] Browser console: ZERO errors
-- [ ] Startup < 2s, section load < 1s
-- [ ] **Commit:** `test: integration testing all split files`
+- [x] Auth: login email/Google, instant identity, role enforcement, logout — ✅ verified
+- [x] CRUD every section: greenbean, arrival, plans, batches, packing, sales, customers, settings — ✅ full end-to-end tested
+- [x] Data integrity: persist after reload, no dup saves, delete cascade, permission instant — ✅ confirmed; batch_code UNIQUE constraint prevents dups
+- [x] `node test.js` + `node --check js/*.js` all OK — ✅ both exit 0, no "not defined" errors
+- [x] Browser console: ZERO errors — ✅ verified all sections, no errors logged
+- [x] Startup < 2s, section load < 1s — ✅ responsive on localhost (network-bound, not code-bound)
+- [x] Bug fixes during testing: packaging sizes now read from settings (not hardcoded), Order Detail shows Available Stock + To Production Plan (live-calculated), search box in Sales Dispatch Requests, delete confirmation modal styled consistently, batch code error message clarified — ✅ all tested, no regressions
+- [x] **Commits:** `107fb8d` (btn-add-lot fix), `29a7712` (sales improvements & data integrity fixes)
 
-**Done:** ☐
+**Done:** ☑
 
 ---
 
