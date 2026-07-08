@@ -91,7 +91,7 @@ Pengecekan V1 aktual menemukan 2 masalah di plan asli yang akan memicu banyak de
 ## ✅ Task #4: Split UI files (PLAIN SCRIPTS, one commit each)
 **Depends on:** #2, #3
 - [x] `js/greenbean.js` (539 lines) → check + test + klik semua tombol → commit `8e877ef`. Bukan blok kontigu (kode roasting terselip di antaranya) — dipindah sebagai 3 sub-blok terpisah. Diverifikasi: render inventory+intake dari data asli, modal edit sungguhan (isi field→submit→cek record tersimpan benar), adjustGreenbeanStock matematikanya benar (100kg−8.5/0.85=90kg). app.js: 12,517→11,983 baris.
-- [ ] `js/roasting.js` → check + test + klik semua tombol → commit
+- [x] `js/roasting.js` (26 fungsi, 6 sub-blok terpisah via sed) → commit `80999a2`. ⚠️ **Bug TDZ nyata tertangkap oleh `node test.js`**: baris top-level lama `if (!hasPermission('roasting_plan_add')) ...style.display='none'` (sengaja jalan SETELAH primeMenuAccessFromCache agar tombol Add Plan langsung sinkron dengan cache) — dipindah balik ke app.js tepat setelah primeMenuAccessFromCache untuk menjaga urutan & perilaku persis sama. Diverifikasi: tombol Add Plan tersembunyi instan sesuai cache role (sebelum auth selesai), render Plans/Batches/Recipes/Potential dari data asli, modal recipe terbuka, semua fungsi lintas-file (adjustGreenbeanStock, addWeightToBulkRoastedCoffee, dll) resolve benar. app.js: 11,983→8,808 baris (pengurangan terbesar).
 - [ ] `js/packing.js` → check + test + klik semua tombol → commit
 - [ ] `js/sales.js` → check + test + klik semua tombol → commit
 - [ ] `js/settings.js` → check + test + klik semua tombol → commit
