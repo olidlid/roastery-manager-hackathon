@@ -53,15 +53,19 @@ Pengecekan V1 aktual menemukan 2 masalah di plan asli yang akan memicu banyak de
 ---
 
 ## ✅ Task #2: Split db.js (PLAIN SCRIPT, not ES module)
-- [ ] Create `js/db.js` (plain, no export)
-- [ ] MOVE: fetchData, saveData, deleteData, upsertData, _showSavingIndicator, _hideSavingIndicator, _clearSavingButton, _savingCount, _dbCache, invalidateCache
-- [ ] index.html load order: `<script src="js/db.js">` BEFORE app.js
-- [ ] `node --check js/db.js` + `node test.js` (no "not defined")
-- [ ] Lokal: login→dashboard, greenbean CRUD, saving indicator
-- [ ] Console: ZERO errors
-- [ ] **Commit:** `refactor: split db.js into separate plain script`
+- [x] Create `js/db.js` (plain, no export) — 193 lines
+- [x] MOVE (cut, not copy): fetchData, saveData, deleteData, upsertData, saveDataImpl, deleteDataImpl, getMockTable/setMockTable, _dbCache/getCachedTable/invalidateCache, _showSavingIndicator/_hideSavingIndicator/_clearSavingButton/_savingCount, submit-listener
+- [x] index.html load order: `<script src="js/db.js?v=1">` right before app.js (bumped to `?v=41`)
+- [x] `node --check js/db.js` + `js/app.js` OK; `node test.js` exit 0, no "not defined"
+- [x] Lokal (preview browser): confirmed fetchData/saveData/deleteData/upsertData are callable globals
+- [x] Lokal: full insert→fetch→update→delete→upsert cycle against stubbed Supabase — correct at every step
+- [x] Lokal: real `loadGreenbeanInventory()` renders data via the moved fetchData()
+- [x] Lokal: real form submit → is-saving spinner + pill appear during save, clear cleanly after (no stuck-spinner regression)
+- [x] Console: ZERO errors
+- [x] app.js: 13,018 → 12,833 lines
+- [x] **Commit:** `c717b80` — refactor: split db.js into separate plain script
 
-**Done:** ☐
+**Done:** ☑
 
 ---
 
