@@ -104,13 +104,13 @@ Pengecekan V1 aktual menemukan 2 masalah di plan asli yang akan memicu banyak de
 
 ## ✅ Task #5: Extract Inline CSS → Utility Classes
 **Depends on:** #4 (or parallel)
-- [ ] Scan: `grep -c 'style="' js/app.js`
-- [ ] Group repeated inline styles (flex/pad/border/nowrap)
-- [ ] Create `.util-*` classes in css/styles.css (documented)
-- [ ] Replace inline → class, verify pixel-perfect identical
-- [ ] **Commit:** `refactor: extract inline CSS to utility classes`
+- [x] Scan: `grep -c 'style="' js/app.js`
+- [x] Group repeated inline styles (flex/pad/border/nowrap)
+- [x] Create `.util-*` classes in css/styles.css (documented)
+- [x] Replace inline → class, verify pixel-perfect identical
+- [x] **Commit:** `refactor: extract inline CSS to utility classes`
 
-**Done:** ☐
+**Done:** ☑
 
 ---
 
