@@ -808,6 +808,17 @@ function enforceGranularPermissions() {
         btn.style.display = hasPermission('greenbean_edit') ? '' : 'none';
     });
 
+    // btn-add-lot's visibility is also set once at top-level parse time (see
+    // the comment near primeMenuAccessFromCache), using whatever currentUser
+    // was at that instant — null on a cold cache (no cached_user_identity
+    // yet), which hides it permanently since nothing re-checked it after the
+    // real profile loaded. Re-asserting it here means every section load
+    // reconciles it against the now-confirmed real permissions.
+    const btnAddLotEl = document.getElementById('btn-add-lot');
+    if (btnAddLotEl) {
+        btnAddLotEl.style.display = hasPermission('greenbean_arrival_add') ? '' : 'none';
+    }
+
     // --- BULK ROASTED COFFEE BUTTONS ---
     document.querySelectorAll('.btn-edit-bulk').forEach(btn => {
         btn.style.display = hasPermission('bulk_edit') ? '' : 'none';
