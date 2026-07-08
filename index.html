@@ -1114,9 +1114,12 @@
                         <div class="card">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                 <h3 class="card-title" style="margin-bottom: 0;" data-i18n="handover_orders_title">Sales Dispatch Requests</h3>
-                                <button id="btn-create-request" class="btn btn-primary btn-sm" data-i18n="btn_submit_req">
-                                    <i class="lucide-shopping-cart"></i> Submit Sales Request
-                                </button>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <input type="text" id="request-search" class="form-control" data-i18n-placeholder="ph_search_orders" placeholder="Search orders..." style="width: 200px; height: 32px; font-size: 0.8rem;" oninput="handleRequestSearchInput()">
+                                    <button id="btn-create-request" class="btn btn-primary btn-sm" data-i18n="btn_submit_req">
+                                        <i class="lucide-shopping-cart"></i> Submit Sales Request
+                                    </button>
+                                </div>
                             </div>
                             <div class="table-container">
                                 <table>

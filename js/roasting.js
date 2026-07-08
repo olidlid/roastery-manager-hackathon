@@ -2539,7 +2539,19 @@ async function openRoastBatchModal(plan = null, editId = null) {
 
         const { data: savedBatch, error } = await saveData('roast_batches', record);
         if (error) {
-            alert("Logging batch failed: " + error.message);
+            // Auto-retrying with a regenerated code was considered here, but
+            // rejected: a duplicate-key error can also mean the user
+            // double-submitted this exact batch (double-click, browser
+            // resubmit), in which case silently retrying would log the same
+            // physical batch twice under two different codes — a worse,
+            // harder-to-notice outcome than stopping and asking. Surface a
+            // clear, actionable message instead and let the user check the
+            // Batch Logs list before retrying manually.
+            const isDuplicateCode = /duplicate key|unique constraint/i.test(error.message || '');
+            const msg = isDuplicateCode
+                ? `A batch with code "${code}" already exists. This can happen if you double-submitted, or logged another batch for the same coffee/machine/date at nearly the same moment.\n\nPlease check the Batch Logs list to confirm this batch wasn't already saved, then close this form and try again — a fresh code will be generated.`
+                : "Logging batch failed: " + error.message;
+            alert(msg);
             return;
         }
 
@@ -3109,7 +3121,16 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
 
         const { data: savedBatch, error } = await saveData('roast_batches', record);
         if (error) {
-            alert('Failed to save batch: ' + error.message);
+            // See the same comment in openRoastBatchModal — auto-retrying
+            // with a new code risks silently double-logging a batch if this
+            // error was actually caused by a double-submit/double-scan
+            // rather than a stale sequence number, so this stops and asks
+            // instead of guessing.
+            const isDuplicateCode = /duplicate key|unique constraint/i.test(error.message || '');
+            const msg = isDuplicateCode
+                ? `A batch with code "${code}" already exists. This can happen if you scanned/submitted twice, or logged another batch for the same coffee/machine at nearly the same moment.\n\nPlease check the Batch Logs list to confirm this batch wasn't already saved, then close this form and scan again — a fresh code will be generated.`
+                : 'Failed to save batch: ' + error.message;
+            alert(msg);
             return;
         }
 

@@ -198,7 +198,14 @@ async function openCustomerModal(editId = null) {
 }
 
 async function deleteCustomer(id) {
-    if (!confirm('Are you sure you want to delete this customer?')) return;
+    const proceed = await showWarningModal(
+        'This will permanently remove the customer and all associated sales orders.',
+        true,
+        'Delete Customer',
+        'Delete'
+    );
+    if (!proceed) return;
+
     const { error } = await deleteData('customers', id);
     if (error) {
         alert('Failed to delete: ' + error.message);
@@ -279,6 +286,19 @@ async function loadHandoverSection() {
     await loadDispatchApprovalTable();
 }
 
+// loadSalesDispatchRequestsTable does a Promise.all of 8 fetchData calls, so
+// re-running it on every keystroke (like customer-search does, with its
+// single-table fetch) would be a network round-trip per key. Debounce so it
+// only fires once typing pauses.
+let _requestSearchDebounce = null;
+function handleRequestSearchInput() {
+    if (_requestSearchDebounce) clearTimeout(_requestSearchDebounce);
+    _requestSearchDebounce = setTimeout(() => {
+        requestCurrentPage = 1;
+        loadSalesDispatchRequestsTable();
+    }, 300);
+}
+
 async function loadSalesDispatchRequestsTable() {
     const [
         { data: orders },
@@ -308,8 +328,31 @@ async function loadSalesDispatchRequestsTable() {
         return;
     }
 
-    const sortedOrders = [...orders]
+    let sortedOrders = [...orders]
         .sort((a, b) => new Date(b.order_date) - new Date(a.order_date) || b.id - a.id);
+
+    // Search across order number, sales agent, customer, and item coffee names
+    const searchVal = (document.getElementById('request-search')?.value || '').trim().toLowerCase();
+    if (searchVal) {
+        sortedOrders = sortedOrders.filter(order => {
+            const orderNumber = (order.order_number || `#ORD-${order.id}`).toLowerCase();
+            if (orderNumber.includes(searchVal)) return true;
+            if ((order.sales_name || '').toLowerCase().includes(searchVal)) return true;
+            const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
+            if (cust && (cust.name || '').toLowerCase().includes(searchVal)) return true;
+            const items = (orderItems || []).filter(i => i.request_order_id === order.id);
+            return items.some(item => {
+                const coffeeName = item.coffee_type === 'Single'
+                    ? (greenbeans || []).find(g => g.id === item.single_coffee_id)?.name
+                    : (recipes || []).find(r => r.id === item.blend_recipe_id)?.name;
+                return (coffeeName || '').toLowerCase().includes(searchVal);
+            });
+        });
+        if (sortedOrders.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">${window.t ? window.t("msg_no_orders_match_search") || "No orders match your search." : "No orders match your search."}</td></tr>`;
+            return;
+        }
+    }
 
     const batchMap = new Map();
     (roastBatches || []).forEach(b => batchMap.set(b.id, b));
@@ -557,14 +600,18 @@ async function loadDispatchApprovalTable() {
         { data: greenbeans },
         { data: recipes },
         { data: machines },
-        { data: customers }
+        { data: customers },
+        { data: packed },
+        { data: roastBatches }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
         fetchData('machines'),
-        fetchData('customers')
+        fetchData('customers'),
+        fetchData('packed_coffee'),
+        fetchData('roast_batches')
     ]);
     const tbody = document.getElementById('approval-orders-table-body');
     if (!tbody) return;
@@ -762,7 +809,7 @@ async function loadDispatchApprovalTable() {
         const tr = e.target.closest('tr[data-order-id]');
         if (tr) {
             const orderId = parseInt(tr.getAttribute('data-order-id'));
-            openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines);
+            openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines, packed, roastBatches);
         }
     };
 
@@ -770,11 +817,54 @@ async function loadDispatchApprovalTable() {
     if (typeof window.translatePage === 'function') window.translatePage();
 }
 
-function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines) {
+function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines, packed, roastBatches) {
     const order = (orders || []).find(o => o.id === orderId);
     if (!order) return;
 
     const items = (orderItems || []).filter(i => i.request_order_id === orderId);
+
+    // For orders not yet approved, quantity_allocated/quantity_pending haven't
+    // been decided yet (approveSalesOrder() is what sets them) — they'd just
+    // read as 0. So for a still-pending order, compute a live snapshot of
+    // packed stock per coffee/size/machine instead, matching the same lookup
+    // openSalesRequestModal uses for its stock-check box.
+    const isPending = order.status === 'Pending Approval';
+    const perMachinePackedStock = {};
+    if (isPending) {
+        (packed || []).forEach(p => {
+            let coffeeType = null, cId = null, machineId = null;
+            if (p.roast_batch_id) {
+                const batch = (roastBatches || []).find(b => b.id === p.roast_batch_id);
+                if (batch) {
+                    coffeeType = batch.coffee_type;
+                    cId = coffeeType === 'Single' ? batch.single_coffee_id : batch.blend_recipe_id;
+                    machineId = batch.machine_id || null;
+                }
+            }
+            // Fallback for packed_coffee rows with no roast_batch_id link —
+            // match by custom_coffee_name instead, same as openSalesRequestModal.
+            if (!coffeeType && p.custom_coffee_name) {
+                const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+                const matchGb = (greenbeans || []).find(g => g.name === cleanName);
+                if (matchGb) {
+                    coffeeType = 'Single';
+                    cId = matchGb.id;
+                } else {
+                    const matchRec = (recipes || []).find(r => r.name === cleanName);
+                    if (matchRec) {
+                        coffeeType = 'Blend';
+                        cId = matchRec.id;
+                    }
+                }
+                machineId = p.machine_id || null;
+            }
+            if (coffeeType && cId && machineId) {
+                const qty = parseInt(p.quantity) || 0;
+                const key = `${coffeeType}-${cId}-${p.bag_size_g}-${machineId}`;
+                perMachinePackedStock[key] = (perMachinePackedStock[key] || 0) + qty;
+            }
+        });
+    }
 
     const badgeColor = order.status === 'Dispatched' ? 'rgba(6,182,212,0.15)' :
                        order.status === 'Completed' ? 'rgba(16,185,129,0.15)' :
@@ -792,6 +882,8 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
     // Build items table
     let itemsHtml = '';
     let totalBags = 0;
+    let totalAllocated = 0;
+    let totalPending = 0;
     items.forEach((item, idx) => {
         let coffeeName = '';
         if (item.coffee_type === 'Single') {
@@ -806,6 +898,19 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
         const sizeLabel = item.bag_size_g >= 1000 ? `${item.bag_size_g / 1000} kg` : `${item.bag_size_g}g`;
         totalBags += item.quantity_requested || 0;
 
+        let availableStock, toPlan;
+        if (isPending && item.machine_id) {
+            const cId = item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
+            const key = `${item.coffee_type}-${cId}-${item.bag_size_g}-${item.machine_id}`;
+            availableStock = perMachinePackedStock[key] || 0;
+            toPlan = Math.max(0, (item.quantity_requested || 0) - availableStock);
+        } else {
+            availableStock = item.quantity_allocated || 0;
+            toPlan = item.quantity_pending || 0;
+        }
+        totalAllocated += availableStock;
+        totalPending += toPlan;
+
         itemsHtml += `
             <tr>
                 <td class="text-center">${idx + 1}</td>
@@ -814,6 +919,8 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                 <td class="text-center">${machName}</td>
                 <td class="text-center">${sizeLabel}</td>
                 <td class="text-center"><strong>${item.quantity_requested || 0}</strong></td>
+                <td class="text-center">${availableStock}</td>
+                <td class="text-center">${toPlan}</td>
             </tr>
         `;
     });
@@ -829,7 +936,7 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
     }
 
     existingPopup.innerHTML = `
-        <div class="overlay-card" style="max-width: 650px; width: 95%; padding: 28px;">
+        <div class="overlay-card" style="max-width: 850px; width: 95%; padding: 28px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <h3 style="margin: 0; font-weight: 800; color: var(--text-primary);">Order Detail</h3>
                 <button type="button" class="btn btn-secondary btn-sm" id="btn-close-order-detail">&times;</button>
@@ -866,6 +973,8 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                             <th class="text-center">Machine</th>
                             <th class="text-center">Size</th>
                             <th class="text-center">Qty (bags)</th>
+                            <th class="text-center">Available Stock</th>
+                            <th class="text-center">To Production Plan</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -873,6 +982,8 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                         <tr style="font-weight: 700; border-top: 2px solid var(--border); background: rgba(255,255,255,0.03);">
                             <td colspan="5" style="text-align: right;">Total Bags</td>
                             <td style="text-align: center; color: var(--primary);"><strong>${totalBags}</strong></td>
+                            <td style="text-align: center; color: var(--primary);"><strong>${totalAllocated}</strong></td>
+                            <td style="text-align: center; color: var(--primary);"><strong>${totalPending}</strong></td>
                         </tr>
                     </tbody>
                 </table>
@@ -1173,7 +1284,8 @@ async function openSalesRequestModal(orderId = null) {
         { data: requestOrderItems },
         { data: packed },
         { data: roastBatches },
-        { data: machines }
+        { data: machines },
+        { data: packagingSizes }
     ] = await Promise.all([
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
@@ -1183,7 +1295,8 @@ async function openSalesRequestModal(orderId = null) {
         fetchData('request_order_items'),
         fetchData('packed_coffee'),
         fetchData('roast_batches'),
-        fetchData('machines')
+        fetchData('machines'),
+        fetchData('packaging_sizes')
     ]);
 
     let existingOrder = null;
@@ -1334,6 +1447,14 @@ async function openSalesRequestModal(orderId = null) {
     // Machine options
     let machineOptionsHtml = `<option value="" disabled selected>-- Machine --</option>`;
     machineOptionsHtml += (machines || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+
+    // Bag size options — read from the configurable Packaging Sizes table
+    // (Settings > Production) instead of a hardcoded 250/500/1000g list, so
+    // this reflects whatever sizes the admin actually set up (e.g. 250g/1kg/5kg).
+    const visibleSizes = (packagingSizes || [])
+        .filter(s => s.is_visible)
+        .sort((a, b) => (parseFloat(a.gram) || 0) - (parseFloat(b.gram) || 0));
+    const sizeOptionsHtml = visibleSizes.map(s => `<option value="${s.gram}">${s.label}</option>`).join('');
 
     // Customer options
     const { data: customersList } = await fetchData('customers');
@@ -1492,13 +1613,13 @@ async function openSalesRequestModal(orderId = null) {
                     const nameColor = isActiveMachine ? 'var(--primary)' : 'var(--text-secondary)';
 
                     let sizesHtml = '';
-                    [250, 500, 1000].forEach(sz => {
+                    visibleSizes.forEach(s => {
+                        const sz = parseFloat(s.gram);
                         const mKey = `${type}-${coffeeId}-${sz}-${m.id}`;
                         const machStock = perMachinePackedStocks[mKey] || 0;
                         const isSelected = (sz === sizeG);
                         const highlight = isSelected ? 'font-weight:700; color: var(--text-primary);' : 'color: var(--text-muted);';
-                        const szLabel = sz >= 1000 ? `${sz/1000}kg` : `${sz}g`;
-                        sizesHtml += `<span style="${highlight} font-size: 0.75rem; margin-right: 8px;">${szLabel}: <strong>${machStock}</strong></span>`;
+                        sizesHtml += `<span style="${highlight} font-size: 0.75rem; margin-right: 8px;">${s.label}: <strong>${machStock}</strong></span>`;
                     });
 
                     machineCardsHtml += `
@@ -1565,9 +1686,7 @@ async function openSalesRequestModal(orderId = null) {
                 <div style="flex: 0 0 75px;">
                     <label class="form-label label-xs-nowrap"  data-i18n="lbl_req_size">Size</label>
                     <select class="form-control item-size" required>
-                        <option value="250">250g</option>
-                        <option value="500">500g</option>
-                        <option value="1000">1kg</option>
+                        ${sizeOptionsHtml}
                     </select>
                 </div>
                 <div style="flex: 0 0 65px;">
