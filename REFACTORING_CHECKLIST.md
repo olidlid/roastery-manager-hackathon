@@ -31,16 +31,24 @@ Pengecekan V1 aktual menemukan 2 masalah di plan asli yang akan memicu banyak de
 - Plan lama `UUID REFERENCES green_coffee(id)` = type mismatch, CREATE TABLE gagal
 - **KEPUTUSAN:** FK pakai `INTEGER` (sudah dikoreksi di Task #6)
 
+### ❌ Masalah 3 (ditemukan saat Task #1): `node test.js` hanya benar-benar mengecek ~22% file
+- `jsdom` **belum pernah ter-install** — `node test.js` selama ini gagal MODULE_NOT_FOUND, bukan cuma di sesi ini
+- Setelah jsdom di-install: sandbox DOM-nya kosong (`<body></body>`), padahal app.js punya 17 titik top-level `document.getElementById(x).addEventListener(...)` tanpa null-check. Titik PERTAMA yang elemennya tidak ada di sandbox kosong → crash → sisa ~78% file tidak pernah dievaluasi/di-cek sama sekali oleh test ini, dari dulu.
+- **KEPUTUSAN:** `test.js` diperbaiki untuk (1) load body `index.html` asli, (2) auto-baca semua `<script src="js/...">` dari index.html sesuai urutan & gabungkan sebelum eval — otomatis tetap valid saat app.js dipecah jadi banyak file di fase berikutnya, tidak perlu edit test.js lagi tiap fase. `jsdom` ditambahkan ke devDependencies.
+
 ---
 
 ## ✅ Task #1: Pre-flight Backup & Git Setup
-- [ ] Clean commit: `git add . && git commit -m "chore: cleanup before refactoring"`
-- [ ] Branch: `git checkout -b refactor/v1-modularization`
-- [ ] Tag: `git tag v1-pre-refactor-20260708`
-- [ ] Verify: `node server.js` + `node --check js/app.js` OK
-- [ ] Baseline: app.js = 13.018 baris, 160 fungsi, 82 onclick
+- [x] Clean commit: checklist file dikomit (`a9e5644`)
+- [x] Branch: `refactor/v1-modularization` dibuat
+- [x] Tag: `v1-pre-refactor-20260708` dibuat
+- [x] Verify: `node server.js` OK (login page render sempurna, 0 console error) + `node --check js/app.js` OK
+- [x] Verify: `node test.js` diperbaiki (lihat Masalah 3 di atas) — sekarang exit 0, "Script evaluated successfully without SyntaxErrors" untuk SELURUH file
+- [x] Baseline dicatat: app.js = 13.018 baris, 160 fungsi, 35 `onclick=` di app.js (+47 lagi di index.html = 82 total)
+- [x] File asing `js/app_backup.js` (identik dengan app.js) ditemukan — dibiarkan untracked atas keputusan user, tidak ikut di-commit
+- [x] **Commit:** `da20161` — fix test.js + install jsdom
 
-**Done:** ☐
+**Done:** ☑
 
 ---
 
