@@ -411,6 +411,30 @@ CREATE TABLE IF NOT EXISTS public.stock_take_items (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 23. Green bean lots (shadow schema for V2 lot tracking)
+CREATE TABLE IF NOT EXISTS public.green_coffee_lots (
+    id SERIAL PRIMARY KEY,
+    green_coffee_id INTEGER REFERENCES public.green_coffee(id) ON DELETE CASCADE,
+    lot_code TEXT NOT NULL UNIQUE,
+    quantity_kg NUMERIC NOT NULL DEFAULT 0,
+    remaining_kg NUMERIC NOT NULL DEFAULT 0,
+    supplier TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    arrival_date DATE DEFAULT CURRENT_DATE
+);
+
+-- 24. Packed coffee lots (shadow schema for V2 packed lot tracking)
+CREATE TABLE IF NOT EXISTS public.packed_coffee_lots (
+    id SERIAL PRIMARY KEY,
+    packed_coffee_id INTEGER REFERENCES public.packed_coffee(id) ON DELETE CASCADE,
+    roast_batch_id INTEGER REFERENCES public.roast_batches(id) ON DELETE SET NULL,
+    lot_code TEXT NOT NULL UNIQUE,
+    quantity_pcs INTEGER NOT NULL DEFAULT 0,
+    remaining_pcs INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    packed_date DATE DEFAULT CURRENT_DATE
+);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ----------------------------------------------------------------------------
@@ -429,7 +453,8 @@ BEGIN
     'roasting_plans','roast_batches','bulk_roasted_coffee','waste_inventory',
     'packaging_sizes','packed_coffee','packing_records','customers',
     'sales_agents','request_orders','request_order_items','sales_orders',
-    'stock_takes','stock_take_items'
+    'stock_takes','stock_take_items',
+    'green_coffee_lots','packed_coffee_lots'
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);

@@ -1114,9 +1114,12 @@
                         <div class="card">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                 <h3 class="card-title" style="margin-bottom: 0;" data-i18n="handover_orders_title">Sales Dispatch Requests</h3>
-                                <button id="btn-create-request" class="btn btn-primary btn-sm" data-i18n="btn_submit_req">
-                                    <i class="lucide-shopping-cart"></i> Submit Sales Request
-                                </button>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <input type="text" id="request-search" class="form-control" data-i18n-placeholder="ph_search_orders" placeholder="Search orders..." style="width: 200px; height: 32px; font-size: 0.8rem;" oninput="handleRequestSearchInput()">
+                                    <button id="btn-create-request" class="btn btn-primary btn-sm" data-i18n="btn_submit_req">
+                                        <i class="lucide-shopping-cart"></i> Submit Sales Request
+                                    </button>
+                                </div>
                             </div>
                             <div class="table-container">
                                 <table>
@@ -2228,10 +2231,17 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js"></script>
+    <script src="js/translations.js?v=1"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/app.js?v=40"></script>
+    <script src="js/db.js?v=1"></script>
+    <script src="js/auth.js?v=1"></script>
+    <script src="js/greenbean.js?v=1"></script>
+    <script src="js/roasting.js?v=1"></script>
+    <script src="js/packing.js?v=1"></script>
+    <script src="js/sales.js?v=1"></script>
+    <script src="js/settings.js?v=1"></script>
+    <script src="js/app.js?v=48"></script>
 </body>
 </html>
