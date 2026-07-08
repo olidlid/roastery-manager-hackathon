@@ -71,16 +71,20 @@ Pengecekan V1 aktual menemukan 2 masalah di plan asli yang akan memicu banyak de
 
 ## ✅ Task #3: Split auth.js (PLAIN SCRIPT, not ES module)
 **Depends on:** #2
-- [ ] Create `js/auth.js` (plain)
-- [ ] MOVE: checkAuthentication, loadUserProfile, hasPermission, roleHasPermission, PERMISSION_FALLBACKS, applyMenuVisibility, applyRoleAccess, syncCustomRolesFromSupabase, SECTION_PERMISSIONS, PERMISSION_GROUPS
-- [ ] ⚠️ IIFE anti-flash (primeBrandFromCache, primeUserFromCache, primeMenuAccessFromCache) HARUS jalan sangat awal — jaga urutannya
-- [ ] Load: db.js → auth.js → app.js
-- [ ] `node --check` + `node test.js`
-- [ ] Lokal: login email + Google, identitas instant, NO flash, menu role-based hidden, logout
-- [ ] Hard-refresh berkali-kali (cek regresi flash)
-- [ ] **Commit:** `refactor: split auth.js into separate plain script`
+- [x] Create `js/auth.js` (plain) — 332 lines
+- [x] MOVE (cut, not copy): syncCustomRolesFromSupabase, configOverlay/authOverlay/onboardingOverlay, checkDatabaseConnection, updateGreeting, SECTION_PERMISSIONS, PERMISSION_FALLBACKS, roleHasPermission, hasPermission, getFirstAllowedSection, applyMenuVisibility, applyRoleAccess, checkAuthentication, loadUserProfile
+- [x] ⚠️ **Revisi ditemukan saat kerja:** PERMISSION_GROUPS TIDAK dipindah — dipakai eksklusif oleh role-management UI (Settings), jadi itu wilayah Task #4, bukan #3
+- [x] ⚠️ **Revisi kedua (penting):** 3 IIFE anti-flash (primeBrandFromCache, primeUserFromCache, primeMenuAccessFromCache) SENGAJA TIDAK dipindah — mereka eksekusi langsung saat parse, dan primeMenuAccessFromCache assign ke `currentUser` (`let` di app.js). Karena auth.js load SEBELUM app.js, itu akan kena temporal-dead-zone error. Ketiga IIFE tetap di app.js; fungsi yang mereka panggil (hasPermission dkk, sekarang di auth.js) aman karena hanya dipanggil belakangan saat runtime.
+- [x] Load: db.js → auth.js → app.js (index.html `?v=1` untuk auth.js, app.js bump ke `?v=42`)
+- [x] `node --check` kedua file OK + `node test.js` exit 0, auth.js otomatis terbaca di urutan benar
+- [x] Lokal: seeded role Roaster2 terbatas + cache identitas → reload → menu terfilter benar (Dashboard+Roasting saja) DAN nama/role tampil instan, SEMUA sebelum auth overlay hilang — NOL regresi flash
+- [x] Lokal: logout membersihkan cached_user_identity dengan benar
+- [x] Lokal: alur nyata checkAuthentication→loadUserProfile→applyRoleAccess→updateGreeting dieksekusi end-to-end lintas file (auth.js memanggil fungsi app.js) — berhasil, cache tertulis benar
+- [x] Console: NOL error di semua skenario di atas
+- [x] app.js: 12,833 → 12,517 lines
+- [x] **Commit:** `2459094` — refactor: split auth.js into separate plain script
 
-**Done:** ☐
+**Done:** ☑
 
 ---
 
