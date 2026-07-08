@@ -116,16 +116,16 @@ Pengecekan V1 aktual menemukan 2 masalah di plan asli yang akan memicu banyak de
 
 ## ✅ Task #6: Database Shadow Schema (FK types FIXED to INTEGER)
 **Non-breaking — safe anytime, doesn't touch app.js**
-- [ ] SQL Editor: create green_coffee_lots (green_coffee_id **INTEGER** REFERENCES green_coffee(id))
-- [ ] SQL Editor: create packed_coffee_lots (packed_coffee_id/roast_batch_id **INTEGER**)
-- [ ] RLS full_access on both + `NOTIFY pgrst, 'reload schema';`
-- [ ] Trigger auto-populate: OPTIONAL, defer to real V2 build (jangan sentuh alur V1 tanpa test)
-- [ ] Test FK: valid id inserts, garbage id rejected
-- [ ] V1 unchanged verified
-- [ ] Update database/supabase_schema.sql (INTEGER FKs)
-- [ ] **Commit:** `feat: add V2 lot tracking tables (shadow schema, INTEGER FKs)`
+- [x] SQL Editor: create green_coffee_lots (green_coffee_id **INTEGER** REFERENCES green_coffee(id))
+- [x] SQL Editor: create packed_coffee_lots (packed_coffee_id/roast_batch_id **INTEGER**)
+- [x] RLS full_access on both + `NOTIFY pgrst, 'reload schema';`
+- [x] Trigger auto-populate: OPTIONAL, defer to real V2 build (jangan sentuh alur V1 tanpa test)
+- [x] Test FK: valid id inserts, garbage id rejected
+- [x] V1 unchanged verified
+- [x] Update database/supabase_schema.sql (INTEGER FKs)
+- [x] **Commit:** `feat: add V2 lot tracking tables (shadow schema, INTEGER FKs)`
 
-**Done:** ☐
+**Done:** ☑
 
 ---
 
