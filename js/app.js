@@ -1642,8 +1642,12 @@ function makeTabsDraggable() {
             const draggingBtn = container.querySelector('.dragging');
             if (!draggingBtn) return;
 
-            // Find target element we are dragging over
-            const siblings = [...container.querySelectorAll('.tab-btn:not(.dragging)')];
+            // Only consider DIRECT children as reorder targets. Using a plain
+            // '.tab-btn' descendant selector can match buttons nested inside a
+            // wrapper (some tab headers aren't a flat row), and insertBefore()
+            // then throws NotFoundError because the reference node isn't a child
+            // of `container`. ':scope >' restricts to direct children.
+            const siblings = [...container.querySelectorAll(':scope > .tab-btn:not(.dragging)')];
             const nextSibling = siblings.find(sibling => {
                 const box = sibling.getBoundingClientRect();
                 // Determine horizontal midpoint comparison for sorting order
@@ -1651,7 +1655,11 @@ function makeTabsDraggable() {
                 return offset < 0;
             });
 
-            if (nextSibling) {
+            // Guard: draggingBtn and nextSibling must both be direct children of
+            // container for insertBefore to be valid (belt-and-suspenders on top
+            // of the ':scope >' selector above).
+            if (draggingBtn.parentNode !== container) return;
+            if (nextSibling && nextSibling.parentNode === container) {
                 container.insertBefore(draggingBtn, nextSibling);
             } else {
                 container.appendChild(draggingBtn);
