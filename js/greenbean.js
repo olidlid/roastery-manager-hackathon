@@ -208,24 +208,43 @@ async function openIntakeModal(editId = null) {
         intakeItem = history.find(item => item.id === editId);
     }
 
-    // Generate datalist options for autocomplete
-    const uniqueNames = [...new Set(inventory.map(g => g.name).filter(Boolean))];
+    // Generate datalist options for autocomplete (origin/process/supplier only —
+    // coffee identity itself is now picked from the <select> below, not typed).
     const uniqueOrigins = [...new Set(inventory.map(g => g.origin).filter(Boolean))];
     const uniqueProcesses = [...new Set(inventory.map(g => g.process).filter(Boolean))];
     const uniqueSuppliers = [...new Set(inventory.map(g => g.supplier).filter(Boolean))];
 
-    const nameOpts = uniqueNames.map(name => `<option value="${name}"></option>`).join('');
     const originOpts = uniqueOrigins.map(origin => `<option value="${origin}"></option>`).join('');
     const processOpts = uniqueProcesses.map(proc => `<option value="${proc}"></option>`).join('');
     const supplierOpts = uniqueSuppliers.map(sup => `<option value="${sup}"></option>`).join('');
 
+    // Which existing row (if any) this intake record is tied to. Prefer the
+    // green_coffee_id FK; fall back to a name+code text match only for legacy
+    // intake rows saved before this FK was populated (pre this fix).
+    const linkedBean = intakeItem
+        ? inventory.find(g =>
+            (intakeItem.green_coffee_id && g.id === intakeItem.green_coffee_id) ||
+            (!intakeItem.green_coffee_id && g.name.toLowerCase() === (intakeItem.name || '').toLowerCase() && (g.code || '').toLowerCase() === (intakeItem.code || '').toLowerCase()))
+        : null;
+
+    const coffeeOptionsHtml = inventory.map(g => {
+        const selected = linkedBean && linkedBean.id === g.id ? 'selected' : '';
+        const stockLabel = `${parseFloat(g.stock_kg || 0).toFixed(1)} ${companySettings.weight_unit}`;
+        return `<option value="${g.id}" data-code="${g.code || ''}" data-origin="${g.origin || ''}" data-process="${g.process || ''}" data-supplier="${g.supplier || ''}" ${selected}>${g.name} — ${g.code || 'no code'} — ${stockLabel} in stock</option>`;
+    }).join('');
+
+    // Editing an old intake row that predates green_coffee_id and whose
+    // name+code no longer matches anything current (edited/deleted since) —
+    // fall back to "new coffee" mode so the historical name/code aren't lost.
+    const isOrphanedLegacyEdit = !!(intakeItem && !linkedBean);
+
     const defaultDate = intakeItem ? intakeItem.date : new Date().toISOString().split('T')[0];
-    const defaultName = intakeItem ? intakeItem.name : '';
-    const defaultCode = intakeItem ? intakeItem.code : '';
-    const defaultOrigin = intakeItem ? intakeItem.origin : '';
-    const defaultProcess = intakeItem ? intakeItem.process : '';
+    const defaultNewName = isOrphanedLegacyEdit ? (intakeItem.name || '') : '';
+    const defaultCode = intakeItem ? (intakeItem.code || '') : '';
+    const defaultOrigin = intakeItem ? (intakeItem.origin || '') : '';
+    const defaultProcess = intakeItem ? (intakeItem.process || '') : '';
     const defaultQty = intakeItem ? parseFloat(intakeItem.quantity) : 100.0;
-    const defaultSupplier = intakeItem ? intakeItem.supplier : '';
+    const defaultSupplier = intakeItem ? (intakeItem.supplier || '') : '';
 
     const html = `
         <form id="modal-intake-form">
@@ -233,17 +252,28 @@ async function openIntakeModal(editId = null) {
                 <label class="form-label">Arrival Date</label>
                 <input type="date" id="m-int-date" class="form-control" value="${defaultDate}" required>
             </div>
-            <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Coffee</label>
+                <select id="m-int-coffee-select" class="form-control" required>
+                    <option value="" disabled ${(linkedBean || isOrphanedLegacyEdit) ? '' : 'selected'}>-- Select or Add New Coffee --</option>
+                    <option value="__new__" ${isOrphanedLegacyEdit ? 'selected' : ''}>+ Add New Coffee...</option>
+                    ${coffeeOptionsHtml}
+                </select>
+            </div>
+            <div class="form-row hidden" id="int-new-name-row">
                 <div class="form-group">
-                    <label class="form-label">Coffee Name</label>
-                    <input type="text" id="m-int-name" list="int-names-list" class="form-control" value="${defaultName}" placeholder="e.g. Aceh Gayo Arabica" required autocomplete="off">
-                    <datalist id="int-names-list">
-                        ${nameOpts}
-                    </datalist>
+                    <label class="form-label">New Coffee Name</label>
+                    <input type="text" id="m-int-new-name" class="form-control" value="${defaultNewName}" placeholder="e.g. Aceh Gayo Arabica">
                 </div>
+            </div>
+            <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Item Code</label>
                     <input type="text" id="m-int-code" class="form-control" value="${defaultCode}" placeholder="e.g. GB1" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Quantity (kg)</label>
+                    <input type="number" step="0.1" id="m-int-qty" class="form-control" value="${defaultQty}" min="0.1" required>
                 </div>
             </div>
             <div class="form-row">
@@ -262,18 +292,12 @@ async function openIntakeModal(editId = null) {
                     </datalist>
                 </div>
             </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Quantity (kg)</label>
-                    <input type="number" step="0.1" id="m-int-qty" class="form-control" value="${defaultQty}" min="0.1" required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Supplier Name</label>
-                    <input type="text" id="m-int-supplier" list="int-suppliers-list" class="form-control" value="${defaultSupplier}" placeholder="e.g. Gayo Estate" required autocomplete="off">
-                    <datalist id="int-suppliers-list">
-                        ${supplierOpts}
-                    </datalist>
-                </div>
+            <div class="form-group">
+                <label class="form-label">Supplier Name</label>
+                <input type="text" id="m-int-supplier" list="int-suppliers-list" class="form-control" value="${defaultSupplier}" placeholder="e.g. Gayo Estate" required autocomplete="off">
+                <datalist id="int-suppliers-list">
+                    ${supplierOpts}
+                </datalist>
             </div>
 
             <div class="modal-footer-actions">
@@ -285,72 +309,108 @@ async function openIntakeModal(editId = null) {
 
     openModal(editId ? 'Edit Greenbean Lot (Intake)' : 'Received Lot', html);
 
-    const nameInput = document.getElementById('m-int-name');
-    const autoFillFromInventory = () => {
-        const val = nameInput.value.trim();
-        const match = inventory.find(g => g.name.toLowerCase() === val.toLowerCase());
-        if (match) {
-            document.getElementById('m-int-code').value = match.code || '';
-            document.getElementById('m-int-origin').value = match.origin || '';
-            document.getElementById('m-int-process').value = match.process || '';
-            document.getElementById('m-int-supplier').value = match.supplier || '';
+    const coffeeSelect = document.getElementById('m-int-coffee-select');
+    const newNameRow = document.getElementById('int-new-name-row');
+    const codeInput = document.getElementById('m-int-code');
+    const originInput = document.getElementById('m-int-origin');
+    const processInput = document.getElementById('m-int-process');
+    const supplierInput = document.getElementById('m-int-supplier');
+
+    // Selecting an existing coffee locks identity to its row.id (no more
+    // matching by typed name+code text) and refreshes the other fields from
+    // that row so the form shows what's actually being restocked; picking
+    // "+ Add New Coffee..." reveals the free-text name field instead.
+    function syncFieldsFromSelect() {
+        if (coffeeSelect.value === '__new__') {
+            newNameRow.classList.remove('hidden');
+        } else {
+            newNameRow.classList.add('hidden');
+            const opt = coffeeSelect.selectedOptions[0];
+            if (!opt || !opt.value) return;
+            codeInput.value = opt.getAttribute('data-code') || '';
+            originInput.value = opt.getAttribute('data-origin') || '';
+            processInput.value = opt.getAttribute('data-process') || '';
+            supplierInput.value = opt.getAttribute('data-supplier') || '';
         }
-    };
-    nameInput.addEventListener('input', autoFillFromInventory);
-    nameInput.addEventListener('change', autoFillFromInventory);
+    }
+    coffeeSelect.addEventListener('change', syncFieldsFromSelect);
+    syncFieldsFromSelect();
 
     document.getElementById('modal-intake-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const date = document.getElementById('m-int-date').value;
-        const code = document.getElementById('m-int-code').value.trim();
-        const name = nameInput.value.trim();
-        const origin = document.getElementById('m-int-origin').value.trim();
-        const process = document.getElementById('m-int-process').value.trim();
+        const code = codeInput.value.trim();
+        const origin = originInput.value.trim();
+        const process = processInput.value.trim();
         const quantity = parseFloat(document.getElementById('m-int-qty').value);
-        const supplier = document.getElementById('m-int-supplier').value.trim();
+        const supplier = supplierInput.value.trim();
+        const coffeeSelectVal = coffeeSelect.value;
 
-        // If editing, subtract old qty from old inventory item first
-        if (editId && intakeItem) {
-            const oldMatch = inventory.find(g => g.name.toLowerCase() === intakeItem.name.toLowerCase() && g.code.toLowerCase() === intakeItem.code.toLowerCase());
-            if (oldMatch) {
-                oldMatch.stock_kg = Math.max(0, parseFloat(oldMatch.stock_kg) - parseFloat(intakeItem.quantity));
-                await saveData('green_coffee', oldMatch);
+        if (!coffeeSelectVal) return; // native `required` blocks this, but guard anyway
+
+        // If editing, restore the quantity this record previously added to
+        // whichever bean it was linked to, before applying the new amount below
+        // — otherwise editing a lot's quantity would double-count the delta.
+        if (editId && intakeItem && linkedBean) {
+            const oldBean = inventory.find(g => g.id === linkedBean.id);
+            if (oldBean) {
+                oldBean.stock_kg = Math.max(0, parseFloat(oldBean.stock_kg) - parseFloat(intakeItem.quantity));
+                await saveData('green_coffee', oldBean);
             }
         }
 
-        // 1. Save record in green_coffee_intake
+        let targetCoffeeId, targetName;
+
+        if (coffeeSelectVal === '__new__') {
+            const newName = document.getElementById('m-int-new-name').value.trim();
+            if (!newName) { alert('Please enter a name for the new coffee.'); return; }
+
+            // Guard against silently creating a duplicate of an existing coffee —
+            // this exact mechanism (two green_coffee rows sharing a name) is what
+            // caused a past bug where one of them ended up stuck at 0 stock.
+            const dup = inventory.find(g => g.name.toLowerCase() === newName.toLowerCase());
+            if (dup) {
+                const proceed = await showWarningModal(
+                    `A coffee named "${dup.name}" already exists (code ${dup.code || '—'}, ${parseFloat(dup.stock_kg || 0).toFixed(1)} ${companySettings.weight_unit} in stock).\n\nCreating a new entry will split its stock across two separate records. Pick it from the "Coffee" dropdown above instead unless this is genuinely a different lot.\n\nCreate a new entry anyway?`,
+                    true
+                );
+                if (!proceed) return;
+            }
+
+            const newBean = {
+                code, name: newName, origin, process,
+                stock_kg: quantity, purchase_price_per_kg: 0.0, supplier
+            };
+            const { data: savedBean, error } = await saveData('green_coffee', newBean);
+            if (error) { alert('Failed to create coffee: ' + error.message); return; }
+            targetCoffeeId = savedBean.id;
+            targetName = newName;
+        } else {
+            const coffeeId = parseInt(coffeeSelectVal);
+            const bean = inventory.find(g => g.id === coffeeId);
+            if (!bean) { alert('Selected coffee not found — please refresh and try again.'); return; }
+            bean.stock_kg = parseFloat(bean.stock_kg || 0) + quantity;
+            if (code) bean.code = code;
+            if (origin) bean.origin = origin;
+            if (process) bean.process = process;
+            if (supplier) bean.supplier = supplier;
+            await saveData('green_coffee', bean);
+            targetCoffeeId = bean.id;
+            targetName = bean.name;
+        }
+
         const intakeRecord = {
             id: editId || undefined,
+            green_coffee_id: targetCoffeeId,
             date,
             code,
-            name,
+            name: targetName,
             origin,
             process,
             quantity,
             supplier
         };
         await saveData('green_coffee_intake', intakeRecord);
-
-        // 2. Add to green_coffee stock level or create new record
-        const match = inventory.find(g => g.name.toLowerCase() === name.toLowerCase() && g.code.toLowerCase() === code.toLowerCase());
-        if (match) {
-            match.stock_kg = parseFloat(match.stock_kg) + quantity;
-            if (origin) match.origin = origin;
-            if (process) match.process = process;
-            if (supplier) match.supplier = supplier;
-            await saveData('green_coffee', match);
-        } else {
-            const newBean = {
-                code,
-                name,
-                origin,
-                process,
-                stock_kg: quantity,
-                purchase_price_per_kg: 0.0,
-                supplier
-            };
-            await saveData('green_coffee', newBean);
-        }
 
         modalContainer.classList.add('hidden');
 
@@ -372,8 +432,12 @@ async function deleteIntake(deleteId) {
         const item = history.find(i => i.id === deleteId);
         if (!item) return;
 
-        // Deduct quantity from warehouse inventory
-        const match = inventory.find(g => g.name.toLowerCase() === item.name.toLowerCase() && g.code.toLowerCase() === item.code.toLowerCase());
+        // Deduct quantity from warehouse inventory. Prefer the green_coffee_id
+        // FK; fall back to name+code text match only for legacy intake rows
+        // saved before this FK was populated (pre this fix).
+        const match = inventory.find(g =>
+            (item.green_coffee_id && g.id === item.green_coffee_id) ||
+            (!item.green_coffee_id && g.name.toLowerCase() === (item.name || '').toLowerCase() && (g.code || '').toLowerCase() === (item.code || '').toLowerCase()));
         if (match) {
             match.stock_kg = Math.max(0, parseFloat(match.stock_kg) - parseFloat(item.quantity));
             await saveData('green_coffee', match);
