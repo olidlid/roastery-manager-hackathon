@@ -1238,6 +1238,58 @@ async function initAppDashboard() {
             plansContainer.appendChild(planEl);
         }
     }
+
+    updateNavNotificationBadges();
+}
+
+// ==========================================================================
+// NAV NOTIFICATION BALLOONS — sidebar menu items + tab headers get a small
+// red count badge so a user with the relevant permission notices work
+// waiting on them without having to open the section first:
+//   - dispatch_approval_approve → sales orders sitting at 'Pending Approval'
+//     (Goods Handover sidebar item + Dispatch Approval tab)
+//   - roasting_batch_add → roasting plans not yet 'Completed' (covers both
+//     freshly-created plans with 0 progress and partially-fulfilled ones)
+//     (Production sidebar item + Plans tab)
+// Called from initAppDashboard() (itself invoked via scheduleDashboardRefresh,
+// which already runs on login and after essentially every relevant mutation
+// across the app — approve/reject/dispatch, batch log, plan save/delete) and
+// from applyRoleAccess() (auth.js) so the count appears immediately on login
+// rather than waiting for the first dashboard refresh to resolve.
+// ==========================================================================
+async function updateNavNotificationBadges() {
+    if (!currentUser) return;
+
+    function paint(els, count) {
+        const label = count > 99 ? '99+' : String(count);
+        els.forEach(el => {
+            if (!el) return;
+            if (count > 0) {
+                el.textContent = label;
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        });
+    }
+
+    const approvalBadges = [document.getElementById('badge-nav-handover'), document.getElementById('badge-tab-dispatch-approval')];
+    if (hasPermission('dispatch_approval_approve')) {
+        const { data: orders } = await fetchData('request_orders');
+        const pendingApprovalCount = (orders || []).filter(o => o.status === 'Pending Approval').length;
+        paint(approvalBadges, pendingApprovalCount);
+    } else {
+        paint(approvalBadges, 0);
+    }
+
+    const roastingBadges = [document.getElementById('badge-nav-roasting'), document.getElementById('badge-tab-roast-plans')];
+    if (hasPermission('roasting_batch_add')) {
+        const { data: plans } = await fetchData('roasting_plans');
+        const pendingPlanCount = (plans || []).filter(p => p.status !== 'Completed').length;
+        paint(roastingBadges, pendingPlanCount);
+    } else {
+        paint(roastingBadges, 0);
+    }
 }
 
 

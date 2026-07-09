@@ -303,6 +303,30 @@ button.is-saving::after {
     font-weight: 600;
 }
 
+/* Sidebar notification balloon (e.g. pending sales approvals, pending roast
+   plans). Always --danger red regardless of theme/accent, so it reads as
+   "needs attention" rather than blending in as a status color. Pushed to the
+   end of the flex row via margin-left:auto. Populated/toggled by
+   updateNavNotificationBadges() in js/app.js. */
+.nav-notif-badge {
+    margin-inline-start: auto;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    flex-shrink: 0;
+}
+.menu-item.active .nav-notif-badge {
+    background: #fff;
+    color: var(--danger);
+}
+
 .menu-item.active:hover {
     transform: none;
 }
@@ -776,6 +800,26 @@ tbody tr:hover {
 .tab-btn.active {
     color: var(--primary);
     border-bottom-color: var(--primary);
+}
+
+/* Tab-header notification balloon (e.g. "Dispatch Approval" / "Plans" tabs).
+   Same purpose/color as .nav-notif-badge; sized slightly smaller and
+   vertical-aligned to sit next to the tab label text. Populated/toggled by
+   updateNavNotificationBadges() in js/app.js. */
+.tab-notif-badge {
+    display: inline-block;
+    vertical-align: middle;
+    margin-inline-start: 6px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
 }
 
 .tab-content {

@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=13">
+    <link rel="stylesheet" href="css/styles.css?v=14">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -277,6 +277,7 @@
                 <li class="menu-item" data-target="sec-roasting">
                     <i class="lucide-flame"></i>
                     <span data-i18n="nav_roasting">Production</span>
+                    <span id="badge-nav-roasting" class="nav-notif-badge hidden"></span>
                 </li>
                 <li class="menu-item" data-target="sec-packing">
                     <i class="lucide-archive"></i>
@@ -289,6 +290,7 @@
                 <li class="menu-item" data-target="sec-handover">
                     <i class="lucide-truck"></i>
                     <span data-i18n="nav_handover">Goods Handover</span>
+                    <span id="badge-nav-handover" class="nav-notif-badge hidden"></span>
                 </li>
                 <li class="menu-item" data-target="sec-reports">
                     <i class="lucide-bar-chart-2"></i>
@@ -700,7 +702,7 @@
             <section id="sec-roasting" class="page-section hidden">
                 <div class="tab-container">
                     <div class="tab-headers">
-                        <button class="tab-btn active" data-tab="tab-roast-plans" data-i18n="tab_roast_plans">Plans</button>
+                        <button class="tab-btn active" data-tab="tab-roast-plans"><span data-i18n="tab_roast_plans">Plans</span><span id="badge-tab-roast-plans" class="tab-notif-badge hidden"></span></button>
                         <button class="tab-btn" data-tab="tab-roast-logs" data-i18n="tab_roast_logs">Batch Logs</button>
                         <button class="tab-btn" data-tab="tab-blend-recipes" data-i18n="tab_recipes">Blend Recipes</button>
                         <button class="tab-btn" data-tab="tab-recipe-potential" data-i18n="tab_potential">Production Potential</button>
@@ -1160,7 +1162,7 @@
                 <div class="tab-container">
                     <div class="tab-headers">
                         <button class="tab-btn active" data-tab="tab-dispatch-request" data-i18n="tab_dispatch_request">Sales Dispatch Request</button>
-                        <button class="tab-btn" data-tab="tab-dispatch-approval" data-i18n="tab_dispatch_approval">Dispatch Approval</button>
+                        <button class="tab-btn" data-tab="tab-dispatch-approval"><span data-i18n="tab_dispatch_approval">Dispatch Approval</span><span id="badge-tab-dispatch-approval" class="tab-notif-badge hidden"></span></button>
                     </div>
 
                     <!-- TAB 1: Sales Dispatch Request -->
@@ -2290,12 +2292,12 @@
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
-    <script src="js/auth.js?v=4"></script>
+    <script src="js/auth.js?v=5"></script>
     <script src="js/greenbean.js?v=2"></script>
     <script src="js/roasting.js?v=1"></script>
     <script src="js/packing.js?v=3"></script>
     <script src="js/sales.js?v=2"></script>
     <script src="js/settings.js?v=3"></script>
-    <script src="js/app.js?v=51"></script>
+    <script src="js/app.js?v=52"></script>
 </body>
 </html>

@@ -274,6 +274,7 @@ function applyMenuVisibility() {
 function applyRoleAccess() {
     if (!currentUser) return;
     applyMenuVisibility();
+    if (typeof updateNavNotificationBadges === 'function') updateNavNotificationBadges();
 
     // Force redirection if they are on a forbidden section
     const currentSection = Array.from(pageSections).find(sec => !sec.classList.contains('hidden'))?.id;
