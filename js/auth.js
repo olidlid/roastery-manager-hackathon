@@ -45,10 +45,22 @@ const configOverlay = document.getElementById('config-overlay');
 const authOverlay = document.getElementById('auth-overlay');
 const onboardingOverlay = document.getElementById('onboarding-overlay');
 
+// Fade out the first-paint loading splash once a real UI state (login page,
+// config screen, or the app) is ready to show. Idempotent — safe to call from
+// every terminal path; a safety timeout in checkAuthentication also calls it so
+// a hung network can never leave the splash stuck up.
+function hideAppLoadingOverlay() {
+    const el = document.getElementById('app-loading-overlay');
+    if (!el || el.classList.contains('fade-out')) return;
+    el.classList.add('fade-out');
+    setTimeout(() => { el.style.display = 'none'; }, 400); // after the 0.35s CSS fade
+}
+
 function checkDatabaseConnection() {
     if (!window.isConnected() && !isMockMode) {
         configOverlay.classList.remove('hidden');
         authOverlay.classList.add('hidden');
+        hideAppLoadingOverlay();
         return false;
     }
     configOverlay.classList.add('hidden');
@@ -279,6 +291,9 @@ function applyRoleAccess() {
 function checkAuthentication() {
     if (!checkDatabaseConnection()) return;
 
+    // Safety net: never let the loading splash outlive a hung auth/network call.
+    setTimeout(hideAppLoadingOverlay, 12000);
+
     // Listen for auth state changes (handles OAuth redirect)
     window.supabaseClient.auth.onAuthStateChange((event, session) => {
         if (event === 'SIGNED_IN' && session) {
@@ -294,6 +309,7 @@ function checkAuthentication() {
             authOverlay.classList.remove('hidden');
             document.getElementById('app-container').style.display = 'none';
             currentUser = null;
+            hideAppLoadingOverlay();
         } else if (event === 'PASSWORD_RECOVERY' && session) {
             authOverlay.classList.add('hidden');
             document.getElementById('app-container').style.display = 'flex';
@@ -308,6 +324,7 @@ function checkAuthentication() {
         if (!session) {
             authOverlay.classList.remove('hidden');
             document.getElementById('app-container').style.display = 'none';
+            hideAppLoadingOverlay();
         } else {
             authOverlay.classList.add('hidden');
             document.getElementById('app-container').style.display = 'flex';
@@ -356,5 +373,10 @@ async function loadUserProfile(userId) {
         console.error("UserProfile load failed, falling back:", e);
         currentUser = { id: userId, username: 'user', role: 'Leader', name: 'Production Leader' };
         loadCompanySettings();
+    } finally {
+        // App shell is now populated (or the fallback/sign-out has fired) — drop
+        // the loading splash. Covers success, the PGRST116 sign-out return, and
+        // the network-fallback path.
+        hideAppLoadingOverlay();
     }
 }
