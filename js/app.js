@@ -3619,35 +3619,63 @@ closeFullscreenChart = function() {
 // ==========================================================================
 // GLOBAL BARCODE SCANNER LISTENER
 // ==========================================================================
+// USB/Bluetooth barcode scanners act as a keyboard: they "type" the encoded
+// value very fast (well under human typing speed) then send a configurable
+// terminator key — Enter is common, but plenty of cheap/generic scanners
+// ship configured for Tab, or no terminator at all. Originally this only
+// listened for Enter, so a scanner set to Tab (or none) produced no visible
+// error and simply appeared to "not work" — confirmed by reproducing it here
+// with a synthetic Tab-terminated scan.
+//
+// Fix: listen for Enter/Tab as an immediate commit, AND arm an idle-timeout
+// fallback the moment the buffer starts matching our 'RMP:' prefix — if no
+// further keystroke arrives within BARCODE_IDLE_COMMIT_MS, treat the burst as
+// finished and commit it regardless of terminator. The idle-timer is only
+// armed after the prefix already matches, so normal manual typing elsewhere
+// (which is both slower and essentially never starts with 'RMP:') can't
+// accidentally trigger it.
 (function() {
     let barcodeBuffer = '';
     let lastKeyTime = 0;
-    const BARCODE_THRESHOLD = 50; // ms between keystrokes for barcode vs manual
+    let idleCommitTimer = null;
     const BARCODE_MIN_LENGTH = 8; // minimum barcode length
-    
+    const BARCODE_IDLE_COMMIT_MS = 80; // no-terminator fallback: commit after this much silence
+
+    function commitBuffer() {
+        const candidate = barcodeBuffer;
+        barcodeBuffer = '';
+        clearTimeout(idleCommitTimer);
+        if (candidate.length >= BARCODE_MIN_LENGTH && candidate.startsWith('RMP:')) {
+            handleBarcodeScan(candidate);
+        }
+    }
+
     document.addEventListener('keydown', (e) => {
-        // Don't intercept if user is typing in an input/textarea
-        const tag = (e.target.tagName || '').toLowerCase();
-        const isInputField = tag === 'input' || tag === 'textarea' || tag === 'select';
-        
         const now = Date.now();
-        
-        if (e.key === 'Enter') {
+
+        if (e.key === 'Enter' || e.key === 'Tab') {
             if (barcodeBuffer.length >= BARCODE_MIN_LENGTH && barcodeBuffer.startsWith('RMP:')) {
                 e.preventDefault();
                 e.stopPropagation();
-                handleBarcodeScan(barcodeBuffer);
+                commitBuffer();
+            } else {
+                barcodeBuffer = '';
+                clearTimeout(idleCommitTimer);
             }
-            barcodeBuffer = '';
             return;
         }
-        
+
         if (e.key && e.key.length === 1) { // printable character
             if (now - lastKeyTime > 200) {
                 barcodeBuffer = ''; // reset if too slow (manual typing)
             }
             barcodeBuffer += e.key;
             lastKeyTime = now;
+
+            clearTimeout(idleCommitTimer);
+            if (barcodeBuffer.startsWith('RMP:')) {
+                idleCommitTimer = setTimeout(commitBuffer, BARCODE_IDLE_COMMIT_MS);
+            }
         }
     });
 })();
