@@ -85,6 +85,8 @@ RLS: `full_access` (`FOR ALL USING (true)`), same permissive pattern as every ot
 Role definitions with granular permissions. `id`, `name` (unique), `color`, `is_system`, `permissions` (jsonb, ~40 boolean keys like `greenbean_view`, `roasting_batch_approve`, `dispatch_approval_dispatch`, `settings_system`, `user_management`), `created_at`.
 Default roles (seeded from `MOCK_DB.custom_roles` in `js/app.js` if the table is empty on first sync): **Developer, Admin, Production Leader, Roaster, Packing Team, Sales Agent** — each with a different permission matrix (see `hasPermission()` / `applyRoleAccess()` in `js/app.js`).
 
+⚠️ **Known RLS drift (found 2026-07-09):** production's actual RLS policy on this table stopped matching the `full_access` policy documented in `supabase_schema.sql` — `DELETE`/`UPDATE` silently no-op (HTTP 200, empty result, row untouched), same symptom class as the `profiles` UPDATE drift below. This means "Delete Role" in Settings → Role Management may silently fail. Fix: run `database/fix_custom_roles_rls.sql` in the Supabase SQL Editor to re-apply the `full_access` policy.
+
 ---
 
 ## Architecture
