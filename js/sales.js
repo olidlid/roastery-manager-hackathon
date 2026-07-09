@@ -1433,7 +1433,6 @@ async function openSalesRequestModal(orderId = null) {
     }
 
     // ── Generate dropdowns ───────────────────────────────────────────────────
-    const agentListHTML = (agents || []).map(a => `<option value="${a.name}">`).join('');
     const singleLbl = window.t ? window.t('opt_req_single') : 'Single Origin';
     const blendLbl = window.t ? window.t('opt_req_blend') : 'Blend';
     let coffeeOptionsHtml = `<option value="" disabled selected>-- Select Item --</option>`;
@@ -1474,17 +1473,13 @@ async function openSalesRequestModal(orderId = null) {
 
     const html = `
         <form id="modal-request-form" novalidate>
-            <div class="form-row">
-                <div class="form-group flex-1" >
-                    <label class="form-label" data-i18n="lbl_req_order_no">Order Number</label>
-                    <input type="text" id="m-req-orderno" class="form-control" readonly placeholder="Auto Generated" data-i18n-placeholder="ph_req_auto_gen" value="${existingOrder ? existingOrder.order_number : ''}">
-                </div>
-                <div class="form-group" style="flex: 2;">
-                    <label class="form-label" data-i18n="lbl_req_agent">Sales Agent Name</label>
-                    <input type="text" id="m-req-sales" class="form-control" list="agent-list" required autocomplete="off" value="${existingOrder ? existingOrder.sales_name : ''}">
-                    <datalist id="agent-list">${agentListHTML}</datalist>
-                </div>
+            <div class="form-group">
+                <label class="form-label" data-i18n="lbl_req_order_no">Order Number</label>
+                <input type="text" id="m-req-orderno" class="form-control" readonly placeholder="Auto Generated" data-i18n-placeholder="ph_req_auto_gen" value="${existingOrder ? existingOrder.order_number : ''}">
             </div>
+            <!-- Sales agent is the logged-in user, filled automatically. Kept as a
+                 hidden field so order-number generation and submit still read it. -->
+            <input type="hidden" id="m-req-sales" value="${existingOrder ? existingOrder.sales_name : (currentUser ? currentUser.name : '')}">
             <div class="form-group mt-25" >
                 <label class="form-label">Customer</label>
                 <select id="m-req-customer" class="form-control" required>
@@ -1523,10 +1518,11 @@ async function openSalesRequestModal(orderId = null) {
     const orderNoInput = document.getElementById('m-req-orderno');
 
     // ── Order Number Generation ──────────────────────────────────────────────
+    // The sales agent is now the logged-in user (hidden, prefilled) rather than a
+    // typed field, so generate the order number once on open instead of on input.
     if (!existingOrder) {
-        agentInput.addEventListener('input', () => {
-            const name = agentInput.value.trim();
-            if (!name) { orderNoInput.value = ''; return; }
+        const name = agentInput.value.trim();
+        if (name) {
             let agentCode = 'AG';
             const existing = (agents || []).find(a => a.name.toLowerCase() === name.toLowerCase());
             if (existing && existing.code) {
@@ -1548,7 +1544,7 @@ async function openSalesRequestModal(orderId = null) {
                 }
             });
             orderNoInput.value = `${agentCode}${datePart}${String(maxSeq + 1).padStart(3, '0')}`;
-        });
+        }
     }
 
     // ── Reactive Stock Allocation (Layer 2 & 3) ─────────────────────────────
