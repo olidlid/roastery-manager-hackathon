@@ -6,29 +6,30 @@
 :root {
     --font-primary: 'Outfit', sans-serif;
 
-    /* Dark Mode Defaults (Primary Theme) - Premium Dark Green & Mint */
-    --bg-app: #0c130f;
-    --bg-sidebar: #111a15;
-    --bg-card: rgba(22, 34, 27, 0.65);
-    --bg-input: #17241e;
-    --bg-overlay: rgba(8, 13, 10, 0.9);
-    --bg-glass-active: rgba(255, 255, 255, 0.08);
+    /* Dark Mode Defaults (Primary Theme) - Neutral warm-gray base + warm green accent */
+    --bg-app: #1f1e1d;        /* warm near-black */
+    --bg-sidebar: #262624;    /* slightly lifted warm charcoal */
+    --bg-card: rgba(48, 48, 46, 0.65);
+    --bg-input: #2a2926;
+    --bg-overlay: rgba(20, 19, 18, 0.9);
+    --bg-glass-active: rgba(255, 255, 255, 0.06);
 
-    --border: rgba(183, 228, 199, 0.12); /* translucent mint border */
-    --border-focus: rgba(183, 228, 199, 0.5); /* mint focus */
+    --border: rgba(255, 255, 255, 0.10); /* neutral translucent border */
+    --border-focus: rgba(85, 129, 77, 0.55); /* warm green focus */
 
-    --text-primary: #F8F9FA; /* off-white from palette */
-    --text-secondary: #B7E4C7; /* mint green from palette */
-    --text-muted: #CED4DA; /* medium light gray from palette */
+    --text-primary: #faf9f5; /* warm off-white */
+    --text-secondary: #c9c6bd; /* warm light gray */
+    --text-muted: #8f8d87; /* warm muted gray */
 
-    --primary: #2D6A4F;       /* Medium Leaf Green */
-    --primary-hover: #40916c; /* lighter leaf green */
-    --primary-glow: rgba(45, 106, 79, 0.35);
+    --primary: #55814d;       /* warm sage / forest green */
+    --primary-hover: #669a5d; /* brighter warm green */
+    --primary-glow: rgba(85, 129, 77, 0.30);
+    --primary-contrast: #faf9f5; /* off-white text, readable on the green button */
 
-    --success: #52b788;       /* premium success mint */
+    --success: #52b788;       /* semantic green (kept) */
     --warning: #ffd166;
     --danger: #ef4444;
-    --info: #B7E4C7;          /* Mint Cyan */
+    --info: #90b4d8;          /* soft blue for info accents */
 
     --transition-fast: 0.2s ease;
     --transition-smooth: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -56,6 +57,7 @@
     --primary: #2D6A4F;       /* Medium Leaf Green */
     --primary-hover: #1F3D2B; /* dark forest green */
     --primary-glow: rgba(45, 106, 79, 0.15);
+    --primary-contrast: #ffffff; /* white text on the green primary button */
 
     --shadow-premium: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
 }
@@ -483,7 +485,7 @@ button.is-saving::after {
 
 .btn-primary {
     background-color: var(--primary);
-    color: var(--bg-sidebar);
+    color: var(--primary-contrast);
 }
 
 .btn-primary:hover {

@@ -1926,6 +1926,20 @@ function openFullscreenChart(chartCanvasId, title) {
     }, 50);
 }
 
+// Chart.js renders to <canvas> and does NOT understand CSS var() strings —
+// passing 'var(--text-primary)' as a color silently falls back to Chart.js's
+// default grey, unreadable on the dark card. Resolve the theme tokens to real
+// color values at chart-build time so labels/ticks/gridlines follow the theme
+// (re-resolved correctly whenever a dark/light toggle rebuilds the charts).
+function chartThemeColors() {
+    const cs = getComputedStyle(document.documentElement);
+    return {
+        text: cs.getPropertyValue('--text-primary').trim() || '#faf9f5',
+        tick: cs.getPropertyValue('--text-secondary').trim() || '#c9c6bd',
+        grid: cs.getPropertyValue('--border').trim() || 'rgba(255,255,255,0.1)'
+    };
+}
+
 function closeFullscreenChart() {
     const modal = document.getElementById('modal-fullscreen-chart');
     modal.style.display = 'none';
@@ -2185,11 +2199,11 @@ async function loadGreenbeanReport(startDate, endDate) {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { labels: { color: 'var(--text-primary)' } }
+                    legend: { labels: { color: chartThemeColors().text } }
                 },
                 scales: {
-                    x: { ticks: { color: 'var(--text-secondary)' } },
-                    y: { ticks: { color: 'var(--text-secondary)' } }
+                    x: { ticks: { color: chartThemeColors().tick } },
+                    y: { ticks: { color: chartThemeColors().tick } }
                 }
             }
         });
@@ -2324,11 +2338,11 @@ async function loadRoastingReport(startDate, endDate) {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { labels: { color: 'var(--text-primary)' } }
+                    legend: { labels: { color: chartThemeColors().text } }
                 },
                 scales: {
-                    x: { ticks: { color: 'var(--text-secondary)' } },
-                    y: { ticks: { color: 'var(--text-secondary)' } }
+                    x: { ticks: { color: chartThemeColors().tick } },
+                    y: { ticks: { color: chartThemeColors().tick } }
                 }
             }
         });
@@ -2532,7 +2546,7 @@ async function loadPackingReport(startDate, endDate) {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { labels: { color: 'var(--text-primary)' } }
+                    legend: { labels: { color: chartThemeColors().text } }
                 }
             }
         });
@@ -2695,11 +2709,11 @@ async function loadSalesReport(startDate, endDate) {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { labels: { color: 'var(--text-primary)' } }
+                    legend: { labels: { color: chartThemeColors().text } }
                 },
                 scales: {
-                    x: { ticks: { color: 'var(--text-secondary)' } },
-                    y: { ticks: { color: 'var(--text-secondary)' } }
+                    x: { ticks: { color: chartThemeColors().tick } },
+                    y: { ticks: { color: chartThemeColors().tick } }
                 }
             }
         });
@@ -2833,11 +2847,11 @@ async function loadCustomerReport(startDate, endDate) {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { labels: { color: 'var(--text-primary)' } }
+                    legend: { labels: { color: chartThemeColors().text } }
                 },
                 scales: {
-                    x: { ticks: { color: 'var(--text-secondary)' } },
-                    y: { ticks: { color: 'var(--text-secondary)' } }
+                    x: { ticks: { color: chartThemeColors().tick } },
+                    y: { ticks: { color: chartThemeColors().tick } }
                 }
             }
         });
@@ -2883,7 +2897,7 @@ async function loadCustomerReport(startDate, endDate) {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { position: 'bottom', labels: { color: 'var(--text-primary)' } }
+                    legend: { position: 'bottom', labels: { color: chartThemeColors().text } }
                 }
             }
         });
