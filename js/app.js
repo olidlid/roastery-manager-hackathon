@@ -146,7 +146,7 @@ const MOCK_DB = {
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
                 reports_view: true, reports_stockopname_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
-                user_management: true
+                user_management: true, user_delete: true
             }
         },
         {
@@ -166,7 +166,7 @@ const MOCK_DB = {
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
                 reports_view: true, reports_stockopname_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
-                user_management: true
+                user_management: true, user_delete: true
             }
         },
         {
@@ -186,7 +186,7 @@ const MOCK_DB = {
                 customer_view: true, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: true, reports_stockopname_view: true,
                 settings_general: false, settings_production: true, settings_system: false,
-                user_management: false
+                user_management: false, user_delete: false
             }
         },
         {
@@ -206,7 +206,7 @@ const MOCK_DB = {
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: false, reports_stockopname_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
-                user_management: false
+                user_management: false, user_delete: false
             }
         },
         {
@@ -226,7 +226,7 @@ const MOCK_DB = {
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: false, reports_stockopname_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
-                user_management: false
+                user_management: false, user_delete: false
             }
         },
         {
@@ -246,7 +246,7 @@ const MOCK_DB = {
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: false,
                 reports_view: true, reports_stockopname_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
-                user_management: false
+                user_management: false, user_delete: false
             }
         }
     ]

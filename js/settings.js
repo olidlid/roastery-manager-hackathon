@@ -39,6 +39,7 @@ async function loadUsersSection() {
             <td>${user.created_at ? new Date(user.created_at).toLocaleDateString() : '2026-06-28'}</td>
             <td>
                 <button class="btn btn-secondary btn-sm btn-edit-user" data-id="${user.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+                ${(hasPermission('user_delete') && currentUser && user.id !== currentUser.id) ? `<button class="btn btn-danger btn-sm btn-delete-user" data-id="${user.id}" data-name="${user.name}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
             </td>
         `;
         tbody.appendChild(tr);
@@ -47,6 +48,31 @@ async function loadUsersSection() {
     document.querySelectorAll('.btn-edit-user').forEach(btn => {
         btn.addEventListener('click', () => editUserRole(btn.getAttribute('data-id')));
     });
+    document.querySelectorAll('.btn-delete-user').forEach(btn => {
+        btn.addEventListener('click', () => deleteUserAccount(btn.getAttribute('data-id'), btn.getAttribute('data-name')));
+    });
+}
+
+// Removes the user's PROFILE row (role + all app access). Their Supabase Auth
+// login still exists — the anon key can't call the admin API to delete the
+// auth.users row, so a full login removal must be done in Supabase Dashboard →
+// Authentication → Users. With the loadUserProfile hardening (sign out when the
+// profile row is gone), a profile-less login can no longer get in, so deleting
+// the profile is an effective access revocation on its own.
+async function deleteUserAccount(userId, userName) {
+    if (currentUser && userId === currentUser.id) {
+        alert('You cannot delete your own account.');
+        return;
+    }
+    const confirmed = await showDeleteConfirmModal(`the account "${userName}"`);
+    if (!confirmed) return;
+
+    const { error } = await deleteData('profiles', userId);
+    if (error) {
+        alert('Failed to delete user: ' + error.message);
+        return;
+    }
+    loadUsersSection();
 }
 
 async function editUserRole(userId) {
@@ -294,7 +320,10 @@ const PERMISSION_GROUPS = [
         { key: 'settings_production', label: 'Production' },
         { key: 'settings_system', label: 'System' }
     ]},
-    { label: '🔐 Administration', keys: [{ key: 'user_management', label: 'User & Role Management' }] }
+    { label: '🔐 Administration', keys: [
+        { key: 'user_management', label: 'User & Role Management' },
+        { key: 'user_delete', label: 'Delete User' }
+    ]}
 ];
 
 function loadRoleManagement() {
@@ -311,7 +340,9 @@ function loadRoleManagement() {
     const ALL_PERM_KEYS = PERMISSION_GROUPS.flatMap(g => g.keys.map(k => k.key));
     const totalPerms = ALL_PERM_KEYS.length;
 
-    container.innerHTML = roles.map(role => {
+    // Hide the Developer role entirely (incognito super-role) — same intent as
+    // hiding Developer-role users from the operator list in loadUsersSection().
+    container.innerHTML = roles.filter(r => r.name !== 'Developer').map(role => {
         const permCount = ALL_PERM_KEYS.filter(key => roleHasPermission(role, key)).length;
         const pctColor = permCount === totalPerms ? '#16a34a' : permCount > totalPerms / 2 ? '#ca8a04' : '#dc2626';
         

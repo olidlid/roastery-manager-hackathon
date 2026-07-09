@@ -156,6 +156,10 @@ const PERMISSION_FALLBACKS = {
     greenbean_outbound_add: 'greenbean_arrival_add',
     greenbean_outbound_edit: 'greenbean_arrival_edit',
     greenbean_outbound_delete: 'greenbean_arrival_delete',
+    // Deleting a user is part of managing users — roles that already have
+    // user_management (Admin, Developer) inherit it by default until an admin
+    // toggles the new key explicitly on/off per role.
+    user_delete: 'user_management',
 };
 
 // Effective permission for a specific role object, honouring PERMISSION_FALLBACKS
@@ -320,7 +324,23 @@ function checkAuthentication() {
 async function loadUserProfile(userId) {
     try {
         let { data, error } = await window.supabaseClient.from('profiles').select('*').eq('id', userId).single();
-        if (error) throw error;
+        if (error) {
+            // A genuinely missing profile row (deleted account) must NOT fall
+            // back to a privileged role below — that would let a deleted user
+            // straight back in. PGRST116 = ".single() matched 0 rows"; treat it
+            // as a revoked account and sign out. Any OTHER error is assumed
+            // transient (network) and flows to the graceful fallback so a blip
+            // doesn't lock out a legitimate user.
+            if (error.code === 'PGRST116') {
+                await window.supabaseClient.auth.signOut();
+                currentUser = null;
+                authOverlay.classList.remove('hidden');
+                document.getElementById('app-container').style.display = 'none';
+                alert('Your account is no longer active. Please contact an administrator.');
+                return;
+            }
+            throw error;
+        }
         currentUser = data;
         document.getElementById('user-name-lbl').textContent = currentUser.name;
         document.getElementById('user-role-lbl').textContent = currentUser.role;
