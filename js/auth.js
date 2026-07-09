@@ -148,6 +148,14 @@ const PERMISSION_FALLBACKS = {
     packed_view: 'greenbean_view',
     packed_edit: 'packed_view',
     packed_delete: 'packed_view',
+    // Outbound was added after roles were already seeded in production, so
+    // existing custom_roles rows don't carry these keys. Fall back to the
+    // matching arrival permission so whoever can record beans coming IN can
+    // also record them going OUT by default; admins can override per-key later.
+    greenbean_outbound_view: 'greenbean_arrival_view',
+    greenbean_outbound_add: 'greenbean_arrival_add',
+    greenbean_outbound_edit: 'greenbean_arrival_edit',
+    greenbean_outbound_delete: 'greenbean_arrival_delete',
 };
 
 // Effective permission for a specific role object, honouring PERMISSION_FALLBACKS

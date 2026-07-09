@@ -230,6 +230,12 @@ const PERMISSION_GROUPS = [
         { key: 'greenbean_arrival_edit', label: 'Edit Lot' },
         { key: 'greenbean_arrival_delete', label: 'Delete Lot' }
     ]},
+    { label: '📤 Greenbean — Outbound', keys: [
+        { key: 'greenbean_outbound_view', label: 'View' },
+        { key: 'greenbean_outbound_add', label: 'Add Shipment' },
+        { key: 'greenbean_outbound_edit', label: 'Edit Shipment' },
+        { key: 'greenbean_outbound_delete', label: 'Delete Shipment' }
+    ]},
     { label: '🔥 Roasting — Plans', keys: [
         { key: 'roasting_view', label: 'View' },
         { key: 'roasting_plan_add', label: 'Add Plan' },

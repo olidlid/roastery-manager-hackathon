@@ -113,6 +113,23 @@ CREATE TABLE IF NOT EXISTS public.green_coffee_intake (
     supplier TEXT
 );
 
+-- 5b. Green bean outbound (shipments to other roasteries) — added 2026-07-09
+--     Mirror of green_coffee_intake but deducts stock instead of adding it.
+--     See database/green_coffee_outbound_migration.sql. No price stored.
+CREATE TABLE IF NOT EXISTS public.green_coffee_outbound (
+    id SERIAL PRIMARY KEY,
+    green_coffee_id INTEGER,
+    date DATE,
+    code TEXT,
+    name TEXT,
+    origin TEXT,
+    process TEXT,
+    quantity NUMERIC DEFAULT 0,
+    destination TEXT,                           -- receiving roastery (free text)
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 6. Blend recipes
 CREATE TABLE IF NOT EXISTS public.blend_recipes (
     id SERIAL PRIMARY KEY,

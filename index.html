@@ -489,6 +489,7 @@
                     <div class="tab-headers">
                         <button class="tab-btn active" data-tab="tab-green-inventory" data-i18n="tab_inventory">Greenbean Inventory</button>
                         <button class="tab-btn" data-tab="tab-add-gb-history" data-i18n="tab_add_gb_history">Greenbean Arrival</button>
+                        <button class="tab-btn" data-tab="tab-gb-outbound" data-i18n="tab_gb_outbound">Greenbean Outbound</button>
                     </div>
 
                     <!-- TAB 1: Greenbean Inventory -->
@@ -581,6 +582,48 @@
                                     </thead>
                                     <tbody id="intake-history-table-body">
                                         <!-- Dynamically loaded lot intakes -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 3: Greenbean Outbound (shipments to other roasteries) -->
+                    <div id="tab-gb-outbound" class="tab-content hidden">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="outbound_history_title">Outbound Shipments</h3>
+                                <button id="btn-add-outbound" class="btn btn-primary btn-sm" data-i18n="btn_add_outbound">
+                                    <i class="lucide-plus"></i> Add Shipment
+                                </button>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content"><span data-i18n="col_intake_date">Date</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content"><span data-i18n="col_code">Code</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2">
+                                                <div class="th-content"><span data-i18n="col_name">Coffee Name</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="3">
+                                                <div class="th-content"><span data-i18n="col_origin">Origin</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="4">
+                                                <div class="th-content"><span data-i18n="col_intake_qty">Quantity</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="5">
+                                                <div class="th-content"><span data-i18n="col_destination">Destination</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="outbound-history-table-body">
+                                        <!-- Dynamically loaded outbound shipments -->
                                     </tbody>
                                 </table>
                             </div>
@@ -2231,17 +2274,17 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=1"></script>
+    <script src="js/translations.js?v=2"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
-    <script src="js/auth.js?v=1"></script>
-    <script src="js/greenbean.js?v=1"></script>
+    <script src="js/auth.js?v=2"></script>
+    <script src="js/greenbean.js?v=2"></script>
     <script src="js/roasting.js?v=1"></script>
-    <script src="js/packing.js?v=2"></script>
+    <script src="js/packing.js?v=3"></script>
     <script src="js/sales.js?v=1"></script>
-    <script src="js/settings.js?v=1"></script>
-    <script src="js/app.js?v=48"></script>
+    <script src="js/settings.js?v=2"></script>
+    <script src="js/app.js?v=49"></script>
 </body>
 </html>

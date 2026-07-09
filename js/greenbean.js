@@ -391,6 +391,245 @@ async function deleteIntake(deleteId) {
     }
 }
 
+// ==========================================================================
+// GREENBEAN OUTBOUND — shipments of green beans OUT to other roasteries.
+// Mirror of the intake/arrival flow but DEDUCTS stock instead of adding it.
+// No price is tracked (production team only records physical in/out).
+// ==========================================================================
+async function loadOutboundHistory() {
+    const { data: history } = await fetchData('green_coffee_outbound');
+    const tbody = document.getElementById('outbound-history-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (!history || history.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center-muted">${window.t ? window.t("msg_no_outbounds") : "No outbound shipments yet."}</td></tr>`;
+        return;
+    }
+
+    const sorted = [...history].sort((a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id);
+
+    sorted.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${item.date}</td>
+            <td><code>${item.code || '-'}</code></td>
+            <td><strong>${item.name}</strong></td>
+            <td>${item.origin || '-'}</td>
+            <td><strong>${parseFloat(item.quantity).toFixed(1)} ${companySettings.weight_unit}</strong></td>
+            <td>${item.destination || '-'}</td>
+            <td>
+                ${hasPermission('greenbean_outbound_edit') ? `<button class="btn btn-secondary btn-sm btn-edit-outbound" data-id="${item.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>` : ''}
+                ${hasPermission('greenbean_outbound_delete') ? `<button class="btn btn-danger btn-sm btn-delete-outbound" data-id="${item.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    document.querySelectorAll('.btn-edit-outbound').forEach(btn => {
+        btn.addEventListener('click', () => openOutboundModal(parseInt(btn.getAttribute('data-id'))));
+    });
+    document.querySelectorAll('.btn-delete-outbound').forEach(btn => {
+        btn.addEventListener('click', () => deleteOutbound(parseInt(btn.getAttribute('data-id'))));
+    });
+
+    applyFiltersForTable(document.querySelector('#tab-gb-outbound table'));
+}
+
+async function openOutboundModal(editId = null) {
+    const [
+        { data: inventory },
+        { data: history }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('green_coffee_outbound')
+    ]);
+
+    let outItem = null;
+    if (editId) outItem = (history || []).find(item => item.id === editId);
+
+    // Ship only from existing stock — a <select> of current inventory (unlike
+    // intake's free-text create, you can't ship a coffee you don't have).
+    // On edit, the shipped qty was already deducted, so add it back into the
+    // displayed available figure for its own row.
+    const coffeeOpts = (inventory || []).map(g => {
+        const selected = outItem && outItem.green_coffee_id === g.id ? 'selected'
+            : (outItem && !outItem.green_coffee_id && outItem.name === g.name && outItem.code === g.code ? 'selected' : '');
+        return `<option value="${g.id}" data-stock="${g.stock_kg}" data-code="${g.code || ''}" data-origin="${g.origin || ''}" data-process="${g.process || ''}" ${selected}>${g.name}${g.code ? ` (${g.code})` : ''} — ${parseFloat(g.stock_kg || 0).toFixed(1)} ${companySettings.weight_unit}</option>`;
+    }).join('');
+
+    const uniqueDest = [...new Set((history || []).map(h => h.destination).filter(Boolean))];
+    const destOpts = uniqueDest.map(d => `<option value="${d}"></option>`).join('');
+
+    const defaultDate = outItem ? outItem.date : new Date().toISOString().split('T')[0];
+    const defaultQty = outItem ? parseFloat(outItem.quantity) : '';
+    const defaultDest = outItem ? (outItem.destination || '') : '';
+    const defaultNotes = outItem ? (outItem.notes || '') : '';
+
+    const html = `
+        <form id="modal-outbound-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="lbl_ship_date">Shipment Date</label>
+                    <input type="date" id="m-out-date" class="form-control" value="${defaultDate}" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="col_destination">Destination Roastery</label>
+                    <input type="text" id="m-out-dest" list="out-dest-list" class="form-control" value="${defaultDest}" placeholder="e.g. Sumatra Roastery Co." required autocomplete="off">
+                    <datalist id="out-dest-list">${destOpts}</datalist>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label" data-i18n="lbl_select_coffee">Coffee (from stock)</label>
+                <select id="m-out-coffee" class="form-control" required>
+                    <option value="" disabled ${outItem ? '' : 'selected'}>-- Select Coffee --</option>
+                    ${coffeeOpts}
+                </select>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="col_intake_qty">Quantity (kg)</label>
+                    <input type="number" step="0.1" id="m-out-qty" class="form-control" value="${defaultQty}" min="0.1" required>
+                    <div id="m-out-stock-hint" class="text-muted-xs" style="margin-top:4px;"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="lbl_notes">Notes</label>
+                    <input type="text" id="m-out-notes" class="form-control" value="${defaultNotes}" placeholder="optional">
+                </div>
+            </div>
+            <div class="modal-footer-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                <button type="submit" class="btn btn-primary">${editId ? (window.t ? window.t('btn_save_changes') : 'Save Changes') : (window.t ? window.t('btn_add_outbound') : 'Add Shipment')}</button>
+            </div>
+        </form>
+    `;
+
+    openModal(editId ? (window.t ? window.t('outbound_edit_title') : 'Edit Outbound Shipment') : (window.t ? window.t('outbound_add_title') : 'Ship Green Beans Out'), html);
+
+    const coffeeSelect = document.getElementById('m-out-coffee');
+    const qtyInput = document.getElementById('m-out-qty');
+    const stockHint = document.getElementById('m-out-stock-hint');
+
+    // Available = current stock, plus this shipment's own qty when editing
+    // (it was already deducted from stock when originally saved).
+    function currentAvailable() {
+        const opt = coffeeSelect.selectedOptions[0];
+        if (!opt || !opt.value) return null;
+        let avail = parseFloat(opt.getAttribute('data-stock')) || 0;
+        if (outItem && parseInt(opt.value) === outItem.green_coffee_id) avail += parseFloat(outItem.quantity) || 0;
+        else if (outItem && !outItem.green_coffee_id && opt.textContent.startsWith(outItem.name)) avail += parseFloat(outItem.quantity) || 0;
+        return avail;
+    }
+    function refreshHint() {
+        const avail = currentAvailable();
+        if (avail === null) { stockHint.textContent = ''; return; }
+        const qty = parseFloat(qtyInput.value) || 0;
+        const over = qty > avail;
+        stockHint.textContent = `${window.t ? window.t('lbl_available') : 'Available'}: ${avail.toFixed(1)} ${companySettings.weight_unit}` + (over ? ` — ${window.t ? window.t('alert_insufficient_gb').replace('\n',' ') : 'Insufficient stock!'}` : '');
+        stockHint.style.color = over ? 'var(--danger)' : 'var(--text-muted)';
+    }
+    coffeeSelect.addEventListener('change', refreshHint);
+    qtyInput.addEventListener('input', refreshHint);
+    refreshHint();
+
+    document.getElementById('modal-outbound-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const opt = coffeeSelect.selectedOptions[0];
+        if (!opt || !opt.value) return;
+        const coffeeId = parseInt(opt.value);
+        const bean = (inventory || []).find(g => g.id === coffeeId);
+        if (!bean) return;
+
+        const date = document.getElementById('m-out-date').value;
+        const quantity = parseFloat(qtyInput.value);
+        const destination = document.getElementById('m-out-dest').value.trim();
+        const notes = document.getElementById('m-out-notes').value.trim();
+
+        const avail = currentAvailable();
+        if (quantity > avail) {
+            const proceed = await showWarningModal(
+                (window.t ? window.t('msg_confirm_ship_over') : 'Shipping more than available stock. Continue anyway?'),
+                true
+            );
+            if (!proceed) return;
+        }
+
+        // On edit, first restore the previously-shipped qty to its old bean so
+        // the net stock change reflects only the new values.
+        if (editId && outItem) {
+            const oldBean = (inventory || []).find(g =>
+                (outItem.green_coffee_id && g.id === outItem.green_coffee_id) ||
+                (!outItem.green_coffee_id && g.name === outItem.name && g.code === outItem.code)
+            );
+            if (oldBean) {
+                oldBean.stock_kg = parseFloat(oldBean.stock_kg || 0) + parseFloat(outItem.quantity || 0);
+                await saveData('green_coffee', oldBean);
+            }
+        }
+
+        // Deduct from the (possibly restored) chosen bean.
+        const freshBean = (inventory || []).find(g => g.id === coffeeId) || bean;
+        freshBean.stock_kg = Math.max(0, parseFloat(freshBean.stock_kg || 0) - quantity);
+        await saveData('green_coffee', freshBean);
+
+        const record = {
+            id: editId || undefined,
+            green_coffee_id: coffeeId,
+            date,
+            code: bean.code || null,
+            name: bean.name,
+            origin: bean.origin || null,
+            process: bean.process || null,
+            quantity,
+            destination,
+            notes: notes || null
+        };
+        const { error } = await saveData('green_coffee_outbound', record);
+        if (error) {
+            alert((window.t ? window.t('alert_save_failed').replace('{msg}', error.message) : 'Save failed: ' + error.message));
+            return;
+        }
+
+        modalContainer.classList.add('hidden');
+        loadOutboundHistory();
+        loadGreenbeanInventory();
+        scheduleDashboardRefresh();
+    });
+}
+
+async function deleteOutbound(deleteId) {
+    if (!(await showDeleteConfirmModal('this outbound shipment'))) return;
+    const [
+        { data: history },
+        { data: inventory }
+    ] = await Promise.all([
+        fetchData('green_coffee_outbound'),
+        fetchData('green_coffee')
+    ]);
+    const item = (history || []).find(i => i.id === deleteId);
+    if (!item) return;
+
+    // Deleting an outbound record means the beans never left — add the qty
+    // back to the matching inventory row.
+    const match = (inventory || []).find(g =>
+        (item.green_coffee_id && g.id === item.green_coffee_id) ||
+        (!item.green_coffee_id && g.name === item.name && g.code === item.code)
+    );
+    if (match) {
+        match.stock_kg = parseFloat(match.stock_kg || 0) + parseFloat(item.quantity || 0);
+        await saveData('green_coffee', match);
+    }
+
+    const { error } = await deleteData('green_coffee_outbound', deleteId);
+    if (error) {
+        alert(window.t("alert_delete_failed").replace("{msg}", error.message));
+    } else {
+        loadOutboundHistory();
+        loadGreenbeanInventory();
+        scheduleDashboardRefresh();
+    }
+}
+
 // --- modal: ADD / EDIT GREENBEAN ---
 async function openGreenbeanModal(id = null) {
     const { data: inventory } = await fetchData('green_coffee');
