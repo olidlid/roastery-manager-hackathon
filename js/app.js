@@ -466,6 +466,51 @@ function closeMobileSidebar() {
     }
 })();
 
+const LAST_SECTION_KEY = 'last_visited_section';
+const LAST_TAB_PREFIX = 'last_tab_';
+
+function saveLastTab(sectionId, tabId) {
+    try { localStorage.setItem(LAST_TAB_PREFIX + sectionId, tabId); } catch (e) {}
+}
+
+// Applies whichever tab was last open in this section (if any) BEFORE
+// loadSectionData() reads `.tab-btn.active` to decide what to fetch — so a
+// refresh lands back on the same tab instead of always the first one.
+// Most sections use data-tab + .tab-content; Packing alone uses
+// data-target + .packing-tab-content, so both are tried.
+function restoreLastTab(sectionId) {
+    let savedTab;
+    try { savedTab = localStorage.getItem(LAST_TAB_PREFIX + sectionId); } catch (e) { return; }
+    if (!savedTab) return;
+
+    let targetBtn = document.querySelector(`#${sectionId} .tab-btn[data-tab="${savedTab}"]`);
+    let contentClass = '.tab-content';
+    let attr = 'data-tab';
+    if (!targetBtn) {
+        targetBtn = document.querySelector(`#${sectionId} .tab-btn[data-target="${savedTab}"]`);
+        contentClass = '.packing-tab-content';
+        attr = 'data-target';
+    }
+    if (!targetBtn) return; // saved tab no longer exists (e.g. renamed) — keep default
+
+    document.querySelectorAll(`#${sectionId} .tab-btn`).forEach(b => b.classList.remove('active'));
+    targetBtn.classList.add('active');
+    document.querySelectorAll(`#${sectionId} ${contentClass}`).forEach(c => c.classList.toggle('hidden', c.id !== savedTab));
+
+    // Packing's tab buttons carry their own inline active-color styling
+    // (set/cleared by its click handler) instead of relying on CSS for
+    // .active — restoring state here has to mirror that or the highlighted
+    // tab won't visually match which panel is actually showing.
+    if (attr === 'data-target') {
+        document.querySelectorAll(`#${sectionId} .tab-btn`).forEach(b => {
+            b.style.color = 'var(--text-secondary)';
+            b.style.borderBottomColor = 'transparent';
+        });
+        targetBtn.style.color = 'var(--primary)';
+        targetBtn.style.borderBottomColor = 'var(--primary)';
+    }
+}
+
 function navigateTo(sectionId) {
     closeMobileSidebar();
     
@@ -529,6 +574,8 @@ function navigateTo(sectionId) {
     const mobileTitle = document.getElementById('mobile-topbar-title');
     if (mobileTitle) mobileTitle.textContent = activePageTitle.textContent;
 
+    try { localStorage.setItem(LAST_SECTION_KEY, sectionId); } catch (e) {}
+    restoreLastTab(sectionId);
     loadSectionData(sectionId);
 }
 
@@ -591,6 +638,7 @@ greenbeanTabBtns.forEach(btn => {
             }
         });
         
+        saveLastTab('sec-greenbean', targetTab);
         loadTabSpecificData(targetTab);
     });
 });
@@ -614,6 +662,7 @@ roastingTabBtns.forEach(btn => {
             }
         });
         
+        saveLastTab('sec-roasting', targetTab);
         loadRoastingTabSpecificData(targetTab);
     });
 });
@@ -637,6 +686,7 @@ settingTabBtns.forEach(btn => {
             }
         });
         
+        saveLastTab('sec-settings', targetTab);
         loadSettingTabSpecificData(targetTab);
     });
 });
@@ -662,6 +712,7 @@ handoverTabBtns.forEach(btn => {
             }
         });
         
+        saveLastTab('sec-handover', targetTab);
         await loadHandoverTabSpecificData(targetTab);
     });
 });
@@ -685,6 +736,7 @@ reportsTabBtns.forEach(btn => {
             }
         });
         
+        saveLastTab('sec-reports', targetTab);
         await loadReportsTabSpecificData(targetTab);
     });
 });
@@ -736,7 +788,21 @@ async function loadSectionData(sectionId) {
             await loadPackedCoffeeSection();
             break;
         case 'sec-packing':
+            // loadPackingSection() always (re)builds the Daily Packing form
+            // regardless of which tab is active — it doesn't load the other
+            // 3 tabs' data itself (that's normally only triggered by their
+            // click handler). If a restored tab left one of them active,
+            // load its data too so it's not showing empty.
             await loadPackingSection();
+            const activePackingTabBtn = document.querySelector('#sec-packing .tab-btn.active');
+            const activePackingTarget = activePackingTabBtn ? activePackingTabBtn.getAttribute('data-target') : null;
+            if (activePackingTarget === 'tab-order-request') {
+                await loadPackingRequestsSection();
+            } else if (activePackingTarget === 'tab-packing-history') {
+                await loadPackingHistorySection();
+            } else if (activePackingTarget === 'tab-packing-records') {
+                await loadPackingRecordsTable();
+            }
             break;
         case 'sec-customers':
             await loadCustomersSection();
@@ -3436,7 +3502,19 @@ closeFullscreenChart = function() {
     initTableFilters();
     initRoastingBatchPagination();
     initHandoverPagination();
-    navigateTo('sec-dashboard'); // start on dashboard
+
+    // Resume on whatever section was open before the last refresh, instead
+    // of always resetting to Dashboard. Falls back to Dashboard if nothing
+    // was saved yet, or if the saved id no longer exists (e.g. after a
+    // section was renamed/removed in an update). navigateTo()'s own
+    // permission check still applies, so a role change since last visit
+    // correctly redirects rather than landing on a now-forbidden section.
+    let startSection = 'sec-dashboard';
+    try {
+        const savedSection = localStorage.getItem(LAST_SECTION_KEY);
+        if (savedSection && document.getElementById(savedSection)) startSection = savedSection;
+    } catch (e) {}
+    navigateTo(startSection);
 })();
 
 

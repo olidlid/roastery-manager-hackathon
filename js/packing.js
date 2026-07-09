@@ -32,7 +32,9 @@ async function loadPackingSection() {
                 // Show target
                 const target = document.getElementById(btn.getAttribute('data-target'));
                 if (target) target.classList.remove('hidden');
-                
+
+                saveLastTab('sec-packing', btn.getAttribute('data-target'));
+
                 // If it's the requests tab, load data
                 if (btn.getAttribute('data-target') === 'tab-order-request') {
                     loadPackingRequestsSection();
