@@ -722,12 +722,23 @@ function addPackingRow(bulkList, greenbeans, recipes, machines, packagingSizes, 
     const rowsContainer = document.getElementById('packing-sheet-rows');
     if (!rowsContainer) return;
     
+    // If two entries share the exact same name (e.g. a duplicate greenbean
+    // record created by mistake), the dropdown alone can't tell them apart —
+    // one may have all the roast/bulk-stock history and the other none, so
+    // picking the wrong one silently shows 0 stock. Append the short code to
+    // disambiguate only when a name collision actually exists.
+    const singleNameCounts = {};
+    (greenbeans || []).forEach(gb => { singleNameCounts[gb.name] = (singleNameCounts[gb.name] || 0) + 1; });
+    const blendNameCounts = {};
+    (recipes || []).forEach(r => { blendNameCounts[r.name] = (blendNameCounts[r.name] || 0) + 1; });
+
     let singleHtml = '';
     (greenbeans || []).forEach(gb => {
         const val = `Single-${gb.id}`;
+        const label = singleNameCounts[gb.name] > 1 && gb.code ? `${gb.name} (${gb.code})` : gb.name;
         singleHtml += `
             <option value="${val}" ${selectedCoffeeId && selectedCoffeeId.toString() === val ? 'selected' : ''}>
-                ${gb.name}
+                ${label}
             </option>
         `;
     });
@@ -735,9 +746,10 @@ function addPackingRow(bulkList, greenbeans, recipes, machines, packagingSizes, 
     let blendHtml = '';
     (recipes || []).forEach(r => {
         const val = `Blend-${r.id}`;
+        const label = blendNameCounts[r.name] > 1 && r.code ? `${r.name} (${r.code})` : r.name;
         blendHtml += `
             <option value="${val}" ${selectedCoffeeId && selectedCoffeeId.toString() === val ? 'selected' : ''}>
-                ${r.name}
+                ${label}
             </option>
         `;
     });
