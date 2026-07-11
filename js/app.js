@@ -3795,6 +3795,7 @@ const BARCODE_PRINT_PRESETS = {
     'letter-3col':  { label: 'Letter — 3 labels per row',               pageSize: 'letter',        margin: '10mm', columns: 3, barW: 1.2, barH: 40, fontSize: 9,  pagePerLabel: false },
     'sticker-100x50': { label: 'Sticker roll 100×50mm — 1 per page',    pageSize: '100mm 50mm',    margin: '3mm',  columns: 1, barW: 2,   barH: 45, fontSize: 12, pagePerLabel: true },
     'sticker-60x40':  { label: 'Sticker roll 60×40mm — 1 per page',     pageSize: '60mm 40mm',     margin: '2mm',  columns: 1, barW: 1.3, barH: 28, fontSize: 8,  pagePerLabel: true },
+    'sticker-50x25':  { label: 'Sticker roll 50×25mm — 1 per page',     pageSize: '50mm 25mm',     margin: '1mm',  columns: 1, barW: 1.0, barH: 16, fontSize: 6,  pagePerLabel: true },
 };
 
 function openBarcodePrintSizeModal() {
