@@ -19,7 +19,7 @@ async function loadGreenbeanInventory() {
         return;
     }
 
-    const sortedInv = [...inventory].sort((a, b) => b.id - a.id);
+    const sortedInv = [...inventory].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     sortedInv.forEach(bean => {
         const tr = document.createElement('tr');

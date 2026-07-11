@@ -119,8 +119,8 @@ async function loadRecipeProductionPotential() {
         return;
     }
 
-    // Sort by potential yield descending
-    list.sort((a, b) => b.potentialYield - a.potentialYield);
+    // Sort alphabetically by coffee name
+    list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     list.forEach(item => {
         const tr = document.createElement('tr');
@@ -548,7 +548,7 @@ async function loadBlendRecipes() {
         return;
     }
 
-    const sortedRecipes = [...recipes].sort((a, b) => b.id - a.id);
+    const sortedRecipes = [...recipes].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     sortedRecipes.forEach(recipe => {
         // Find ingredients
