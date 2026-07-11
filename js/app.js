@@ -3785,7 +3785,44 @@ function printSingleBarcode(barcodeValue, coffeeName, machineName) {
     printWin.document.close();
 }
 
-async function printAllBarcodes() {
+// Presets covering both "full sheet, multi-label grid" printers (A4/Letter)
+// and single-label thermal/sticker roll printers (one label per physical
+// page so the roll advances correctly). barW/barH/fontSize are tuned per
+// preset so the barcode + text stay legible at that label's physical size.
+const BARCODE_PRINT_PRESETS = {
+    'a4-3col':      { label: 'A4 — 3 labels per row (standard)',        pageSize: 'A4',            margin: '10mm', columns: 3, barW: 1.2, barH: 40, fontSize: 9,  pagePerLabel: false },
+    'a4-2col':      { label: 'A4 — 2 labels per row (larger)',          pageSize: 'A4',            margin: '10mm', columns: 2, barW: 1.6, barH: 55, fontSize: 12, pagePerLabel: false },
+    'letter-3col':  { label: 'Letter — 3 labels per row',               pageSize: 'letter',        margin: '10mm', columns: 3, barW: 1.2, barH: 40, fontSize: 9,  pagePerLabel: false },
+    'sticker-100x50': { label: 'Sticker roll 100×50mm — 1 per page',    pageSize: '100mm 50mm',    margin: '3mm',  columns: 1, barW: 2,   barH: 45, fontSize: 12, pagePerLabel: true },
+    'sticker-60x40':  { label: 'Sticker roll 60×40mm — 1 per page',     pageSize: '60mm 40mm',     margin: '2mm',  columns: 1, barW: 1.3, barH: 28, fontSize: 8,  pagePerLabel: true },
+};
+
+function openBarcodePrintSizeModal() {
+    const optionsHtml = Object.entries(BARCODE_PRINT_PRESETS).map(([key, p]) => `<option value="${key}">${p.label}</option>`).join('');
+    const html = `
+        <form id="modal-barcode-size-form">
+            <div class="form-group">
+                <label class="form-label">Paper / Label Size</label>
+                <select id="m-barcode-size" class="form-control" required>${optionsHtml}</select>
+                <p class="text-muted-xs" style="margin-top:8px;">Pick whichever matches what's loaded in your printer — a full sheet (A4/Letter) prints several labels per page, a sticker roll size prints one label per page so the roll advances correctly.</p>
+            </div>
+            <div class="modal-footer-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Print</button>
+            </div>
+        </form>
+    `;
+    openModal('🖨️ Print All Barcode Labels', html);
+    document.getElementById('modal-barcode-size-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const sizeKey = document.getElementById('m-barcode-size').value;
+        document.getElementById('btn-close-modal').click();
+        printAllBarcodes(sizeKey);
+    });
+}
+
+async function printAllBarcodes(sizeKey = 'a4-3col') {
+    const preset = BARCODE_PRINT_PRESETS[sizeKey] || BARCODE_PRINT_PRESETS['a4-3col'];
     const [
         { data: greenbeans },
         { data: recipes },
@@ -3795,14 +3832,14 @@ async function printAllBarcodes() {
         fetchData('blend_recipes'),
         fetchData('machines')
     ]);
-    
+
     if (!machines || machines.length === 0) {
         alert('No machines configured.');
         return;
     }
-    
+
     let allLabels = '';
-    
+
     // Singles
     (greenbeans || []).forEach(g => {
         (machines || []).forEach(m => {
@@ -3816,7 +3853,7 @@ async function printAllBarcodes() {
             `;
         });
     });
-    
+
     // Blends
     (recipes || []).forEach(r => {
         (machines || []).forEach(m => {
@@ -3830,24 +3867,33 @@ async function printAllBarcodes() {
             `;
         });
     });
-    
+
+    // In single-label-per-page mode each item IS the page, so it's sized to
+    // fill it (and centered) rather than sitting in a bordered grid cell;
+    // page-break-after on all-but-the-last avoids a trailing blank page.
+    const itemStyle = preset.pagePerLabel
+        ? 'text-align: center; page-break-inside: avoid; display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100vh; box-sizing:border-box;'
+        : 'text-align: center; border: 1px dashed #ccc; padding: 8px; page-break-inside: avoid;';
+    const pageBreakRule = preset.pagePerLabel ? '.label-item:not(:last-child) { page-break-after: always; }' : '';
+
     const printWin = window.open('', '_blank', 'width=800,height=600');
     printWin.document.write(`
         <html><head><title>All Barcode Labels</title>
         <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
         <style>
-            @page { size: A4; margin: 10mm; }
-            body { margin: 0; padding: 10mm; font-family: Arial, sans-serif; }
-            .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-            .label-item { text-align: center; border: 1px dashed #ccc; padding: 8px; page-break-inside: avoid; }
-            .name { font-weight: 700; font-size: 11px; margin-top: 3px; }
-            .machine { font-size: 10px; color: #666; }
+            @page { size: ${preset.pageSize}; margin: ${preset.margin}; }
+            body { margin: 0; padding: ${preset.pagePerLabel ? '0' : preset.margin}; font-family: Arial, sans-serif; }
+            .grid { display: grid; grid-template-columns: repeat(${preset.columns}, 1fr); gap: 8px; }
+            .label-item { ${itemStyle} }
+            ${pageBreakRule}
+            .name { font-weight: 700; font-size: ${preset.fontSize + 2}px; margin-top: 3px; }
+            .machine { font-size: ${preset.fontSize}px; color: #666; }
             svg { max-width: 100%; }
         </style></head><body>
         <div class="grid">${allLabels}</div>
         <script>
             document.querySelectorAll('.bc').forEach(el => {
-                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.2, height: 40, displayValue: true, fontSize: 9, margin: 3 });
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: ${preset.barW}, height: ${preset.barH}, displayValue: true, fontSize: ${preset.fontSize}, margin: 3 });
             });
             setTimeout(() => { window.print(); }, 800);
         <\/script>
