@@ -176,6 +176,14 @@ button, input, select, textarea {
     to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+/* Referenced by the bottom-right scan/save toasts (js/app.js, js/roasting.js)
+   as `animation: fadeIn 0.3s`. Was missing entirely before — the animation
+   silently no-op'd (toasts still appeared, just without the fade-in). */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 /* Buttons in a saving state: dim + a spinner replaces/joins the label so the
    exact control the user pressed shows feedback, not just a global toast. */
 button.is-saving {

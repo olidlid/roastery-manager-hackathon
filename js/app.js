@@ -3634,20 +3634,49 @@ closeFullscreenChart = function() {
 // armed after the prefix already matches, so normal manual typing elsewhere
 // (which is both slower and essentially never starts with 'RMP:') can't
 // accidentally trigger it.
+// A valid scan still has to wait on openQuickRoastModal's 5 parallel
+// fetchData() calls (green_coffee/blend_recipes/machines/roast_batches/
+// blend_ingredients) before anything appears on screen — on a slow or
+// congested connection that gap is long enough that operators on the floor
+// perceive the scan as having done nothing, and scan again. Two fixes below:
+// an instant toast the moment the scan is validated (decoupled from how long
+// the modal takes to actually populate), and a scanInProgress guard so an
+// impatient re-scan during that gap doesn't kick off a second overlapping
+// fetch+modal-open race.
 (function() {
     let barcodeBuffer = '';
     let lastKeyTime = 0;
     let idleCommitTimer = null;
+    let scanInProgress = false;
     const BARCODE_MIN_LENGTH = 8; // minimum barcode length
     const BARCODE_IDLE_COMMIT_MS = 80; // no-terminator fallback: commit after this much silence
+
+    function showScanToast(text, bg) {
+        const toast = document.createElement('div');
+        toast.style.cssText = `position:fixed; bottom:20px; right:20px; background:${bg}; color:white; padding:12px 20px; border-radius:8px; font-weight:700; z-index:99999; box-shadow:0 4px 12px rgba(0,0,0,0.3); animation: fadeIn 0.3s;`;
+        toast.textContent = text;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    }
 
     function commitBuffer() {
         const candidate = barcodeBuffer;
         barcodeBuffer = '';
         clearTimeout(idleCommitTimer);
-        if (candidate.length >= BARCODE_MIN_LENGTH && candidate.startsWith('RMP:')) {
-            handleBarcodeScan(candidate);
+        if (candidate.length < BARCODE_MIN_LENGTH || !candidate.startsWith('RMP:')) return;
+
+        if (scanInProgress) {
+            showScanToast('⏳ Still loading the previous scan — please wait...', '#d97706');
+            return;
         }
+        scanInProgress = true;
+        showScanToast('📷 Barcode detected — opening...', '#0369a1');
+        Promise.resolve(handleBarcodeScan(candidate))
+            .catch(err => {
+                console.error('Barcode scan handling failed:', err);
+                showScanToast('⚠️ Failed to open scan form — see console.', '#dc2626');
+            })
+            .finally(() => { scanInProgress = false; });
     }
 
     document.addEventListener('keydown', (e) => {
