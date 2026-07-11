@@ -681,13 +681,17 @@ async function openViewRecipeModal(id) {
 async function openRecipeModal(id = null) {
     const [
         { data: machines },
-        { data: greenbeans },
+        { data: greenbeansRaw },
         { data: ingredients }
     ] = await Promise.all([
         fetchData('machines'),
         fetchData('green_coffee'),
         fetchData('blend_ingredients')
     ]);
+    // Sorted once here so both the ingredient dropdown (built per-row in
+    // addComponentRow below) and the "default first coffee" fallback stay
+    // alphabetical/consistent.
+    const greenbeans = [...(greenbeansRaw || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     const defaultMachine = machines[0];
     const defaultCapacity = defaultMachine ? parseFloat(defaultMachine.ideal_batch_size_g) || 5000 : 5000;
@@ -1216,9 +1220,9 @@ async function openRoastPlanModal(editId = null) {
     const todayStr = new Date().toISOString().split('T')[0];
     const planDateVal = existingPlan ? existingPlan.plan_date : todayStr;
 
-    // Generate Select Options
-    const gbOpts = greenbeans.map(g => `<option value="Single-${g.id}">${g.name}</option>`).join('');
-    const recOpts = recipes.map(r => `<option value="Blend-${r.id}">${r.name}</option>`).join('');
+    // Generate Select Options (alphabetical by coffee name)
+    const gbOpts = [...greenbeans].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(g => `<option value="Single-${g.id}">${g.name}</option>`).join('');
+    const recOpts = [...recipes].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(r => `<option value="Blend-${r.id}">${r.name}</option>`).join('');
     const machOpts = machines.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 
     const html = `
@@ -2098,8 +2102,8 @@ async function openRoastBatchModal(plan = null, editId = null) {
         existingBatch = batches.find(b => b.id === editId);
     }
 
-    const gbSelectOpts = greenbeans.map(g => `<option value="Single-${g.id}">${g.name}</option>`).join('');
-    const recSelectOpts = recipes.map(r => `<option value="Blend-${r.id}">${r.name}</option>`).join('');
+    const gbSelectOpts = [...greenbeans].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(g => `<option value="Single-${g.id}">${g.name}</option>`).join('');
+    const recSelectOpts = [...recipes].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(r => `<option value="Blend-${r.id}">${r.name}</option>`).join('');
     const machOpts = machines.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 
     // Check if this is a test batch being edited (for conditional Approved field)
@@ -2914,8 +2918,8 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
     if (machine && machine.ideal_batch_size_g) defaultGreenWeight = machine.ideal_batch_size_g;
     
     // Build same form as openBatchLogModal but auto-filled
-    const gbSelectOpts = (greenbeans || []).map(g => `<option value="Single-${g.id}" ${g.id === coffeeId && coffeeType === 'Single' ? 'selected' : ''}>${g.name}</option>`).join('');
-    const recSelectOpts = (recipes || []).map(r => `<option value="Blend-${r.id}" ${r.id === coffeeId && coffeeType === 'Blend' ? 'selected' : ''}>${r.name}</option>`).join('');
+    const gbSelectOpts = [...(greenbeans || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(g => `<option value="Single-${g.id}" ${g.id === coffeeId && coffeeType === 'Single' ? 'selected' : ''}>${g.name}</option>`).join('');
+    const recSelectOpts = [...(recipes || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(r => `<option value="Blend-${r.id}" ${r.id === coffeeId && coffeeType === 'Blend' ? 'selected' : ''}>${r.name}</option>`).join('');
     const machOpts = (machines || []).map(m => `<option value="${m.id}" ${m.id === machineId ? 'selected' : ''}>${m.name}</option>`).join('');
     
     const todayStr = new Date().toISOString().split('T')[0];

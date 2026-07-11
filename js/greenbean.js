@@ -227,7 +227,7 @@ async function openIntakeModal(editId = null) {
             (!intakeItem.green_coffee_id && g.name.toLowerCase() === (intakeItem.name || '').toLowerCase() && (g.code || '').toLowerCase() === (intakeItem.code || '').toLowerCase()))
         : null;
 
-    const coffeeOptionsHtml = inventory.map(g => {
+    const coffeeOptionsHtml = [...inventory].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(g => {
         const selected = linkedBean && linkedBean.id === g.id ? 'selected' : '';
         const stockLabel = `${parseFloat(g.stock_kg || 0).toFixed(1)} ${companySettings.weight_unit}`;
         return `<option value="${g.id}" data-code="${g.code || ''}" data-origin="${g.origin || ''}" data-process="${g.process || ''}" data-supplier="${g.supplier || ''}" ${selected}>${g.name} — ${g.code || 'no code'} — ${stockLabel} in stock</option>`;
@@ -516,7 +516,7 @@ async function openOutboundModal(editId = null) {
     // intake's free-text create, you can't ship a coffee you don't have).
     // On edit, the shipped qty was already deducted, so add it back into the
     // displayed available figure for its own row.
-    const coffeeOpts = (inventory || []).map(g => {
+    const coffeeOpts = [...(inventory || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(g => {
         const selected = outItem && outItem.green_coffee_id === g.id ? 'selected'
             : (outItem && !outItem.green_coffee_id && outItem.name === g.name && outItem.code === g.code ? 'selected' : '');
         return `<option value="${g.id}" data-stock="${g.stock_kg}" data-code="${g.code || ''}" data-origin="${g.origin || ''}" data-process="${g.process || ''}" ${selected}>${g.name}${g.code ? ` (${g.code})` : ''} — ${parseFloat(g.stock_kg || 0).toFixed(1)} ${companySettings.weight_unit}</option>`;

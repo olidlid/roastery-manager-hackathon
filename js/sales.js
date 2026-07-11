@@ -1437,10 +1437,10 @@ async function openSalesRequestModal(orderId = null) {
     const blendLbl = window.t ? window.t('opt_req_blend') : 'Blend';
     let coffeeOptionsHtml = `<option value="" disabled selected>-- Select Item --</option>`;
     coffeeOptionsHtml += `<optgroup label="${singleLbl}">`;
-    coffeeOptionsHtml += (greenbeans || []).map(g => `<option value="Single-${g.id}">${g.name}</option>`).join('');
+    coffeeOptionsHtml += [...(greenbeans || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(g => `<option value="Single-${g.id}">${g.name}</option>`).join('');
     coffeeOptionsHtml += `</optgroup>`;
     coffeeOptionsHtml += `<optgroup label="${blendLbl}">`;
-    coffeeOptionsHtml += (recipes || []).map(r => `<option value="Blend-${r.id}">${r.name}</option>`).join('');
+    coffeeOptionsHtml += [...(recipes || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(r => `<option value="Blend-${r.id}">${r.name}</option>`).join('');
     coffeeOptionsHtml += `</optgroup>`;
 
     // Machine options
