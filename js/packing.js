@@ -733,14 +733,14 @@ async function dispatchOrder(orderId) {
 }
 
 // Builds a short, deterministic lot code for a bulk item on a given date:
-// LOT-{coffee code}-{machine code}-{MMDDYY}. Deliberately doesn't start with
-// 'RMP:' so it never collides with the global quick-roast-log scanner
-// listener in app.js (which only reacts to that exact prefix). This is the
-// original 3-segment format — a "batch" sequence suffix was tried and
-// reverted per user feedback (they meant "production lot" identity, not a
-// separate roast-batch counter); only the date's digit order changed
-// (YYYYMMDD → MMDDYY).
-function buildLotCode(bulk, machines, greenbeans, recipes, dateStr) {
+// LOT-{coffee code}-{machine code}-{MMDDYY}-{lot number}. Deliberately
+// doesn't start with 'RMP:' so it never collides with the global
+// quick-roast-log scanner listener in app.js (which only reacts to that
+// exact prefix). The trailing lot number is how many production_lots rows
+// already exist for this exact coffee+machine combination (across all
+// dates) — a running "Lot #N of this coffee on this machine" count, not a
+// roast-batch sequence (that was tried and reverted per feedback).
+function buildLotCode(bulk, machines, greenbeans, recipes, dateStr, lotNumber) {
     const sanitize = (s) => (s || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'X';
     const machine = (machines || []).find(m => m.id === bulk.machine_id);
     const machineCode = machine ? (machine.code || machine.name) : 'M';
@@ -757,7 +757,7 @@ function buildLotCode(bulk, machines, greenbeans, recipes, dateStr) {
     const [y, m, d] = dateStr.split('-');
     const mmddyy = `${m}${d}${y.slice(2)}`;
 
-    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}-${mmddyy}`;
+    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}-${mmddyy}-${lotNumber}`;
 }
 
 // One production_lots row per (bulk item, day) — reuses today's lot if one
@@ -779,8 +779,14 @@ async function getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roa
         .sort((a, b) => new Date(b.roast_date || 0) - new Date(a.roast_date || 0) || b.id - a.id);
     const latestBatch = matchingBatches[0] || null;
 
+    const sameCoffeeAndMachineLots = (lots || []).filter(l =>
+        l.coffee_type === bulk.coffee_type && l.machine_id === bulk.machine_id &&
+        (bulk.coffee_type === 'Single' ? l.single_coffee_id === bulk.single_coffee_id : l.blend_recipe_id === bulk.blend_recipe_id)
+    );
+    const lotNumber = sameCoffeeAndMachineLots.length + 1;
+
     const newLot = {
-        lot_code: buildLotCode(bulk, machines, greenbeans, recipes, today),
+        lot_code: buildLotCode(bulk, machines, greenbeans, recipes, today, lotNumber),
         bulk_roasted_coffee_id: bulk.id,
         coffee_type: bulk.coffee_type,
         single_coffee_id: bulk.single_coffee_id,
@@ -817,21 +823,21 @@ function printLotBarcodeLabels(lot, requested) {
     };
     const dateRangeStr = `${fmtDDMMYY(prodDate)} - ${fmtDDMMYY(expDate)}`;
 
-    // Layout: barcode (tall, for reliable scanning; JsBarcode's own
-    // displayValue already prints the lot code as text under the bars, so no
-    // separate "lot code :" line here) / size / prod-exp date range. Coffee
-    // name dropped per feedback — redundant with what's already on the
-    // physical packaging. Padding trimmed and the barcode set to fill the
-    // label's width so the sticker is used more fully instead of floating in
-    // whitespace.
+    // Physical sticker is exactly 50×25mm — one label per printed page (roll
+    // printer), content flex-centered/space-evenly so it fills the sticker
+    // instead of floating in whitespace. Barcode (tall, for reliable
+    // scanning; JsBarcode's own displayValue already prints the lot code as
+    // text under the bars, so no separate "lot code :" line here) / size /
+    // prod-exp date range. Coffee name dropped per feedback — redundant with
+    // what's already on the physical packaging.
     let labelsHtml = '';
     requested.forEach(r => {
         for (let i = 0; i < r.qty; i++) {
             labelsHtml += `
-                <div class="barcode-label-item" style="display:inline-block; text-align:center; padding:6px 10px; margin:4px; border:1px dashed #999; box-sizing:border-box;">
-                    <svg class="lot-barcode-svg" data-value="${lot.lot_code}" style="width:100%;"></svg>
-                    <div style="font-size:11px; margin-top:3px;">${r.label}</div>
-                    <div style="font-size:11px; font-weight:600; margin-top:4px;">${dateRangeStr}</div>
+                <div class="barcode-label-item">
+                    <svg class="lot-barcode-svg" data-value="${lot.lot_code}"></svg>
+                    <div class="lbl-size">${r.label}</div>
+                    <div class="lbl-dates">${dateRangeStr}</div>
                 </div>
             `;
         }
@@ -846,13 +852,29 @@ function printLotBarcodeLabels(lot, requested) {
         <html><head><title>Lot Barcode Labels</title>
         <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
         <style>
-            body { font-family: Arial, sans-serif; margin: 0; padding: 10px; }
-            @media print { body { margin: 0; } }
+            @page { size: 50mm 25mm; margin: 1mm; }
+            body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+            .barcode-label-item {
+                width: 100%;
+                height: 100vh;
+                box-sizing: border-box;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: space-evenly;
+                text-align: center;
+                padding: 0 1.5mm;
+                page-break-after: always;
+            }
+            .barcode-label-item:last-child { page-break-after: auto; }
+            .lot-barcode-svg { max-width: 100%; }
+            .lbl-size { font-size: 11px; font-weight: 700; line-height: 1; }
+            .lbl-dates { font-size: 12px; font-weight: 700; line-height: 1; }
         </style></head><body>
         ${labelsHtml}
         <script>
             document.querySelectorAll('.lot-barcode-svg').forEach(el => {
-                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.8, height: 75, displayValue: true, fontSize: 10, margin: 4 });
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.1, height: 28, displayValue: true, fontSize: 7, margin: 2 });
             });
             setTimeout(() => { window.print(); }, 500);
         <\/script>
