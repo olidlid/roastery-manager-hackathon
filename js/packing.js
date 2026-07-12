@@ -49,13 +49,17 @@ async function loadPackingSection() {
 
     const [
         { data: bulkList },
-        { data: machines }
+        { data: machines },
+        { data: greenbeans },
+        { data: recipes }
     ] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
-        fetchData('machines')
+        fetchData('machines'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
     ]);
 
-    renderReadyToPackCards(bulkList, machines);
+    renderReadyToPackCards(bulkList, machines, greenbeans, recipes);
     // btn-custom-packing's click handler (openCustomPackingModal) is already
     // wired once at parse time in roasting.js — not re-wired here to avoid
     // attaching a second listener that would fire the modal twice per click.
@@ -66,11 +70,13 @@ async function loadPackingSection() {
 // card offers Print Barcode (generates/reuses today's lot code for that
 // bulk item, then prints labels) and Pack (moves kg from bulk into
 // packed_coffee, scoped to just this card's bulk item).
-function renderReadyToPackCards(bulkList, machines) {
+function renderReadyToPackCards(bulkList, machines, greenbeans, recipes) {
     const container = document.getElementById('ready-to-pack-cards');
     const emptyEl = document.getElementById('ready-to-pack-empty');
     if (!container) return;
     container.innerHTML = '';
+
+    const today = new Date().toISOString().split('T')[0];
 
     const activeBulk = (bulkList || [])
         .filter(b => parseFloat(b.bulk_available) > 0.005)
@@ -84,6 +90,9 @@ function renderReadyToPackCards(bulkList, machines) {
 
     activeBulk.forEach(bulk => {
         const machine = (machines || []).find(m => m.id === bulk.machine_id);
+        // Base lot code (same format as the printed label, minus the trailing
+        // production-lot number) shown as a preview badge.
+        const baseLotCode = buildLotCode(bulk, machines, greenbeans, recipes, today);
         const card = document.createElement('div');
         card.className = 'card';
         card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px;';
@@ -92,6 +101,7 @@ function renderReadyToPackCards(bulkList, machines) {
                 <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}</div>
                 <div style="font-size: 0.8rem; color: var(--text-muted);">${machine ? machine.name : 'Unknown Machine'}</div>
             </div>
+            <div style="font-family: monospace; font-size: 0.72rem; font-weight: 700; color: var(--primary); background: var(--primary-glow); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; align-self: flex-start; letter-spacing: 0.3px;">${baseLotCode}</div>
             <div style="font-size: 1.4rem; font-weight: 700; color: var(--primary);">${parseFloat(bulk.bulk_available).toFixed(2)} kg</div>
             <div style="display: flex; gap: 8px; margin-top: auto;">
                 <button type="button" class="btn btn-secondary btn-sm btn-print-lot-barcode" data-bulk-id="${bulk.id}" style="flex: 1;" data-i18n="btn_print_barcode">Print Barcode</button>
@@ -759,7 +769,11 @@ function buildLotCode(bulk, machines, greenbeans, recipes, dateStr, lotNumber) {
     const [y, m, d] = dateStr.split('-');
     const mmddyy = `${m}${d}${y.slice(2)}`;
 
-    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}${mmddyy}${lotNumber}`;
+    // lotNumber is optional: the printed label / stored lot_code includes it,
+    // but the Ready-to-Pack card shows the base code (same format, minus the
+    // trailing lot number) as a preview badge before a lot actually exists.
+    const base = `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}${mmddyy}`;
+    return (lotNumber === undefined || lotNumber === null) ? base : `${base}${lotNumber}`;
 }
 
 // One production_lots row per (bulk item, day) — reuses today's lot if one
