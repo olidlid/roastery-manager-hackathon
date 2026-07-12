@@ -733,7 +733,9 @@ async function dispatchOrder(orderId) {
 }
 
 // Builds a short, deterministic lot code for a bulk item on a given date:
-// LOT-{coffee code}-{machine code}-{MMDDYY}-{lot number}. Deliberately
+// LOT-{coffee code}-{machine code}{MMDDYY}{lot number} — machine code, date
+// and lot number are concatenated with no separators (only the LOT prefix
+// and the coffee code keep their dashes), per user request. Deliberately
 // doesn't start with 'RMP:' so it never collides with the global
 // quick-roast-log scanner listener in app.js (which only reacts to that
 // exact prefix). The trailing lot number is how many production_lots rows
@@ -757,7 +759,7 @@ function buildLotCode(bulk, machines, greenbeans, recipes, dateStr, lotNumber) {
     const [y, m, d] = dateStr.split('-');
     const mmddyy = `${m}${d}${y.slice(2)}`;
 
-    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}-${mmddyy}-${lotNumber}`;
+    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}${mmddyy}${lotNumber}`;
 }
 
 // One production_lots row per (bulk item, day) — reuses today's lot if one
