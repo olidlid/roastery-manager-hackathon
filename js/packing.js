@@ -733,14 +733,14 @@ async function dispatchOrder(orderId) {
 }
 
 // Builds a short, deterministic lot code for a bulk item on a given date:
-// LOT-{coffee code}-{machine code}-{MMDDYY}-{batch}. Deliberately doesn't
-// start with 'RMP:' so it never collides with the global quick-roast-log
-// scanner listener in app.js (which only reacts to that exact prefix).
-// batchSeq is the sequence number of the actual roast_batches row that fed
-// this lot (see getOrCreateProductionLot) — reusing the same per-day
-// numbering system already used for roast_batches.batch_code (generateCode()
-// in roasting.js), not a separate counter.
-function buildLotCode(bulk, machines, greenbeans, recipes, dateStr, batchSeq) {
+// LOT-{coffee code}-{machine code}-{MMDDYY}. Deliberately doesn't start with
+// 'RMP:' so it never collides with the global quick-roast-log scanner
+// listener in app.js (which only reacts to that exact prefix). This is the
+// original 3-segment format — a "batch" sequence suffix was tried and
+// reverted per user feedback (they meant "production lot" identity, not a
+// separate roast-batch counter); only the date's digit order changed
+// (YYYYMMDD → MMDDYY).
+function buildLotCode(bulk, machines, greenbeans, recipes, dateStr) {
     const sanitize = (s) => (s || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'X';
     const machine = (machines || []).find(m => m.id === bulk.machine_id);
     const machineCode = machine ? (machine.code || machine.name) : 'M';
@@ -757,7 +757,7 @@ function buildLotCode(bulk, machines, greenbeans, recipes, dateStr, batchSeq) {
     const [y, m, d] = dateStr.split('-');
     const mmddyy = `${m}${d}${y.slice(2)}`;
 
-    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}-${mmddyy}-${batchSeq}`;
+    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}-${mmddyy}`;
 }
 
 // One production_lots row per (bulk item, day) — reuses today's lot if one
@@ -779,14 +779,8 @@ async function getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roa
         .sort((a, b) => new Date(b.roast_date || 0) - new Date(a.roast_date || 0) || b.id - a.id);
     const latestBatch = matchingBatches[0] || null;
 
-    // Reuse the sequence number from the actual roast batch that fed this
-    // lot (roast_batches.batch_code already ends in "-{seq}") so the lot
-    // code's trailing segment identifies which specific roast produced it.
-    const batchSeqMatch = latestBatch && latestBatch.batch_code ? latestBatch.batch_code.match(/-(\d+)$/) : null;
-    const batchSeq = batchSeqMatch ? batchSeqMatch[1] : '1';
-
     const newLot = {
-        lot_code: buildLotCode(bulk, machines, greenbeans, recipes, today, batchSeq),
+        lot_code: buildLotCode(bulk, machines, greenbeans, recipes, today),
         bulk_roasted_coffee_id: bulk.id,
         coffee_type: bulk.coffee_type,
         single_coffee_id: bulk.single_coffee_id,
@@ -812,29 +806,32 @@ function printLotBarcodeLabels(lot, requested) {
     // day-month-year across browsers/locales).
     const prodDate = lot.production_date ? new Date(lot.production_date + 'T00:00:00') : null;
     const expDate = prodDate ? new Date(prodDate.getFullYear() + 1, prodDate.getMonth(), prodDate.getDate()) : null;
-    const fmtDateDMY = (d) => {
+    // Compact ddmmyy — no internal separators, matching the lot code's own
+    // MMDDYY digit style, joined as "ddmmyy - ddmmyy" (prod - exp).
+    const fmtDDMMYY = (d) => {
         if (!d) return '-';
         const dd = String(d.getDate()).padStart(2, '0');
         const mm = String(d.getMonth() + 1).padStart(2, '0');
-        return `${dd}-${mm}-${d.getFullYear()}`;
+        const yy = String(d.getFullYear()).slice(-2);
+        return `${dd}${mm}${yy}`;
     };
-    const prodDateStr = fmtDateDMY(prodDate);
-    const expDateStr = fmtDateDMY(expDate);
+    const dateRangeStr = `${fmtDDMMYY(prodDate)} - ${fmtDDMMYY(expDate)}`;
 
-    // Layout: barcode (tall, for reliable scanning) / "lot code : ..." /
-    // coffee name / size / "prod : ... exp : ...". Padding trimmed down and
-    // every element sized to use the label's full width so the sticker is
-    // filled rather than floating in whitespace.
+    // Layout: barcode (tall, for reliable scanning; JsBarcode's own
+    // displayValue already prints the lot code as text under the bars, so no
+    // separate "lot code :" line here) / size / prod-exp date range. Coffee
+    // name dropped per feedback — redundant with what's already on the
+    // physical packaging. Padding trimmed and the barcode set to fill the
+    // label's width so the sticker is used more fully instead of floating in
+    // whitespace.
     let labelsHtml = '';
     requested.forEach(r => {
         for (let i = 0; i < r.qty; i++) {
             labelsHtml += `
                 <div class="barcode-label-item" style="display:inline-block; text-align:center; padding:6px 10px; margin:4px; border:1px dashed #999; box-sizing:border-box;">
                     <svg class="lot-barcode-svg" data-value="${lot.lot_code}" style="width:100%;"></svg>
-                    <div style="font-size:10px; font-weight:600; margin-top:4px; word-break:break-all;">lot code : ${lot.lot_code}</div>
-                    <div style="font-weight:700; font-size:13px; margin-top:3px;">${lot.coffee_name}</div>
-                    <div style="font-size:11px;">${r.label}</div>
-                    <div style="font-size:9px; color:#444; margin-top:4px;">prod : ${prodDateStr}&nbsp;&nbsp;&nbsp;exp : ${expDateStr}</div>
+                    <div style="font-size:11px; margin-top:3px;">${r.label}</div>
+                    <div style="font-size:11px; font-weight:600; margin-top:4px;">${dateRangeStr}</div>
                 </div>
             `;
         }
