@@ -877,7 +877,7 @@ function printLotBarcodeLabels(lot, requested) {
                intrinsic width and overflow the sticker. */
             .lot-barcode-svg { width: 100%; height: auto; display: block; min-width: 0; }
             .lbl-size { font-size: 13px; font-weight: 700; line-height: 1; }
-            .lbl-dates { font-size: 15px; font-weight: 700; line-height: 1; }
+            .lbl-dates { font-size: 18px; font-weight: 700; line-height: 1; }
         </style></head><body>
         ${labelsHtml}
         <script>
