@@ -1333,50 +1333,59 @@ async function loadPackedCoffeeSection() {
         activeMachinesList.push({ id: 'unknown', name: 'Unknown' });
     }
 
-    // Update thead
-    const theadRow = document.getElementById('packed-coffee-stock-table-head');
-    if (theadRow) {
-        let thHtml = `<th data-i18n="col_name">${window.t ? window.t('col_name') : 'Coffee Name'}</th>`;
-        activeMachinesList.forEach(m => {
-            thHtml += `<th class="text-center">${m.name}</th>`;
+    // Update thead — 2-row header (machine name spanning its active-size
+    // columns, then a size sub-row) instead of one machine column that
+    // stacked every size as its own line inside the body cell. Flattening to
+    // one column per machine×size combo makes every body row exactly one
+    // line tall, so far more coffees fit on screen without scrolling — same
+    // rowspan/colspan pattern already used by the Daily Achievement table.
+    const theadEl = document.getElementById('packed-coffee-stock-table-thead');
+    const sizeCount = Math.max(1, activeSizes.length);
+    if (theadEl) {
+        let row1 = `<tr><th rowspan="2" data-i18n="col_name">${window.t ? window.t('col_name') : 'Coffee Name'}</th>`;
+        activeMachinesList.forEach((m, idx) => {
+            const groupBorder = idx > 0 ? 'border-left: 2px solid var(--border);' : '';
+            row1 += `<th colspan="${sizeCount}" class="text-center" style="${groupBorder}">${m.name}</th>`;
         });
-        thHtml += `<th data-i18n="col_action">${window.t ? window.t('col_action') : 'Action'}</th>`;
-        theadRow.innerHTML = thHtml;
+        row1 += `<th rowspan="2" data-i18n="col_action">${window.t ? window.t('col_action') : 'Action'}</th></tr>`;
+
+        let row2 = '<tr>';
+        activeMachinesList.forEach((m, mIdx) => {
+            activeSizes.forEach((sz, szIdx) => {
+                const groupBorder = (mIdx > 0 && szIdx === 0) ? 'border-left: 2px solid var(--border);' : '';
+                row2 += `<th class="text-center" style="background-color: rgba(0,0,0,0.03); font-size: 0.72rem; ${groupBorder}">${sz.gram}g</th>`;
+            });
+        });
+        row2 += '</tr>';
+
+        theadEl.innerHTML = row1 + row2;
     }
 
     if (Object.keys(grouped).length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${activeMachinesList.length + 2}" class="text-center-muted">${window.t ? window.t("msg_no_packed_avail") : 'No packed coffee available.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${activeMachinesList.length * sizeCount + 2}" class="text-center-muted">${window.t ? window.t("msg_no_packed_avail") : 'No packed coffee available.'}</td></tr>`;
         return;
     }
 
     Object.values(grouped).sort((a,b) => a.coffeeName.localeCompare(b.coffeeName)).forEach(group => {
         const tr = document.createElement('tr');
-        
-        let html = `<td style="vertical-align: middle; padding: 12px 20px;"><strong>${group.coffeeName}</strong></td>`;
-        
-        activeMachinesList.forEach(mach => {
+
+        let html = `<td><strong>${group.coffeeName}</strong></td>`;
+
+        activeMachinesList.forEach((mach, mIdx) => {
             const machData = group.machines[mach.name] || { sizes: {} };
-            
-            const sizesHtml = activeSizes.map((sz, idx) => {
+            activeSizes.forEach((sz, szIdx) => {
                 const qty = machData.sizes[sz.gram] ? machData.sizes[sz.gram].qty : 0;
                 const minSizes = companySettings.min_stock_packed_sizes || {};
                 const minQty = minSizes[sz.gram] || 0;
                 const isLow = qty < minQty;
-                const colorStyle = isLow ? 'color:var(--danger);' : 'color:var(--text-secondary);';
-                
-                return `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: ${idx < activeSizes.length - 1 ? '1px dashed var(--border)' : 'none'};">
-                        <span style="background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:6px; padding:2px 6px; font-size:0.75rem; font-weight:700;">${sz.gram}g</span>
-                        <span style="font-size:0.8rem; font-weight:600; ${colorStyle}">${qty} ${window.t ? window.t("lbl_bags") : 'bags'}</span>
-                    </div>
-                `;
-            }).join('');
-            
-            html += `<td style="vertical-align: top; padding: 8px 12px; min-width: 140px;">${sizesHtml}</td>`;
+                const colorStyle = isLow ? 'color:var(--danger); font-weight:700;' : 'color:var(--text-secondary); font-weight:600;';
+                const groupBorder = (mIdx > 0 && szIdx === 0) ? 'border-left: 2px solid var(--border);' : '';
+                html += `<td class="text-center" style="${colorStyle} ${groupBorder}">${qty}</td>`;
+            });
         });
-        
+
         html += `
-            <td style="vertical-align: middle; padding: 12px 20px; white-space: nowrap;">
+            <td style="white-space: nowrap;">
                 <button class="btn btn-outline btn-sm btn-edit-packed" data-coffee="${encodeURIComponent(group.coffeeName)}">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit
                 </button>
@@ -1385,7 +1394,7 @@ async function loadPackedCoffeeSection() {
                 </button>
             </td>
         `;
-        
+
         tr.innerHTML = html;
         tbody.appendChild(tr);
     });
