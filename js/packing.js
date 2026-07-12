@@ -792,6 +792,15 @@ async function getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roa
 }
 
 function printLotBarcodeLabels(lot, requested) {
+    // Production date = the lot's roast/pack date (production_date). Expiry
+    // is a fixed 1-year shelf life from that date — no separate field to
+    // track, just computed at print time.
+    const prodDate = lot.production_date ? new Date(lot.production_date + 'T00:00:00') : null;
+    const expDate = prodDate ? new Date(prodDate.getFullYear() + 1, prodDate.getMonth(), prodDate.getDate()) : null;
+    const fmtDate = (d) => d ? d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+    const prodDateStr = fmtDate(prodDate);
+    const expDateStr = fmtDate(expDate);
+
     let labelsHtml = '';
     requested.forEach(r => {
         for (let i = 0; i < r.qty; i++) {
@@ -800,6 +809,8 @@ function printLotBarcodeLabels(lot, requested) {
                     <svg class="lot-barcode-svg" data-value="${lot.lot_code}"></svg>
                     <div style="font-weight:700; font-size:12px;">${lot.coffee_name}</div>
                     <div style="font-size:11px;">${r.label}</div>
+                    <div style="font-size:9px; color:#444; margin-top:3px;">PROD: ${prodDateStr}</div>
+                    <div style="font-size:9px; color:#444;">EXP: ${expDateStr}</div>
                 </div>
             `;
         }
