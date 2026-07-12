@@ -733,10 +733,14 @@ async function dispatchOrder(orderId) {
 }
 
 // Builds a short, deterministic lot code for a bulk item on a given date:
-// LOT-{coffee code}-{machine code}-{YYYYMMDD}. Deliberately doesn't start
-// with 'RMP:' so it never collides with the global quick-roast-log scanner
-// listener in app.js (which only reacts to that exact prefix).
-function buildLotCode(bulk, machines, greenbeans, recipes, dateStr) {
+// LOT-{coffee code}-{machine code}-{MMDDYY}-{batch}. Deliberately doesn't
+// start with 'RMP:' so it never collides with the global quick-roast-log
+// scanner listener in app.js (which only reacts to that exact prefix).
+// batchSeq is the sequence number of the actual roast_batches row that fed
+// this lot (see getOrCreateProductionLot) — reusing the same per-day
+// numbering system already used for roast_batches.batch_code (generateCode()
+// in roasting.js), not a separate counter.
+function buildLotCode(bulk, machines, greenbeans, recipes, dateStr, batchSeq) {
     const sanitize = (s) => (s || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'X';
     const machine = (machines || []).find(m => m.id === bulk.machine_id);
     const machineCode = machine ? (machine.code || machine.name) : 'M';
@@ -750,7 +754,10 @@ function buildLotCode(bulk, machines, greenbeans, recipes, dateStr) {
         coffeeCode = r ? (r.code || r.name) : bulk.coffee_name;
     }
 
-    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}-${dateStr.replace(/-/g, '')}`;
+    const [y, m, d] = dateStr.split('-');
+    const mmddyy = `${m}${d}${y.slice(2)}`;
+
+    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}-${mmddyy}-${batchSeq}`;
 }
 
 // One production_lots row per (bulk item, day) — reuses today's lot if one
@@ -772,8 +779,14 @@ async function getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roa
         .sort((a, b) => new Date(b.roast_date || 0) - new Date(a.roast_date || 0) || b.id - a.id);
     const latestBatch = matchingBatches[0] || null;
 
+    // Reuse the sequence number from the actual roast batch that fed this
+    // lot (roast_batches.batch_code already ends in "-{seq}") so the lot
+    // code's trailing segment identifies which specific roast produced it.
+    const batchSeqMatch = latestBatch && latestBatch.batch_code ? latestBatch.batch_code.match(/-(\d+)$/) : null;
+    const batchSeq = batchSeqMatch ? batchSeqMatch[1] : '1';
+
     const newLot = {
-        lot_code: buildLotCode(bulk, machines, greenbeans, recipes, today),
+        lot_code: buildLotCode(bulk, machines, greenbeans, recipes, today, batchSeq),
         bulk_roasted_coffee_id: bulk.id,
         coffee_type: bulk.coffee_type,
         single_coffee_id: bulk.single_coffee_id,
@@ -794,23 +807,34 @@ async function getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roa
 function printLotBarcodeLabels(lot, requested) {
     // Production date = the lot's roast/pack date (production_date). Expiry
     // is a fixed 1-year shelf life from that date — no separate field to
-    // track, just computed at print time.
+    // track, just computed at print time. dd-mm-yyyy per the label spec
+    // (not toLocaleDateString — that doesn't reliably give dash-separated
+    // day-month-year across browsers/locales).
     const prodDate = lot.production_date ? new Date(lot.production_date + 'T00:00:00') : null;
     const expDate = prodDate ? new Date(prodDate.getFullYear() + 1, prodDate.getMonth(), prodDate.getDate()) : null;
-    const fmtDate = (d) => d ? d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
-    const prodDateStr = fmtDate(prodDate);
-    const expDateStr = fmtDate(expDate);
+    const fmtDateDMY = (d) => {
+        if (!d) return '-';
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        return `${dd}-${mm}-${d.getFullYear()}`;
+    };
+    const prodDateStr = fmtDateDMY(prodDate);
+    const expDateStr = fmtDateDMY(expDate);
 
+    // Layout: barcode (tall, for reliable scanning) / "lot code : ..." /
+    // coffee name / size / "prod : ... exp : ...". Padding trimmed down and
+    // every element sized to use the label's full width so the sticker is
+    // filled rather than floating in whitespace.
     let labelsHtml = '';
     requested.forEach(r => {
         for (let i = 0; i < r.qty; i++) {
             labelsHtml += `
-                <div class="barcode-label-item" style="display:inline-block; text-align:center; padding:8px; margin:4px; border:1px dashed #999;">
-                    <svg class="lot-barcode-svg" data-value="${lot.lot_code}"></svg>
-                    <div style="font-weight:700; font-size:12px;">${lot.coffee_name}</div>
+                <div class="barcode-label-item" style="display:inline-block; text-align:center; padding:6px 10px; margin:4px; border:1px dashed #999; box-sizing:border-box;">
+                    <svg class="lot-barcode-svg" data-value="${lot.lot_code}" style="width:100%;"></svg>
+                    <div style="font-size:10px; font-weight:600; margin-top:4px; word-break:break-all;">lot code : ${lot.lot_code}</div>
+                    <div style="font-weight:700; font-size:13px; margin-top:3px;">${lot.coffee_name}</div>
                     <div style="font-size:11px;">${r.label}</div>
-                    <div style="font-size:9px; color:#444; margin-top:3px;">PROD: ${prodDateStr}</div>
-                    <div style="font-size:9px; color:#444;">EXP: ${expDateStr}</div>
+                    <div style="font-size:9px; color:#444; margin-top:4px;">prod : ${prodDateStr}&nbsp;&nbsp;&nbsp;exp : ${expDateStr}</div>
                 </div>
             `;
         }
@@ -831,7 +855,7 @@ function printLotBarcodeLabels(lot, requested) {
         ${labelsHtml}
         <script>
             document.querySelectorAll('.lot-barcode-svg').forEach(el => {
-                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.5, height: 45, displayValue: true, fontSize: 10, margin: 4 });
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.8, height: 75, displayValue: true, fontSize: 10, margin: 4 });
             });
             setTimeout(() => { window.print(); }, 500);
         <\/script>
