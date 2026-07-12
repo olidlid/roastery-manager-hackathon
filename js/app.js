@@ -1670,6 +1670,79 @@ function showSetNewPasswordModal() {
 }
 
 // --- LOG OUT ---
+// Self-service "change my own password". Distinct from showSetNewPasswordModal
+// (which runs from the emailed reset-link recovery flow, where identity is
+// already proven by the link so no current password is asked). Here the user
+// is already logged in, so we verify the CURRENT password first by re-running
+// signInWithPassword — the same primitive the login form uses — before calling
+// updateUser({ password }). Available to every logged-in user (no permission
+// gate); OAuth-only accounts have no password so the verify step will fail —
+// the modal hint points them at the reset-email path instead.
+function showChangePasswordModal() {
+    const html = `
+        <form id="change-password-form">
+            <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:16px;" data-i18n="msg_change_password_hint">Enter your current password, then choose a new one. (Google sign-in accounts don't have a password — ask an admin to send a reset email instead.)</p>
+            <div class="form-group">
+                <label class="form-label" for="cur-password" data-i18n="lbl_current_password">Current Password</label>
+                <input type="password" id="cur-password" class="form-control" required>
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label class="form-label" for="chg-new-password" data-i18n="lbl_new_password">New Password</label>
+                <input type="password" id="chg-new-password" class="form-control" placeholder="Minimum 6 characters" required minlength="6">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label class="form-label" for="chg-new-password-confirm" data-i18n="lbl_confirm_password">Confirm Password</label>
+                <input type="password" id="chg-new-password-confirm" class="form-control" required minlength="6">
+            </div>
+            <div class="modal-footer-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                <button type="submit" class="btn btn-primary" data-i18n="btn_change_password">Change Password</button>
+            </div>
+        </form>
+    `;
+    openModal(window.t ? (window.t('title_change_password') || 'Change Password') : 'Change Password', html);
+    document.getElementById('change-password-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const current = document.getElementById('cur-password').value;
+        const pass = document.getElementById('chg-new-password').value;
+        const confirmPass = document.getElementById('chg-new-password-confirm').value;
+
+        if (pass !== confirmPass) {
+            alert(window.t ? (window.t('alert_password_mismatch') || 'Passwords do not match.') : 'Passwords do not match.');
+            return;
+        }
+
+        const email = currentUser && currentUser.email;
+        if (!email) {
+            alert(window.t ? (window.t('alert_current_password_wrong') || 'Current password is incorrect.') : 'Current password is incorrect.');
+            return;
+        }
+
+        // 1. Verify the current password without disturbing the active session:
+        //    a throwaway client (persistSession:false) so a wrong password can't
+        //    log the user out, and a correct one doesn't swap tokens underneath us.
+        const verifyClient = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
+            auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+        });
+        const { error: signInErr } = await verifyClient.auth.signInWithPassword({ email, password: current });
+        if (signInErr) {
+            alert(window.t ? (window.t('alert_current_password_wrong') || 'Current password is incorrect.') : 'Current password is incorrect.');
+            return;
+        }
+
+        // 2. Update on the real (logged-in) client.
+        const { error } = await window.supabaseClient.auth.updateUser({ password: pass });
+        if (error) {
+            alert((window.t ? (window.t('alert_password_update_failed') || 'Failed to update password: {msg}') : 'Failed to update password: {msg}').replace('{msg}', error.message));
+        } else {
+            document.getElementById('btn-close-modal').click();
+            alert(window.t ? (window.t('alert_password_updated') || 'Password updated successfully.') : 'Password updated successfully.');
+        }
+    });
+}
+
+document.getElementById('btn-change-password').addEventListener('click', showChangePasswordModal);
+
 document.getElementById('btn-logout').addEventListener('click', async () => {
     // Clear the cached identity so a different account logging in on this
     // same browser doesn't briefly flash the previous user's name/role.
