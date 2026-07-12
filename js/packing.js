@@ -861,20 +861,28 @@ function printLotBarcodeLabels(lot, requested) {
                 display: flex;
                 flex-direction: column;
                 align-items: center;
-                justify-content: space-evenly;
+                justify-content: center;
+                gap: 0.6mm;
                 text-align: center;
-                padding: 0 1.5mm;
+                padding: 0 1mm;
                 page-break-after: always;
             }
             .barcode-label-item:last-child { page-break-after: auto; }
-            .lot-barcode-svg { max-width: 100%; }
-            .lbl-size { font-size: 11px; font-weight: 700; line-height: 1; }
-            .lbl-dates { font-size: 12px; font-weight: 700; line-height: 1; }
+            /* Stretch the barcode across the full sticker width so it fills
+               the label like the marked box, rather than sitting small and
+               centered. JsBarcode's SVG carries a viewBox, so width:100%
+               scales it (bars stay proportional → still scannable) instead of
+               clipping. min-width:0 is required because this SVG is a flex
+               item, whose default min-width:auto would otherwise pin it to its
+               intrinsic width and overflow the sticker. */
+            .lot-barcode-svg { width: 100%; height: auto; display: block; min-width: 0; }
+            .lbl-size { font-size: 13px; font-weight: 700; line-height: 1; }
+            .lbl-dates { font-size: 15px; font-weight: 700; line-height: 1; }
         </style></head><body>
         ${labelsHtml}
         <script>
             document.querySelectorAll('.lot-barcode-svg').forEach(el => {
-                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.1, height: 28, displayValue: true, fontSize: 7, margin: 2 });
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.1, height: 46, displayValue: true, fontSize: 9, margin: 2 });
             });
             setTimeout(() => { window.print(); }, 500);
         <\/script>
