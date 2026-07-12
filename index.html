@@ -296,6 +296,10 @@
                     <i class="lucide-bar-chart-2"></i>
                     <span data-i18n="nav_reports">Reports</span>
                 </li>
+                <li class="menu-item" data-target="sec-tracking">
+                    <i class="lucide-search"></i>
+                    <span data-i18n="nav_tracking">Tracking</span>
+                </li>
                 <li class="menu-item" data-target="sec-settings">
                     <i class="lucide-settings"></i>
                     <span data-i18n="nav_settings">Setting</span>
@@ -964,7 +968,7 @@
             <section id="sec-packing" class="page-section hidden">
                 <div style="margin-bottom: 24px; border-bottom: 1px solid var(--border);">
                     <nav style="display: flex; gap: 24px;" id="packing-tabs-nav">
-                        <button class="tab-btn active" data-target="tab-daily-packing" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--primary); cursor: pointer; border-bottom: 2px solid var(--primary);" data-i18n="tab_daily_packing">Daily Packing</button>
+                        <button class="tab-btn active" data-target="tab-ready-to-pack" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--primary); cursor: pointer; border-bottom: 2px solid var(--primary);" data-i18n="tab_ready_to_pack">Ready to Pack</button>
                         <button class="tab-btn" data-target="tab-order-request" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_order_request">Order Requests</button>
                         <button class="tab-btn" data-target="tab-packing-records" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Packing Records</button>
                         <button class="tab-btn" data-target="tab-packing-history" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Completed Order</button>
@@ -1054,38 +1058,22 @@
                     </div>
                 </div>
 
-                <div id="tab-daily-packing" class="packing-tab-content">
+                <div id="tab-ready-to-pack" class="packing-tab-content">
                     <div class="card">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px;">
-                            <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
-                                <h3 class="card-title" style="font-size: 1.5rem; margin-bottom: 0; font-weight: 700;" data-i18n="packing_title">What are we packing today?</h3>
-                                <div style="display: flex; align-items: center; gap: 8px;">
-                                    <label style="font-size: 0.85rem; font-weight: 600; color: var(--primary); white-space: nowrap;">Date:</label>
-                                    <input type="date" id="packing-date" class="form-control" style="width: 160px; padding: 6px 10px; font-size: 0.85rem;">
-                                </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
+                            <div>
+                                <h3 class="card-title" style="font-size: 1.5rem; margin-bottom: 4px; font-weight: 700;" data-i18n="ready_to_pack_title">Ready to Pack</h3>
+                                <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="ready_to_pack_hint">Bulk roasted coffee available for printing labels and packing.</p>
                             </div>
                             <button type="button" id="btn-custom-packing" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                Custom Packing
+                                <span data-i18n="btn_manual_add_stock">Add Manual Packed Stock</span>
                             </button>
                         </div>
-                        <div id="packing-sheet-container" style="max-width: 1100px; margin: 0 auto; width: 100%;">
-                            <form id="packing-sheet-form">
-                                <div id="packing-sheet-rows" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; max-height: 60vh; overflow-y: auto; padding-right: 12px; margin-right: -4px; align-items: start;">
-                                    <!-- Dynamic rows of packing items -->
-                                </div>
-                                
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
-                                    <button type="button" class="btn btn-secondary" id="btn-add-packing-sheet-row">
-                                        <i class="lucide-plus"></i> <span data-i18n="btn_add_coffee">Add Coffee</span>
-                                    </button>
-                                    
-                                    <button type="submit" class="btn btn-primary btn-lg" style="padding: 10px 30px; font-weight: bold;" data-i18n="btn_done">
-                                        Done!!
-                                    </button>
-                                </div>
-                            </form>
+                        <div id="ready-to-pack-cards" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;">
+                            <!-- Dynamic bulk-roasted-coffee cards -->
                         </div>
+                        <div id="ready-to-pack-empty" class="text-center-muted hidden" style="padding: 24px 0;" data-i18n="ready_to_pack_empty">No bulk roasted coffee available for packing right now.</div>
                     </div>
                 </div>
 
@@ -1706,6 +1694,63 @@
             </section>
 
             <!-- ========================================== -->
+            <!-- SECTION: TRACKING (lot barcode traceability) -->
+            <!-- ========================================== -->
+            <section id="sec-tracking" class="page-section hidden">
+                <div class="card">
+                    <h3 class="card-title" data-i18n="tracking_search_title">Look Up a Lot</h3>
+                    <p style="margin: 0 0 16px; font-size: 0.85rem; color: var(--text-muted);" data-i18n="tracking_search_hint">Enter or scan the lot barcode printed on the packaging/carton to trace it back to its coffee, process, supplier and key dates.</p>
+                    <form id="tracking-search-form" style="display: flex; gap: 10px; max-width: 480px; flex-wrap: wrap;">
+                        <input type="text" id="tracking-search-input" class="form-control" style="flex: 1; min-width: 220px;" data-i18n-placeholder="tracking_search_placeholder" placeholder="e.g. LOT-ETH01-M1-20260711" autocomplete="off">
+                        <button type="submit" class="btn btn-primary" data-i18n="btn_tracking_search">Search</button>
+                        <button type="button" id="btn-tracking-scan" class="btn btn-secondary" data-i18n="btn_tracking_scan">
+                            <i class="lucide-scan-line" style="vertical-align: middle; margin-right: 4px;"></i><span data-i18n="btn_tracking_scan_label">Scan</span>
+                        </button>
+                    </form>
+                </div>
+
+                <div id="tracking-result-empty" class="card text-center-muted" style="margin-top: 16px;" data-i18n="tracking_result_empty">Search a lot code to see its traceability details.</div>
+
+                <div id="tracking-result-notfound" class="card hidden" style="margin-top: 16px;">
+                    <p class="text-center-muted" data-i18n="tracking_result_notfound">No lot found for that barcode. Double-check the code and try again.</p>
+                </div>
+
+                <div id="tracking-result-card" class="card hidden" style="margin-top: 16px;">
+                    <h3 class="card-title" id="tracking-result-coffee-name">-</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 12px;">
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);" data-i18n="tracking_lbl_lot_code">Lot Code</div>
+                            <div id="tracking-result-lot-code" style="font-weight: 600;">-</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);" data-i18n="tracking_lbl_process">Process</div>
+                            <div id="tracking-result-process" style="font-weight: 600;">-</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);" data-i18n="tracking_lbl_supplier">Supplier</div>
+                            <div id="tracking-result-supplier" style="font-weight: 600;">-</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);" data-i18n="tracking_lbl_machine">Machine</div>
+                            <div id="tracking-result-machine" style="font-weight: 600;">-</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);" data-i18n="tracking_lbl_greenbean_date">Greenbean Received</div>
+                            <div id="tracking-result-greenbean-date" style="font-weight: 600;">-</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);" data-i18n="tracking_lbl_roast_date">Roasting Date</div>
+                            <div id="tracking-result-roast-date" style="font-weight: 600;">-</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);" data-i18n="tracking_lbl_pack_date">Packing Date</div>
+                            <div id="tracking-result-pack-date" style="font-weight: 600;">-</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
             <!-- SECTION 7: SYSTEM SETTINGS -->
             <!-- ========================================== -->
             <section id="sec-settings" class="page-section hidden">
@@ -2287,17 +2332,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=3"></script>
+    <script src="js/translations.js?v=4"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
-    <script src="js/auth.js?v=5"></script>
+    <script src="js/auth.js?v=6"></script>
     <script src="js/greenbean.js?v=5"></script>
     <script src="js/roasting.js?v=3"></script>
-    <script src="js/packing.js?v=3"></script>
+    <script src="js/packing.js?v=4"></script>
     <script src="js/sales.js?v=3"></script>
-    <script src="js/settings.js?v=3"></script>
-    <script src="js/app.js?v=56"></script>
+    <script src="js/settings.js?v=4"></script>
+    <script src="js/tracking.js?v=1"></script>
+    <script src="js/app.js?v=57"></script>
 </body>
 </html>

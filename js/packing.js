@@ -47,56 +47,68 @@ async function loadPackingSection() {
         });
     }
 
-    // Autofill date field
-    const packingDateEl = document.getElementById('packing-date');
-    if (packingDateEl && !packingDateEl.value) {
-        packingDateEl.value = new Date().toISOString().split('T')[0];
-    }
-
     const [
         { data: bulkList },
-        { data: greenbeans },
-        { data: recipes },
-        { data: machines },
-        { data: packagingSizes }
+        { data: machines }
     ] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
-        fetchData('green_coffee'),
-        fetchData('blend_recipes'),
-        fetchData('machines'),
-        fetchData('packaging_sizes')
+        fetchData('machines')
     ]);
-    
-    const rowsContainer = document.getElementById('packing-sheet-rows');
-    if (!rowsContainer) return;
-    
-    // Clear and rebuild rows
-    rowsContainer.innerHTML = '';
-    
-    addPackingRow(bulkList, greenbeans, recipes, machines, packagingSizes);
-    
-    // Wire up Add Row button
-    const btnAdd = document.getElementById('btn-add-packing-sheet-row');
-    if (btnAdd) {
-        btnAdd.onclick = (e) => {
-            e.preventDefault();
-            const currentRows = document.querySelectorAll('.packing-sheet-row').length;
-            if (currentRows >= 4) {
-                alert(window.t ? window.t("msg_max_four_coffee") : "Maximum 4 coffee boxes allowed at a time.");
-                return;
-            }
-            addPackingRow(bulkList, greenbeans, recipes, machines, packagingSizes);
-        };
+
+    renderReadyToPackCards(bulkList, machines);
+    // btn-custom-packing's click handler (openCustomPackingModal) is already
+    // wired once at parse time in roasting.js — not re-wired here to avoid
+    // attaching a second listener that would fire the modal twice per click.
+}
+
+// Renders the "Ready to Pack" cards — one card per bulk_roasted_coffee row
+// (i.e. per coffee+machine combination with stock still available). Each
+// card offers Print Barcode (generates/reuses today's lot code for that
+// bulk item, then prints labels) and Pack (moves kg from bulk into
+// packed_coffee, scoped to just this card's bulk item).
+function renderReadyToPackCards(bulkList, machines) {
+    const container = document.getElementById('ready-to-pack-cards');
+    const emptyEl = document.getElementById('ready-to-pack-empty');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const activeBulk = (bulkList || [])
+        .filter(b => parseFloat(b.bulk_available) > 0.005)
+        .sort((a, b) => a.coffee_name.localeCompare(b.coffee_name));
+
+    if (activeBulk.length === 0) {
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        return;
     }
-    
-    // Wire up Form Submission
-    const form = document.getElementById('packing-sheet-form');
-    if (form) {
-        form.onsubmit = async (e) => {
-            e.preventDefault();
-            await submitPackingSheet();
-        };
-    }
+    if (emptyEl) emptyEl.classList.add('hidden');
+
+    activeBulk.forEach(bulk => {
+        const machine = (machines || []).find(m => m.id === bulk.machine_id);
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px;';
+        card.innerHTML = `
+            <div>
+                <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">${machine ? machine.name : 'Unknown Machine'}</div>
+            </div>
+            <div style="font-size: 1.4rem; font-weight: 700; color: var(--primary);">${parseFloat(bulk.bulk_available).toFixed(2)} kg</div>
+            <div style="display: flex; gap: 8px; margin-top: auto;">
+                <button type="button" class="btn btn-secondary btn-sm btn-print-lot-barcode" data-bulk-id="${bulk.id}" style="flex: 1;" data-i18n="btn_print_barcode">Print Barcode</button>
+                <button type="button" class="btn btn-primary btn-sm btn-pack-bulk" data-bulk-id="${bulk.id}" style="flex: 1;" data-i18n="btn_pack">Pack</button>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+
+    container.querySelectorAll('.btn-print-lot-barcode').forEach(btn => {
+        btn.addEventListener('click', () => openPrintBarcodeModal(parseInt(btn.getAttribute('data-bulk-id'))));
+        btn.style.display = hasPermission('packing_print_barcode') ? '' : 'none';
+    });
+    container.querySelectorAll('.btn-pack-bulk').forEach(btn => {
+        btn.addEventListener('click', () => openPackBulkModal(parseInt(btn.getAttribute('data-bulk-id'))));
+        btn.style.display = hasPermission('packing_daily') ? '' : 'none';
+    });
 }
 
 async function loadPackingRecordsTable() {
@@ -720,476 +732,317 @@ async function dispatchOrder(orderId) {
     scheduleDashboardRefresh();
 }
 
-function addPackingRow(bulkList, greenbeans, recipes, machines, packagingSizes, selectedCoffeeId = null) {
-    const rowsContainer = document.getElementById('packing-sheet-rows');
-    if (!rowsContainer) return;
-    
-    // If two entries share the exact same name (e.g. a duplicate greenbean
-    // record created by mistake), the dropdown alone can't tell them apart —
-    // one may have all the roast/bulk-stock history and the other none, so
-    // picking the wrong one silently shows 0 stock. Append the short code to
-    // disambiguate only when a name collision actually exists.
-    const singleNameCounts = {};
-    (greenbeans || []).forEach(gb => { singleNameCounts[gb.name] = (singleNameCounts[gb.name] || 0) + 1; });
-    const blendNameCounts = {};
-    (recipes || []).forEach(r => { blendNameCounts[r.name] = (blendNameCounts[r.name] || 0) + 1; });
+// Builds a short, deterministic lot code for a bulk item on a given date:
+// LOT-{coffee code}-{machine code}-{YYYYMMDD}. Deliberately doesn't start
+// with 'RMP:' so it never collides with the global quick-roast-log scanner
+// listener in app.js (which only reacts to that exact prefix).
+function buildLotCode(bulk, machines, greenbeans, recipes, dateStr) {
+    const sanitize = (s) => (s || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'X';
+    const machine = (machines || []).find(m => m.id === bulk.machine_id);
+    const machineCode = machine ? (machine.code || machine.name) : 'M';
 
-    let singleHtml = '';
-    (greenbeans || []).forEach(gb => {
-        const val = `Single-${gb.id}`;
-        const label = singleNameCounts[gb.name] > 1 && gb.code ? `${gb.name} (${gb.code})` : gb.name;
-        singleHtml += `
-            <option value="${val}" ${selectedCoffeeId && selectedCoffeeId.toString() === val ? 'selected' : ''}>
-                ${label}
-            </option>
-        `;
-    });
+    let coffeeCode;
+    if (bulk.coffee_type === 'Single') {
+        const gb = (greenbeans || []).find(g => g.id === bulk.single_coffee_id);
+        coffeeCode = gb ? (gb.code || gb.name) : bulk.coffee_name;
+    } else {
+        const r = (recipes || []).find(rec => rec.id === bulk.blend_recipe_id);
+        coffeeCode = r ? (r.code || r.name) : bulk.coffee_name;
+    }
 
-    let blendHtml = '';
-    (recipes || []).forEach(r => {
-        const val = `Blend-${r.id}`;
-        const label = blendNameCounts[r.name] > 1 && r.code ? `${r.name} (${r.code})` : r.name;
-        blendHtml += `
-            <option value="${val}" ${selectedCoffeeId && selectedCoffeeId.toString() === val ? 'selected' : ''}>
-                ${label}
-            </option>
-        `;
-    });
-
-    const optionsHtml = `
-        <optgroup label="Single Origin">
-            ${singleHtml}
-        </optgroup>
-        <optgroup label="Blend Recipes">
-            ${blendHtml}
-        </optgroup>
-    `;
-    
-    const rowId = 'pack-row-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-    
-    const rowDiv = document.createElement('div');
-    rowDiv.id = rowId;
-    rowDiv.className = 'packing-sheet-row';
-    rowDiv.style.cssText = 'background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;';
-    
-    rowDiv.innerHTML = `
-        <div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 8px;">
-            <div class="form-group flex-1-mb-0" >
-                <label class="form-label" style="font-size: 0.8rem; margin-bottom: 2px; font-weight: 600;" data-i18n="col_p_name">${window.t ? window.t("col_p_name") : "Coffee Name"}</label>
-                <select class="form-control pack-coffee-select" style="width: 100%; padding: 4px 8px; height: 32px;" required>
-                    ${optionsHtml}
-                </select>
-            </div>
-            <button type="button" class="btn btn-danger btn-sm btn-remove-pack-row" style="padding: 4px 10px; height: 32px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-        </div>
-        <div class="machine-rows-container" style="display: flex; flex-direction: column; gap: 6px;"></div>
-    `;
-    
-    rowsContainer.appendChild(rowDiv);
-    
-    // Delete handler
-    const btnDel = rowDiv.querySelector('.btn-remove-pack-row');
-    btnDel.onclick = () => {
-        if (rowsContainer.children.length > 1) {
-            rowDiv.remove();
-            validatePackingStock();
-        } else {
-            alert(window.t ? window.t("msg_min_one_coffee") : "Minimum one coffee required.");
-        }
-    };
-    
-    const select = rowDiv.querySelector('.pack-coffee-select');
-    const mContainer = rowDiv.querySelector('.machine-rows-container');
-    
-    const activeSizes = (packagingSizes || []).filter(s => s.is_visible).sort((a,b) => a.gram - b.gram);
-    
-    const renderMachineRows = () => {
-        mContainer.innerHTML = '';
-        const coffeeKey = select.value;
-        const [type, idStr] = coffeeKey.split('-');
-        const id = parseInt(idStr);
-        
-        const matchedBulks = (bulkList || []).filter(b => b.coffee_type === type && (type === 'Single' ? b.single_coffee_id === id : b.blend_recipe_id === id));
-        
-        if (matchedBulks.length === 0) {
-            let machineOptions = '<option value="0">Select Machine...</option>';
-            (machines || []).forEach(m => {
-                machineOptions += `<option value="${m.id}">${m.name}</option>`;
-            });
-
-            const subRow = document.createElement('div');
-            subRow.className = 'machine-pack-subrow';
-            subRow.dataset.bulkId = '0';
-            subRow.dataset.machineId = '0';
-            subRow.dataset.avail = '0';
-            subRow.style.cssText = 'background: rgba(0,0,0,0.02); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;';
-            
-            let sizeInputsHtml = '';
-            activeSizes.forEach(s => {
-                sizeInputsHtml += `
-                    <div style="flex:1; min-width:70px;">
-                        <label style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:2px; display:block;">${s.label}</label>
-                        <input type="number" class="form-control pack-qty-dynamic" data-gram="${s.gram}" data-name="${s.label}" min="0" value="0" style="width:100%; padding: 2px 6px; height: 28px; font-size: 0.85rem;">
-                    </div>
-                `;
-            });
-            
-            subRow.innerHTML = `
-                <div style="display:flex; gap: 10px; align-items:center; margin-bottom:4px;">
-                    <select class="form-control pack-machine-select" style="font-size: 0.8rem; padding: 2px 6px; height: 28px; width: 180px; font-weight: 600;">
-                        ${machineOptions}
-                    </select>
-                    <span style="color:var(--text-secondary); font-size:0.8rem;">(Stock: 0.00 kg)</span>
-                </div>
-                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                    ${sizeInputsHtml}
-                </div>
-                <div class="warning-bubble hidden" style="width: 100%; background: rgba(234, 88, 12, 0.15); border: 1px solid #ea580c; color: #ea580c; padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; margin-top: 6px; display: flex; align-items: center; gap: 6px; font-weight: 500;"></div>
-            `;
-            
-            subRow.querySelector('.pack-machine-select').onchange = (e) => {
-                subRow.dataset.machineId = e.target.value;
-            };
-            
-            subRow.querySelectorAll('input').forEach(inp => {
-                inp.oninput = () => validatePackingStock();
-            });
-            mContainer.appendChild(subRow);
-            validatePackingStock();
-            return;
-        }
-        
-        if (activeSizes.length === 0) {
-            mContainer.innerHTML = `<div style="font-size:0.85rem; color:var(--danger);">No packaging sizes configured. Please add sizes in Settings.</div>`;
-            return;
-        }
-        
-        matchedBulks.forEach(bulkItem => {
-            const m = (machines || []).find(mac => mac.id === bulkItem.machine_id);
-            const machineName = m ? m.name : 'Unknown Machine';
-            const stock = parseFloat(bulkItem.bulk_available) || 0;
-            
-            const subRow = document.createElement('div');
-            subRow.className = 'machine-pack-subrow';
-            subRow.dataset.bulkId = bulkItem.id;
-            subRow.dataset.machineId = bulkItem.machine_id || 0;
-            subRow.dataset.avail = stock;
-            subRow.style.cssText = 'background: rgba(0,0,0,0.02); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;';
-            
-            let sizeInputsHtml = '';
-            activeSizes.forEach(s => {
-                sizeInputsHtml += `
-                    <div style="flex:1; min-width:70px;">
-                        <label style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:2px; display:block;">${s.label}</label>
-                        <input type="number" class="form-control pack-qty-dynamic" data-gram="${s.gram}" data-name="${s.label}" min="0" value="0" style="width:100%; padding: 2px 6px; height: 28px; font-size: 0.85rem;">
-                    </div>
-                `;
-            });
-            
-            subRow.innerHTML = `
-                <div style="font-size:0.8rem; font-weight:600; margin-bottom:4px; color:var(--text-color);">${machineName} <span style="color:var(--text-secondary); font-weight:normal;">(Stock: ${stock.toFixed(2)} kg)</span></div>
-                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                    ${sizeInputsHtml}
-                </div>
-                <div class="warning-bubble hidden" style="width: 100%; background: rgba(234, 88, 12, 0.15); border: 1px solid #ea580c; color: #ea580c; padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; margin-top: 6px; display: flex; align-items: center; gap: 6px; font-weight: 500;"></div>
-            `;
-            
-            subRow.querySelectorAll('input').forEach(inp => {
-                inp.oninput = () => validatePackingStock();
-            });
-            mContainer.appendChild(subRow);
-        });
-        validatePackingStock();
-    };
-    
-    select.onchange = renderMachineRows;
-    renderMachineRows();
+    return `LOT-${sanitize(coffeeCode)}-${sanitize(machineCode)}-${dateStr.replace(/-/g, '')}`;
 }
 
-function validatePackingStock() {
-    const subrows = document.querySelectorAll('.machine-pack-subrow');
-    subrows.forEach(sub => {
-        const avail = parseFloat(sub.dataset.avail) || 0;
-        
-        let totalKg = 0;
-        sub.querySelectorAll('.pack-qty-dynamic').forEach(inp => {
-            const gram = parseFloat(inp.getAttribute('data-gram')) || 0;
-            const qty = parseInt(inp.value) || 0;
-            totalKg += (gram * qty) / 1000;
-        });
-        
-        const bubble = sub.querySelector('.warning-bubble');
-        if (totalKg > avail) {
-            bubble.classList.remove('hidden');
-            let template = window.t ? window.t("msg_warn_exceed") : "Required quantity {totalNeeded} kg exceeds available stock {avail} kg.";
-            if (!template) template = "Required quantity {totalNeeded} kg exceeds available stock {avail} kg.";
-            template = template.replace("{totalNeeded}", totalKg.toFixed(2)).replace("{avail}", avail.toFixed(2));
-            bubble.innerHTML = template;
-        } else {
-            bubble.classList.add('hidden');
-        }
-    });
+// One production_lots row per (bulk item, day) — reuses today's lot if one
+// was already printed for this bulk item, otherwise creates it. See
+// database/production_lots_migration.sql and V2_ROADMAP.md for why this is
+// an approximation (bulk_available is a running total, so the "latest batch"
+// snapshot may not cover every batch that fed the pool if it wasn't fully
+// packed on the day it was roasted).
+async function getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roastBatches) {
+    const today = new Date().toISOString().split('T')[0];
+    const { data: lots } = await fetchData('production_lots');
+    const existing = (lots || []).find(l => l.bulk_roasted_coffee_id === bulk.id && l.production_date === today);
+    if (existing) return existing;
+
+    const matchingBatches = (roastBatches || [])
+        .filter(b => b.coffee_type === bulk.coffee_type &&
+            (bulk.coffee_type === 'Single' ? b.single_coffee_id === bulk.single_coffee_id : b.blend_recipe_id === bulk.blend_recipe_id) &&
+            b.machine_id === bulk.machine_id)
+        .sort((a, b) => new Date(b.roast_date || 0) - new Date(a.roast_date || 0) || b.id - a.id);
+    const latestBatch = matchingBatches[0] || null;
+
+    const newLot = {
+        lot_code: buildLotCode(bulk, machines, greenbeans, recipes, today),
+        bulk_roasted_coffee_id: bulk.id,
+        coffee_type: bulk.coffee_type,
+        single_coffee_id: bulk.single_coffee_id,
+        blend_recipe_id: bulk.blend_recipe_id,
+        machine_id: bulk.machine_id,
+        coffee_name: bulk.coffee_name,
+        production_date: today,
+        latest_roast_batch_id: latestBatch ? latestBatch.id : null
+    };
+    const { data: saved, error } = await saveData('production_lots', newLot);
+    if (error) {
+        console.error('Failed to create production lot:', error);
+        return newLot;
+    }
+    return saved || newLot;
 }
 
-async function submitPackingSheet() {
-    const [
-        { data: bulkList },
-        { data: packedList },
-        { data: greenbeans },
-        { data: recipes }
-    ] = await Promise.all([
-        fetchData('bulk_roasted_coffee'),
-        fetchData('packed_coffee'),
-        fetchData('green_coffee'),
-        fetchData('blend_recipes')
-    ]);
-    
-    const subrows = document.querySelectorAll('.machine-pack-subrow');
-    if (subrows.length === 0) return;
-    
-    let hasExceeded = false;
-    let exceededInfo = [];
-    
-    const additions = [];
-    
-    subrows.forEach(sub => {
-        const bulkId = parseInt(sub.dataset.bulkId);
-        const machineId = parseInt(sub.dataset.machineId);
-        const avail = parseFloat(sub.dataset.avail) || 0;
-        
-        let totalKg = 0;
-        const subAdditions = [];
-        
-        sub.querySelectorAll('.pack-qty-dynamic').forEach(inp => {
-            const gram = parseFloat(inp.getAttribute('data-gram')) || 0;
-            const qty = parseInt(inp.value) || 0;
-            const kg = (gram * qty) / 1000;
-            totalKg += kg;
-            
-            if (qty > 0) {
-                subAdditions.push({ sizeG: gram, qty: qty, totalKg: kg, label: inp.getAttribute('data-name') });
-            }
-        });
-        
-        if (totalKg === 0) return;
-        
-        const row = sub.closest('.packing-sheet-row');
-        const coffeeKey = row.querySelector('.pack-coffee-select').value;
-        const [type, idStr] = coffeeKey.split('-');
-        const id = parseInt(idStr);
-        
-        let coffeeName = '';
-        if (type === 'Single') {
-            const gb = (greenbeans || []).find(g => g.id === id);
-            coffeeName = gb ? gb.name : 'Single Origin';
-        } else {
-            const r = (recipes || []).find(rec => rec.id === id);
-            coffeeName = r ? r.name : 'Blend Recipe';
+function printLotBarcodeLabels(lot, requested) {
+    let labelsHtml = '';
+    requested.forEach(r => {
+        for (let i = 0; i < r.qty; i++) {
+            labelsHtml += `
+                <div class="barcode-label-item" style="display:inline-block; text-align:center; padding:8px; margin:4px; border:1px dashed #999;">
+                    <svg class="lot-barcode-svg" data-value="${lot.lot_code}"></svg>
+                    <div style="font-weight:700; font-size:12px;">${lot.coffee_name}</div>
+                    <div style="font-size:11px;">${r.label}</div>
+                </div>
+            `;
         }
-        
-        if (totalKg > avail) {
-            hasExceeded = true;
-            exceededInfo.push(`- ${coffeeName}: ${totalKg.toFixed(2)} kg req, ${avail.toFixed(2)} kg avail.`);
-        }
-        
-        subAdditions.forEach(sa => {
-            additions.push({ bulkId, machineId, coffeeName, type, id, sizeG: sa.sizeG, qty: sa.qty, totalKg: sa.totalKg, label: sa.label });
-        });
     });
-    
-    if (additions.length === 0) return;
-    
-    const invalidAdd = additions.find(a => a.machineId === 0);
-    if (invalidAdd) {
-        alert("Please select a Machine for " + invalidAdd.coffeeName);
+
+    const printWin = window.open('', '_blank', 'width=900,height=700');
+    if (!printWin) {
+        alert('Could not open the print window — please allow pop-ups for this site and try again.');
         return;
     }
-    
-    if (hasExceeded) {
-        let confirmText = window.t ? window.t("msg_confirm_exceed") : "Warning: The following quantities exceed available stock:\n{info}\n\nDo you want to proceed anyway?";
-        if (!confirmText) confirmText = "Warning: The following quantities exceed available stock:\n{info}\n\nDo you want to proceed anyway?";
-        confirmText = confirmText.replace("{info}", exceededInfo.join('\n'));
-        const proceed = await showWarningModal(confirmText);
-        if (!proceed) return;
-    }
-    
-    try {
-        const bulkUpdates = {};
-        
-        additions.forEach(add => {
-            if (add.bulkId && add.bulkId !== 0 && !isNaN(add.bulkId)) {
-                if (!bulkUpdates[add.bulkId]) bulkUpdates[add.bulkId] = 0;
-                bulkUpdates[add.bulkId] += add.totalKg;
-            }
-        });
-        
-        for (const bulkId in bulkUpdates) {
-            const bulkItem = (bulkList || []).find(b => b.id === parseInt(bulkId));
-            if (bulkItem) {
-                bulkItem.bulk_available = parseFloat(bulkItem.bulk_available) - bulkUpdates[bulkId];
-                if (bulkItem.bulk_available < 0) bulkItem.bulk_available = 0;
-                await saveData('bulk_roasted_coffee', bulkItem);
-            }
-        }
-        
-        for (const add of additions) {
-            const existing = (packedList || []).find(p => 
-                !p.roast_batch_id && 
-                p.custom_coffee_name === add.coffeeName && 
-                parseInt(p.bag_size_g) === parseInt(add.sizeG) &&
-                parseInt(p.machine_id) === parseInt(add.machineId)
-            );
-            
-            if (existing) {
-                existing.quantity = parseInt(existing.quantity) + add.qty;
-                await saveData('packed_coffee', existing);
-            } else {
-                const newPacked = {
-                    roast_batch_id: null,
-                    machine_id: add.machineId,
-                    custom_coffee_name: add.coffeeName,
-                    bag_size_g: add.sizeG,
-                    quantity: add.qty,
-                    selling_price: 12.00
-                };
-                await saveData('packed_coffee', newPacked);
-            }
-        }
-        
-        // Save packing records for history (match production schema)
-        const packingDate = document.getElementById('packing-date')?.value || new Date().toISOString().split('T')[0];
-        for (const add of additions) {
-            await saveData('packing_records', {
-                date: packingDate,
-                pack_date: packingDate,
-                source_type: add.type,
-                source_id: add.id,
-                coffee_name: `${add.coffeeName} (${add.type})`,
-                machine_id: add.machineId,
-                bag_size_g: add.sizeG,
-                size_g: add.sizeG,
-                quantity: add.qty,
-                status: 'Completed'
+    printWin.document.write(`
+        <html><head><title>Lot Barcode Labels</title>
+        <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 0; padding: 10px; }
+            @media print { body { margin: 0; } }
+        </style></head><body>
+        ${labelsHtml}
+        <script>
+            document.querySelectorAll('.lot-barcode-svg').forEach(el => {
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.5, height: 45, displayValue: true, fontSize: 10, margin: 4 });
             });
-        }
-        
-        await showWarningModal(window.t ? window.t("msg_pack_saved") : "Packing saved successfully.", false);
-        
-        const rowsContainer = document.getElementById('packing-sheet-rows');
-        if (rowsContainer) rowsContainer.innerHTML = '';
-        
-        await loadPackingSection();
-        scheduleDashboardRefresh();
-    } catch (err) {
-        console.error('Packing submit error:', err);
-        alert('Error during packing save: ' + err.message);
-    }
+            setTimeout(() => { window.print(); }, 500);
+        <\/script>
+        </body></html>
+    `);
+    printWin.document.close();
 }
 
-// Package bulk coffee batch modal
-async function openPackingModal(bulkId) {
-    const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-    const record = bulkList.find(b => b.id === bulkId);
-    if (!record) return;
+// Print Barcode modal — one form, all active packaging sizes at once, per
+// the "Ready to Pack" workflow: print now, physical packing/qty entry
+// happens later via the Pack button (openPackBulkModal), possibly a
+// different count than what was printed.
+async function openPrintBarcodeModal(bulkId) {
+    const [
+        { data: bulkList },
+        { data: machines },
+        { data: greenbeans },
+        { data: recipes },
+        { data: packagingSizes },
+        { data: roastBatches }
+    ] = await Promise.all([
+        fetchData('bulk_roasted_coffee'),
+        fetchData('machines'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('packaging_sizes'),
+        fetchData('roast_batches')
+    ]);
+    const bulk = (bulkList || []).find(b => b.id === bulkId);
+    if (!bulk) return;
+
+    const activeSizes = (packagingSizes || []).filter(s => s.is_visible).sort((a, b) => a.gram - b.gram);
+    if (activeSizes.length === 0) {
+        alert('No packaging sizes configured. Please add sizes in Settings.');
+        return;
+    }
+
+    const sizesHtml = activeSizes.map(s => `
+        <div class="form-group flex-1-mb-0">
+            <label class="form-label">${s.label}</label>
+            <input type="number" min="0" class="form-control print-barcode-qty-input" data-label="${s.label}" value="0" placeholder="0">
+        </div>
+    `).join('');
 
     const html = `
-        <form id="modal-packing-form">
+        <form id="modal-print-barcode-form">
             <div class="form-group">
-                <label class="form-label">Source Roasted Coffee</label>
-                <input type="text" class="form-control" value="${record.coffee_name} (Available Bulk: ${parseFloat(record.bulk_available).toFixed(2)} kg)" readonly>
+                <label class="form-label">Coffee</label>
+                <input type="text" class="form-control" value="${bulk.coffee_name} (${parseFloat(bulk.bulk_available).toFixed(2)} kg available)" readonly>
             </div>
-            
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Bag Size / Retail Weight</label>
-                    <select id="m-pack-size" class="form-control">
-                        <option value="250" selected>250 grams (g)</option>
-                        <option value="500">500 grams (g)</option>
-                        <option value="1000">1000 grams / 1kg (g)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Bags to Produce</label>
-                    <input type="number" id="m-pack-qty" class="form-control" value="10" min="1" required>
+            <div style="margin-top: 16px;">
+                <label class="form-label">Number of labels to print per size</label>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    ${sizesHtml}
                 </div>
             </div>
-
-            <div class="form-group">
-                <label class="form-label">Calculated Bulk Weight Needed</label>
-                <input type="text" id="m-pack-calc-weight" class="form-control" style="background:var(--border); font-weight:700;" readonly value="2.5 kg">
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Retail Selling Price per Bag</label>
-                <input type="number" step="0.01" id="m-pack-price" class="form-control" value="12.00">
-            </div>
-
-            <div class="modal-footer-actions">
+            <div class="modal-footer-actions-lg">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Run Packaging</button>
+                <button type="submit" class="btn btn-primary">Print Labels</button>
             </div>
         </form>
     `;
 
-    openModal('Run Retail Packaging Line', html);
+    openModal('Print Barcode Labels', html, '600px');
 
-    const sizeSelect = document.getElementById('m-pack-size');
-    const qtyInput = document.getElementById('m-pack-qty');
-    const calcWeight = document.getElementById('m-pack-calc-weight');
-
-    function updateCalc() {
-        const size = parseInt(sizeSelect.value) || 250;
-        const qty = parseInt(qtyInput.value) || 0;
-        const kgNeeded = (size * qty) / 1000;
-        calcWeight.value = `${kgNeeded.toFixed(2)} kg`;
-    }
-    sizeSelect.addEventListener('change', updateCalc);
-    qtyInput.addEventListener('input', updateCalc);
-    updateCalc();
-
-    document.getElementById('modal-packing-form').addEventListener('submit', async (e) => {
+    document.getElementById('modal-print-barcode-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const size = parseInt(sizeSelect.value);
-        const qty = parseInt(qtyInput.value);
-        const weightNeeded = (size * qty) / 1000;
+        const requested = Array.from(document.querySelectorAll('.print-barcode-qty-input'))
+            .map(inp => ({ label: inp.getAttribute('data-label'), qty: parseInt(inp.value) || 0 }))
+            .filter(r => r.qty > 0);
 
-        // 1. Verify enough bulk stock remaining
-        if (parseFloat(record.bulk_available) < weightNeeded) {
-            alert(window.t("alert_insufficient_bulk").replace("{avail}", parseFloat(record.bulk_available).toFixed(2)).replace("{req}", weightNeeded));
+        if (requested.length === 0) {
+            alert('Please enter a quantity for at least one size.');
             return;
         }
 
-        // 2. Add to packed_coffee inventory table
-        const { data: existingPacked } = await fetchData('packed_coffee');
-        const duplicate = existingPacked.find(p => 
-            !p.roast_batch_id && 
-            p.custom_coffee_name === record.coffee_name && 
-            p.bag_size_g === size
-        );
+        const lot = await getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roastBatches);
+        printLotBarcodeLabels(lot, requested);
+        document.getElementById('btn-close-modal').click();
+    });
+}
 
-        if (duplicate) {
-            duplicate.quantity = parseInt(duplicate.quantity) + qty;
-            await saveData('packed_coffee', duplicate);
+// Pack modal, scoped to a single bulk item's card — same deduction logic the
+// old Daily Packing sheet used (decrement bulk_available, upsert
+// packed_coffee, log packing_records), just triggered per-card instead of
+// via a manual coffee+machine dropdown. Only the packed quantity per size is
+// entered — no carton count, per the Packing team's workflow.
+async function openPackBulkModal(bulkId) {
+    const [
+        { data: bulkList },
+        { data: packagingSizes }
+    ] = await Promise.all([
+        fetchData('bulk_roasted_coffee'),
+        fetchData('packaging_sizes')
+    ]);
+    const bulk = (bulkList || []).find(b => b.id === bulkId);
+    if (!bulk) return;
+
+    const activeSizes = (packagingSizes || []).filter(s => s.is_visible).sort((a, b) => a.gram - b.gram);
+    if (activeSizes.length === 0) {
+        alert('No packaging sizes configured. Please add sizes in Settings.');
+        return;
+    }
+
+    const sizesHtml = activeSizes.map(s => `
+        <div class="form-group flex-1-mb-0">
+            <label class="form-label">${s.label}</label>
+            <input type="number" min="0" class="form-control pack-bulk-qty-input" data-gram="${s.gram}" data-label="${s.label}" value="0" placeholder="0">
+        </div>
+    `).join('');
+
+    const html = `
+        <form id="modal-pack-bulk-form">
+            <div class="form-group">
+                <label class="form-label">Source Bulk Coffee</label>
+                <input type="text" class="form-control" value="${bulk.coffee_name} (Available: ${parseFloat(bulk.bulk_available).toFixed(2)} kg)" readonly>
+            </div>
+            <div style="margin-top: 16px;">
+                <label class="form-label">Quantity packed per size</label>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    ${sizesHtml}
+                </div>
+            </div>
+            <div id="pack-bulk-warning" class="hidden" style="background: rgba(234, 88, 12, 0.15); border: 1px solid #ea580c; color: #ea580c; padding: 6px 10px; border-radius: 6px; font-size: 0.8rem; margin-top: 10px;"></div>
+            <div class="modal-footer-actions-lg">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Packing</button>
+            </div>
+        </form>
+    `;
+
+    openModal(`Pack: ${bulk.coffee_name}`, html, '600px');
+
+    const getQtyInputs = () => Array.from(document.querySelectorAll('.pack-bulk-qty-input'));
+    const warningEl = document.getElementById('pack-bulk-warning');
+    const avail = parseFloat(bulk.bulk_available) || 0;
+
+    const recalcWarning = () => {
+        const totalKg = getQtyInputs().reduce((sum, inp) => {
+            const gram = parseFloat(inp.getAttribute('data-gram')) || 0;
+            const qty = parseInt(inp.value) || 0;
+            return sum + (gram * qty) / 1000;
+        }, 0);
+        if (totalKg > avail) {
+            warningEl.classList.remove('hidden');
+            warningEl.textContent = `Required quantity ${totalKg.toFixed(2)} kg exceeds available stock ${avail.toFixed(2)} kg.`;
         } else {
-            const newPacked = {
-                roast_batch_id: null,
-                custom_coffee_name: record.coffee_name,
-                bag_size_g: size,
-                quantity: qty,
-                selling_price: parseFloat(document.getElementById('m-pack-price').value) || 12.00
-            };
-            await saveData('packed_coffee', newPacked);
+            warningEl.classList.add('hidden');
+        }
+    };
+    getQtyInputs().forEach(inp => inp.addEventListener('input', recalcWarning));
+
+    document.getElementById('modal-pack-bulk-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const additions = getQtyInputs()
+            .map(inp => ({ gram: parseFloat(inp.getAttribute('data-gram')), label: inp.getAttribute('data-label'), qty: parseInt(inp.value) || 0 }))
+            .filter(a => a.qty > 0);
+
+        if (additions.length === 0) {
+            alert('Please input quantity for at least one size.');
+            return;
         }
 
-        // 3. Deduct from bulk stock
-        record.bulk_available = parseFloat(record.bulk_available) - weightNeeded;
-        await saveData('bulk_roasted_coffee', record);
+        const totalKg = additions.reduce((sum, a) => sum + (a.gram * a.qty) / 1000, 0);
+        if (totalKg > avail) {
+            const proceed = await showWarningModal(`Warning: required ${totalKg.toFixed(2)} kg exceeds available stock ${avail.toFixed(2)} kg.\n\nDo you want to proceed anyway?`);
+            if (!proceed) return;
+        }
 
-        modalContainer.classList.add('hidden');
-        loadPackingSection();
-        scheduleDashboardRefresh();
+        try {
+            const { data: freshBulkList } = await fetchData('bulk_roasted_coffee');
+            const freshBulk = (freshBulkList || []).find(b => b.id === bulk.id);
+            if (freshBulk) {
+                freshBulk.bulk_available = Math.max(0, parseFloat(freshBulk.bulk_available) - totalKg);
+                await saveData('bulk_roasted_coffee', freshBulk);
+            }
+
+            const { data: packedList } = await fetchData('packed_coffee');
+            const packingDate = new Date().toISOString().split('T')[0];
+
+            for (const add of additions) {
+                const existing = (packedList || []).find(p =>
+                    !p.roast_batch_id &&
+                    p.custom_coffee_name === bulk.coffee_name &&
+                    parseInt(p.bag_size_g) === parseInt(add.gram) &&
+                    parseInt(p.machine_id) === parseInt(bulk.machine_id)
+                );
+                if (existing) {
+                    existing.quantity = parseInt(existing.quantity) + add.qty;
+                    await saveData('packed_coffee', existing);
+                } else {
+                    await saveData('packed_coffee', {
+                        roast_batch_id: null,
+                        machine_id: bulk.machine_id,
+                        custom_coffee_name: bulk.coffee_name,
+                        bag_size_g: add.gram,
+                        quantity: add.qty,
+                        selling_price: 12.00
+                    });
+                }
+                await saveData('packing_records', {
+                    date: packingDate,
+                    pack_date: packingDate,
+                    source_type: bulk.coffee_type,
+                    source_id: bulk.coffee_type === 'Single' ? bulk.single_coffee_id : bulk.blend_recipe_id,
+                    coffee_name: bulk.coffee_name,
+                    machine_id: bulk.machine_id,
+                    bag_size_g: add.gram,
+                    size_g: add.gram,
+                    quantity: add.qty,
+                    status: 'Completed'
+                });
+            }
+
+            document.getElementById('btn-close-modal').click();
+            await showWarningModal('Packing saved successfully.', false);
+            await loadPackingSection();
+            scheduleDashboardRefresh();
+        } catch (err) {
+            console.error('Pack bulk submit error:', err);
+            alert('Error during packing save: ' + err.message);
+        }
     });
 }
 
@@ -1211,64 +1064,6 @@ async function adjustPackedStock(id) {
     } else {
         alert(window.t("alert_invalid_qty"));
     }
-}
-
-// Manual outside packaging (outside roasted bean source)
-const btnCustomPack = document.getElementById('btn-custom-pack');
-if (btnCustomPack) {
-    btnCustomPack.addEventListener('click', async () => {
-    const html = `
-        <form id="modal-custom-pack-form">
-            <div class="form-group">
-                <label class="form-label">Coffee Name</label>
-                <input type="text" id="m-cp-name" class="form-control" placeholder="e.g. Guest Roast Coffee" required>
-            </div>
-            
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Bag Size / Retail Weight</label>
-                    <select id="m-cp-size" class="form-control">
-                        <option value="250" selected>250 g</option>
-                        <option value="500">500 g</option>
-                        <option value="1000">1kg</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Inventory Quantity (Bags)</label>
-                    <input type="number" id="m-cp-qty" class="form-control" value="20" min="1" required>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Retail Selling Price per Bag</label>
-                <input type="number" step="0.01" id="m-cp-price" class="form-control" value="15.00">
-            </div>
-
-            <div class="modal-footer-actions">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Add Custom Stock</button>
-            </div>
-        </form>
-    `;
-
-    openModal('Import Custom Retail Stock', html);
-
-    document.getElementById('modal-custom-pack-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const record = {
-            roast_batch_id: null, // manual
-            custom_coffee_name: document.getElementById('m-cp-name').value,
-            bag_size_g: parseInt(document.getElementById('m-cp-size').value),
-            quantity: parseInt(document.getElementById('m-cp-qty').value),
-            selling_price: parseFloat(document.getElementById('m-cp-price').value) || 15.00
-        };
-
-        await saveData('packed_coffee', record);
-        modalContainer.classList.add('hidden');
-        loadPackingSection();
-        scheduleDashboardRefresh();
-    });
-    });
 }
 
 async function loadBulkRoastedSection() {
@@ -1779,7 +1574,7 @@ async function openCustomPackingModal() {
         </form>
     `;
 
-    openModal('Custom Packing', html, '600px');
+    openModal('Add Manual Packed Stock', html, '600px');
     
     document.getElementById('modal-custom-packing-form').addEventListener('submit', async (e) => {
         e.preventDefault();

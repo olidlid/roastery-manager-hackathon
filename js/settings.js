@@ -286,7 +286,9 @@ const PERMISSION_GROUPS = [
     ]},
     { label: '📦 Packing', keys: [
         { key: 'packing_view', label: 'View Packing Page' },
-        { key: 'packing_daily', label: 'Daily Packing (pack)' },
+        { key: 'packing_daily', label: 'Pack from Bulk (Ready to Pack)' },
+        { key: 'packing_print_barcode', label: 'Print Barcode' },
+        { key: 'packing_manual_add', label: 'Add Manual Packed Stock' },
         { key: 'packing_order_view', label: 'View Order Requests' },
         { key: 'packing_records_view', label: 'View Records' },
         { key: 'packing_unpack', label: 'Unpack' },
@@ -314,6 +316,9 @@ const PERMISSION_GROUPS = [
     { label: '📈 Reports', keys: [
         { key: 'reports_view', label: 'View Reports' },
         { key: 'reports_stockopname_view', label: 'Stock Opname Tab' }
+    ]},
+    { label: '🔍 Tracking', keys: [
+        { key: 'tracking_view', label: 'View Tracking Page' }
     ]},
     { label: '⚙️ Settings', keys: [
         { key: 'settings_general', label: 'General' },

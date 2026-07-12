@@ -452,6 +452,24 @@ CREATE TABLE IF NOT EXISTS public.packed_coffee_lots (
     packed_date DATE DEFAULT CURRENT_DATE
 );
 
+-- 25. Production lots (traceability for "Ready to Pack" barcode workflow —
+-- see database/production_lots_migration.sql for the migration + full notes).
+-- One row per (bulk_roasted_coffee row, production_date); the Tracking page
+-- searches this table by lot_code to show coffee/process/supplier/dates.
+CREATE TABLE IF NOT EXISTS public.production_lots (
+    id SERIAL PRIMARY KEY,
+    lot_code TEXT NOT NULL UNIQUE,
+    bulk_roasted_coffee_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE SET NULL,
+    coffee_type TEXT,
+    single_coffee_id INTEGER,
+    blend_recipe_id INTEGER,
+    machine_id INTEGER,
+    coffee_name TEXT,
+    production_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    latest_roast_batch_id INTEGER REFERENCES public.roast_batches(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ----------------------------------------------------------------------------
@@ -471,7 +489,7 @@ BEGIN
     'packaging_sizes','packed_coffee','packing_records','customers',
     'sales_agents','request_orders','request_order_items','sales_orders',
     'stock_takes','stock_take_items',
-    'green_coffee_lots','packed_coffee_lots'
+    'green_coffee_lots','packed_coffee_lots','production_lots'
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);

@@ -139,6 +139,7 @@ const SECTION_PERMISSIONS = {
     'sec-handover': ['sales_request_view', 'dispatch_approval_view'],
     'sec-reports': 'reports_view',
     'sec-settings': ['settings_general', 'settings_production', 'settings_system'],
+    'sec-tracking': 'tracking_view',
 };
 
 // When a permission is split out of a broader one, roles saved before the new
@@ -172,6 +173,12 @@ const PERMISSION_FALLBACKS = {
     // user_management (Admin, Developer) inherit it by default until an admin
     // toggles the new key explicitly on/off per role.
     user_delete: 'user_management',
+    // Print Barcode / Add Manual Stock are new actions split out of the
+    // "Ready to Pack" rebuild of the old Daily Packing tab — anyone who could
+    // already pack (packing_daily) keeps doing everything on that tab by
+    // default; admins can restrict either action separately later.
+    packing_print_barcode: 'packing_daily',
+    packing_manual_add: 'packing_daily',
 };
 
 // Effective permission for a specific role object, honouring PERMISSION_FALLBACKS
@@ -204,6 +211,7 @@ function getFirstAllowedSection() {
         'sec-customers',
         'sec-handover',
         'sec-reports',
+        'sec-tracking',
         'sec-settings'
     ];
     for (const sec of sections) {

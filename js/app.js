@@ -140,11 +140,12 @@ const MOCK_DB = {
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: true, roasting_batch_delete: true, roasting_batch_approve: true,
                 blend_view: true, blend_add: true, blend_edit: true, blend_delete: true,
                 production_potential_view: true,
-                packing_view: true, packing_daily: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
+                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
                 sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
                 reports_view: true, reports_stockopname_view: true,
+                tracking_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
                 user_management: true, user_delete: true
             }
@@ -160,11 +161,12 @@ const MOCK_DB = {
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: true, roasting_batch_delete: true, roasting_batch_approve: true,
                 blend_view: true, blend_add: true, blend_edit: true, blend_delete: true,
                 production_potential_view: true,
-                packing_view: true, packing_daily: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
+                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
                 sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
                 reports_view: true, reports_stockopname_view: true,
+                tracking_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
                 user_management: true, user_delete: true
             }
@@ -180,11 +182,12 @@ const MOCK_DB = {
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: true, roasting_batch_delete: true, roasting_batch_approve: true,
                 blend_view: true, blend_add: true, blend_edit: true, blend_delete: true,
                 production_potential_view: true,
-                packing_view: true, packing_daily: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
+                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
                 sales_request_view: true, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: true, reports_stockopname_view: true,
+                tracking_view: true,
                 settings_general: false, settings_production: true, settings_system: false,
                 user_management: false, user_delete: false
             }
@@ -200,11 +203,12 @@ const MOCK_DB = {
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
                 blend_view: true, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: true,
-                packing_view: false, packing_daily: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false,
+                packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false,
                 sales_request_view: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: false, reports_stockopname_view: false,
+                tracking_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false, user_delete: false
             }
@@ -220,11 +224,12 @@ const MOCK_DB = {
                 roasting_batch_view: false, roasting_batch_add: false, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
                 blend_view: false, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: false,
-                packing_view: true, packing_daily: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
+                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true,
                 sales_request_view: true, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: false, reports_stockopname_view: false,
+                tracking_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false, user_delete: false
             }
@@ -240,11 +245,12 @@ const MOCK_DB = {
                 roasting_batch_view: false, roasting_batch_add: false, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
                 blend_view: false, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: false,
-                packing_view: false, packing_daily: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false,
+                packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false,
                 sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: false,
                 reports_view: true, reports_stockopname_view: true,
+                tracking_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false, user_delete: false
             }
@@ -459,7 +465,8 @@ const PAGE_METADATA = {
     'sec-settings': { title: 'System Settings', subtitle: 'Configure branding, printing layouts, and connection endpoints' },
     'sec-reports': { title: 'Reports', subtitle: '' },
     'sec-handover': { title: 'Handover', subtitle: '' },
-    'sec-customers': { title: 'Customer Management', subtitle: 'Manage wholesale and retail customers' }
+    'sec-customers': { title: 'Customer Management', subtitle: 'Manage wholesale and retail customers' },
+    'sec-tracking': { title: 'Tracking', subtitle: 'Look up a lot barcode to trace a pack back to its coffee, process, supplier and dates' }
 };
 
 // --- MOBILE NAV DRAWER (hamburger sidebar) ---
@@ -823,6 +830,9 @@ async function loadSectionData(sectionId) {
         case 'sec-customers':
             await loadCustomersSection();
             break;
+        case 'sec-tracking':
+            loadTrackingSection();
+            break;
         case 'sec-handover':
             const activeHandoverTabBtn = document.querySelector('#sec-handover .tab-btn.active');
             if (activeHandoverTabBtn) {
@@ -947,7 +957,14 @@ function enforceGranularPermissions() {
 
     // --- PACKING BUTTONS ---
     const btnCustomPacking = document.getElementById('btn-custom-packing');
-    if (btnCustomPacking) btnCustomPacking.style.display = hasPermission('packing_daily') ? '' : 'none';
+    if (btnCustomPacking) btnCustomPacking.style.display = hasPermission('packing_manual_add') ? '' : 'none';
+    // Ready to Pack cards: Print Barcode / Pack buttons
+    document.querySelectorAll('.btn-print-lot-barcode').forEach(btn => {
+        btn.style.display = hasPermission('packing_print_barcode') ? '' : 'none';
+    });
+    document.querySelectorAll('.btn-pack-bulk').forEach(btn => {
+        btn.style.display = hasPermission('packing_daily') ? '' : 'none';
+    });
     // Unpack buttons in packed coffee rows
     document.querySelectorAll('.btn-unpack, [onclick*="unpack"]').forEach(btn => {
         btn.style.display = hasPermission('packing_unpack') ? '' : 'none';
