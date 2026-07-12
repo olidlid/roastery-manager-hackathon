@@ -1681,7 +1681,7 @@ function showSetNewPasswordModal() {
 function showChangePasswordModal() {
     const html = `
         <form id="change-password-form">
-            <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:16px;" data-i18n="msg_change_password_hint">Enter your current password, then choose a new one. (Google sign-in accounts don't have a password — ask an admin to send a reset email instead.)</p>
+            <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:16px;" data-i18n="msg_change_password_hint">Enter your current password, then choose a new one. (Google sign-in accounts don't have a password — ask an admin to reset it for you instead.)</p>
             <div class="form-group">
                 <label class="form-label" for="cur-password" data-i18n="lbl_current_password">Current Password</label>
                 <input type="password" id="cur-password" class="form-control" required>

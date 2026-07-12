@@ -39,7 +39,7 @@ async function loadUsersSection() {
             <td>${user.created_at ? new Date(user.created_at).toLocaleDateString() : '2026-06-28'}</td>
             <td>
                 <button class="btn btn-secondary btn-sm btn-edit-user" data-id="${user.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
-                ${(hasPermission('user_management') && user.email) ? `<button class="btn btn-secondary btn-sm btn-reset-user-pw ml-1" data-email="${user.email}" data-name="${user.name}" title="Send password reset email"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></button>` : ''}
+                ${hasPermission('user_management') ? `<button class="btn btn-secondary btn-sm btn-reset-user-pw ml-1" data-id="${user.id}" data-name="${user.name}" title="Reset password"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M2 18v3c0 .6.4 1 1 1h4v-3h3v-3h2l1.4-1.4a6.5 6.5 0 1 0-4-4Z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg></button>` : ''}
                 ${(hasPermission('user_delete') && currentUser && user.id !== currentUser.id) ? `<button class="btn btn-danger btn-sm btn-delete-user ml-1" data-id="${user.id}" data-name="${user.name}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
             </td>
         `;
@@ -50,32 +50,73 @@ async function loadUsersSection() {
         btn.addEventListener('click', () => editUserRole(btn.getAttribute('data-id')));
     });
     document.querySelectorAll('.btn-reset-user-pw').forEach(btn => {
-        btn.addEventListener('click', () => sendPasswordResetToUser(btn.getAttribute('data-email'), btn.getAttribute('data-name')));
+        btn.addEventListener('click', () => openAdminResetPasswordModal(btn.getAttribute('data-id'), btn.getAttribute('data-name')));
     });
     document.querySelectorAll('.btn-delete-user').forEach(btn => {
         btn.addEventListener('click', () => deleteUserAccount(btn.getAttribute('data-id'), btn.getAttribute('data-name')));
     });
 }
 
-// Admin-triggered password reset. The anon key can't set another user's
-// password directly (that needs the service_role admin API), so this sends
-// the standard Supabase reset email — the user clicks the link and sets their
-// own new password, landing back on this app (redirectTo) where the recovery
-// flow shows showSetNewPasswordModal(). Same primitive as the login screen's
-// "Forgot password?" link. Delivery is subject to Supabase's email rate limit.
-async function sendPasswordResetToUser(email, name) {
-    if (!email) return;
-    const confirmed = await showWarningModal(`Send a password reset email to "${name}" (${email})?\n\nThey'll receive a link to set a new password themselves.`, true);
-    if (!confirmed) return;
+// Admin-triggered DIRECT password reset (no email). The anon key can't set
+// another user's password, so this calls the `admin-reset-password` Supabase
+// Edge Function, which holds the service_role key server-side and re-checks
+// the caller's admin permission before doing it. The user's session JWT is
+// attached automatically by functions.invoke() so the function knows who is
+// calling. If the function isn't deployed yet, invoke() surfaces that error.
+async function openAdminResetPasswordModal(userId, name) {
+    if (!userId) return;
+    const html = `
+        <form id="admin-reset-pw-form">
+            <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:16px;">Set a new password for <strong>${name}</strong>. It takes effect immediately — no email is sent.</p>
+            <div class="form-group">
+                <label class="form-label">New Password</label>
+                <input type="password" id="m-admin-new-pw" class="form-control" placeholder="Minimum 6 characters" required minlength="6">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label class="form-label">Confirm Password</label>
+                <input type="password" id="m-admin-new-pw-confirm" class="form-control" required minlength="6">
+            </div>
+            <div class="modal-footer-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Reset Password</button>
+            </div>
+        </form>
+    `;
+    openModal(`Reset Password — ${name}`, html);
+    document.getElementById('admin-reset-pw-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pass = document.getElementById('m-admin-new-pw').value;
+        const confirmPass = document.getElementById('m-admin-new-pw-confirm').value;
+        if (pass !== confirmPass) {
+            alert('Passwords do not match.');
+            return;
+        }
 
-    const { error } = await window.supabaseClient.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin
+        const { data, error } = await window.supabaseClient.functions.invoke('admin-reset-password', {
+            body: { userId, newPassword: pass }
+        });
+
+        if (error) {
+            // functions.invoke wraps a non-2xx response in a FunctionsHttpError
+            // whose .context is the raw Response — dig out the JSON { error }.
+            let msg = error.message || 'Unknown error';
+            try {
+                if (error.context && typeof error.context.json === 'function') {
+                    const body = await error.context.json();
+                    if (body && body.error) msg = body.error;
+                }
+            } catch (_) { /* keep the generic message */ }
+            alert('Failed to reset password: ' + msg);
+            return;
+        }
+        if (data && data.error) {
+            alert('Failed to reset password: ' + data.error);
+            return;
+        }
+
+        document.getElementById('btn-close-modal').click();
+        await showWarningModal(`Password for "${name}" has been reset. They can now sign in with the new password.`, false);
     });
-    if (error) {
-        alert('Failed to send reset email: ' + error.message);
-    } else {
-        await showWarningModal(`Reset email sent to ${email}.\n\nDelivery depends on their inbox and may be delayed by email limits.`, false);
-    }
 }
 
 // Removes the user's PROFILE row (role + all app access). Their Supabase Auth
