@@ -3860,17 +3860,26 @@ async function showBarcodeLabels(coffeeType, coffeeId, coffeeName) {
     }, 200);
 }
 
+// Same physical 50x25mm sticker + aspect-ratio-safe scaling used by the
+// other barcode stickers in the app (roasting log, packed coffee lot,
+// printAllBarcodes' sticker-50x25 preset). Previously this had no @page size
+// and no CSS scaling at all, so the raw JsBarcode SVG (width:2/height:60 in
+// source units, ~112mm wide for a 16-char RMP code) rendered at its full
+// intrinsic size and got clipped/mis-scaled by the label printer driver
+// instead of shrinking to fit — that's what made it unscannable even though
+// the in-modal preview (different JsBarcode call, showBarcodeLabels) looked fine.
 function printSingleBarcode(barcodeValue, coffeeName, machineName) {
     const printWin = window.open('', '_blank', 'width=400,height=300');
     printWin.document.write(`
         <html><head><title>Barcode Label</title>
         <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
         <style>
-            body { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; margin:0; font-family: Arial, sans-serif; }
-            .label { text-align:center; padding: 10px; }
-            .name { font-weight:700; font-size: 14px; margin-top: 5px; }
-            .machine { font-size: 12px; color: #666; }
-            @media print { body { margin: 0; } }
+            @page { size: 50mm 25mm; margin: 1mm; }
+            body { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100vh; margin:0; padding:0; box-sizing:border-box; font-family: Arial, sans-serif; }
+            .label { text-align:center; width:100%; padding: 0 2mm; box-sizing:border-box; }
+            .name { font-weight:700; font-size: 11px; margin-top: 2px; line-height:1; }
+            .machine { font-size: 9px; color: #666; line-height:1; }
+            svg#bc { max-width: 100%; width: auto; height: auto; max-height: 11mm; display: block; margin: 0 auto; }
         </style></head><body>
         <div class="label">
             <svg id="bc"></svg>
@@ -3878,7 +3887,7 @@ function printSingleBarcode(barcodeValue, coffeeName, machineName) {
             <div class="machine">🏭 ${machineName}</div>
         </div>
         <script>
-            JsBarcode('#bc', '${barcodeValue}', { format: 'CODE128', width: 2, height: 60, displayValue: true, fontSize: 12, margin: 5 });
+            JsBarcode('#bc', '${barcodeValue}', { format: 'CODE128', width: 1.3, height: 50, displayValue: true, fontSize: 9, margin: 3 });
             setTimeout(() => { window.print(); }, 500);
         <\/script>
         </body></html>
