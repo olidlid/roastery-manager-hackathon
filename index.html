@@ -319,9 +319,6 @@
                         <span id="user-role-lbl" class="user-role"></span>
                     </div>
                 </div>
-                <button id="btn-change-password" class="btn btn-secondary btn-sm" style="width: 100%; margin-bottom: 8px;">
-                    <i class="lucide-key"></i> <span data-i18n="btn_change_password">Change Password</span>
-                </button>
                 <button id="btn-logout" class="btn btn-secondary btn-sm" style="width: 100%;">
                     <i class="lucide-log-out"></i> <span data-i18n="btn_logout">Log Out</span>
                 </button>
@@ -1759,7 +1756,17 @@
             <section id="sec-settings" class="page-section hidden">
                 <div class="tab-container">
                     <div class="tab-headers">
-                        <button class="tab-btn active" data-tab="tab-sett-general">
+                        <!-- Always the default/active tab and never permission-gated
+                             (see enforceGranularPermissions in app.js — no entry in
+                             TAB_PERMISSIONS for this one) so every logged-in user,
+                             regardless of role, lands somewhere safe to change their
+                             own password — including roles with no settings_* grant
+                             at all, who couldn't see General/Production/System anyway. -->
+                        <button class="tab-btn active" data-tab="tab-sett-account">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                            <span data-i18n="tab_sett_account">Account</span>
+                        </button>
+                        <button class="tab-btn" data-tab="tab-sett-general">
                             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
                             General
                         </button>
@@ -1773,9 +1780,31 @@
                         </button>
                     </div>
 
+                    <!-- ===== TAB: ACCOUNT (self-service, every user) ===== -->
+                    <div id="tab-sett-account" class="tab-content">
+                        <div style="max-width: 500px; margin: 0 auto;">
+                            <div class="card">
+                                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 4px;">
+                                    <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(45,90,61,0.12), rgba(45,90,61,0.04)); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                    </div>
+                                    <div>
+                                        <h3 style="margin:0; font-size:0.95rem; font-weight:700;" data-i18n="lbl_password_card_title">Password</h3>
+                                        <p style="margin:0; font-size:0.75rem; color:var(--text-muted);" data-i18n="lbl_password_card_desc">Change the password for your own account</p>
+                                    </div>
+                                </div>
+                                <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
+                                    <button id="btn-change-password" class="btn btn-secondary btn-sm">
+                                        <i class="lucide-key"></i> <span data-i18n="btn_change_password">Change Password</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- SUB-TAB: Debug / Reset -->
                     <!-- ===== TAB: GENERAL ===== -->
-                    <div id="tab-sett-general" class="tab-content">
+                    <div id="tab-sett-general" class="tab-content hidden">
                         <div style="max-width: 700px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;">
 
                             <!-- Accordion: Company Profile -->
@@ -2335,12 +2364,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=6"></script>
+    <script src="js/translations.js?v=7"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
-    <script src="js/auth.js?v=6"></script>
+    <script src="js/auth.js?v=7"></script>
     <script src="js/greenbean.js?v=5"></script>
     <script src="js/roasting.js?v=3"></script>
     <script src="js/packing.js?v=13"></script>

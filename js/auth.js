@@ -138,7 +138,13 @@ const SECTION_PERMISSIONS = {
     'sec-customers': ['customer_view'],
     'sec-handover': ['sales_request_view', 'dispatch_approval_view'],
     'sec-reports': 'reports_view',
-    'sec-settings': ['settings_general', 'settings_production', 'settings_system'],
+    // 'dashboard' is included so the section stays reachable for every role
+    // (every default/custom role has it) even with none of the settings_*
+    // grants — needed so any logged-in user can reach the Account tab (change
+    // their own password), which is never permission-gated. The General/
+    // Production/System tabs inside stay individually gated via
+    // TAB_PERMISSIONS in app.js's enforceGranularPermissions().
+    'sec-settings': ['settings_general', 'settings_production', 'settings_system', 'dashboard'],
     'sec-tracking': 'tracking_view',
 };
 
