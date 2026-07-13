@@ -3879,7 +3879,7 @@ function printSingleBarcode(barcodeValue, coffeeName, machineName) {
             .label { text-align:center; width:100%; padding: 0 2mm; box-sizing:border-box; }
             .name { font-weight:700; font-size: 11px; margin-top: 2px; line-height:1; }
             .machine { font-size: 9px; color: #666; line-height:1; }
-            svg#bc { max-width: 100%; width: auto; height: auto; max-height: 11mm; display: block; margin: 0 auto; }
+            svg#bc { max-width: 100%; width: auto; height: auto; max-height: 14mm; display: block; margin: 0 auto; }
         </style></head><body>
         <div class="label">
             <svg id="bc"></svg>
@@ -3887,7 +3887,7 @@ function printSingleBarcode(barcodeValue, coffeeName, machineName) {
             <div class="machine">🏭 ${machineName}</div>
         </div>
         <script>
-            JsBarcode('#bc', '${barcodeValue}', { format: 'CODE128', width: 1.3, height: 50, displayValue: true, fontSize: 9, margin: 3 });
+            JsBarcode('#bc', '${barcodeValue}', { format: 'CODE128', width: 1.3, height: 60, displayValue: true, fontSize: 9, margin: 3 });
             setTimeout(() => { window.print(); }, 500);
         <\/script>
         </body></html>
@@ -3911,7 +3911,7 @@ const BARCODE_PRINT_PRESETS = {
     'letter-3col':  { label: 'Letter — 3 labels per row',               pageSize: 'letter',        margin: '10mm', columns: 3, barW: 1.2, barH: 40, fontSize: 9,  pagePerLabel: false },
     'sticker-100x50': { label: 'Sticker roll 100×50mm — 1 per page',    pageSize: '100mm 50mm',    margin: '3mm',  columns: 1, barW: 2,   barH: 60, fontSize: 12, pagePerLabel: true, barMaxHeightMm: 20 },
     'sticker-60x40':  { label: 'Sticker roll 60×40mm — 1 per page',     pageSize: '60mm 40mm',     margin: '2mm',  columns: 1, barW: 1.5, barH: 55, fontSize: 9,  pagePerLabel: true, barMaxHeightMm: 14 },
-    'sticker-50x25':  { label: 'Sticker roll 50×25mm — 1 per page',     pageSize: '50mm 25mm',     margin: '1mm',  columns: 1, barW: 1.3, barH: 50, fontSize: 9,  pagePerLabel: true, barMaxHeightMm: 11 },
+    'sticker-50x25':  { label: 'Sticker roll 50×25mm — 1 per page',     pageSize: '50mm 25mm',     margin: '1mm',  columns: 1, barW: 1.3, barH: 60, fontSize: 9,  pagePerLabel: true, barMaxHeightMm: 14 },
 };
 
 function openBarcodePrintSizeModal() {
