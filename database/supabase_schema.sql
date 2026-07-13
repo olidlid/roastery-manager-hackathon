@@ -78,7 +78,14 @@ CREATE TABLE IF NOT EXISTS public.company_settings (
     label_show_qr BOOLEAN DEFAULT FALSE,
     label_show_dep BOOLEAN DEFAULT TRUE,        -- added 2026-07-06 (label print: show Depreciation %)
     developer_key TEXT DEFAULT 'dev2026',
-    slogan TEXT DEFAULT ''                      -- added 2026-07-06 (shown under company name in sidebar)
+    slogan TEXT DEFAULT '',                     -- added 2026-07-06 (shown under company name in sidebar)
+    label_layout JSONB DEFAULT '{"roasting":{"coffee_name":true,"machine":true,"coffee_code":true},"packed":{"code":true,"coffee_name":true,"dates":true,"machine":true}}'::jsonb
+                                                 -- added 2026-07-13: which text fields print alongside each
+                                                 -- sticker's barcode (roasting log / packed coffee, both now
+                                                 -- 50x25mm — see printStickerLabel/printLotBarcodeLabels).
+                                                 -- Replaces the old label_show_* + label_width/label_height
+                                                 -- columns above, which are no longer read by the app but were
+                                                 -- left in place rather than dropped.
 );
 
 -- 4. Green bean inventory

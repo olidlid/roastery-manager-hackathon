@@ -85,6 +85,12 @@ let companySettings = {
     min_production_potential_kg: 0,
     min_stock_packed_sizes: {},
     developer_key: 'dev2026',
+    // Which text fields print alongside each sticker's (always-on) barcode —
+    // see printStickerLabel (roasting.js) / printLotBarcodeLabels (packing.js).
+    label_layout: {
+        roasting: { coffee_name: true, machine: true, coffee_code: true },
+        packed: { code: true, coffee_name: true, dates: true, machine: true },
+    },
 };
 
 // Seed initial offline mock databases (used if not connected to Supabase)
@@ -401,17 +407,22 @@ function applyCompanySettings() {
     document.getElementById('sett-print-logo').checked = companySettings.show_logo_in_print !== false;
     document.getElementById('sett-print-footer').value = companySettings.print_footer_text || '';
 
-    // Label settings
-    if (document.getElementById('sett-label-width')) {
-        document.getElementById('sett-label-width').value = companySettings.label_width || 50;
-        document.getElementById('sett-label-height').value = companySettings.label_height || 30;
-        document.getElementById('sett-label-show-code').checked = companySettings.label_show_code !== false;
-        document.getElementById('sett-label-show-coffee').checked = companySettings.label_show_coffee !== false;
-        document.getElementById('sett-label-show-date').checked = companySettings.label_show_date !== false;
-        document.getElementById('sett-label-show-machine').checked = companySettings.label_show_machine !== false;
-        document.getElementById('sett-label-show-weight').checked = companySettings.label_show_weight !== false;
-        document.getElementById('sett-label-show-dep').checked = companySettings.label_show_dep !== false;
-        document.getElementById('sett-label-show-operator').checked = companySettings.label_show_operator !== false;
+    // Label layout — one checklist per sticker type (both fixed 50x25mm now,
+    // see printStickerLabel/printLotBarcodeLabels). Defaults to all-true when
+    // label_layout or a given key hasn't been saved yet.
+    const layout = companySettings.label_layout || {};
+    const roastLayout = layout.roasting || {};
+    const packedLayout = layout.packed || {};
+    if (document.getElementById('sett-roast-label-show-coffee-name')) {
+        document.getElementById('sett-roast-label-show-coffee-name').checked = roastLayout.coffee_name !== false;
+        document.getElementById('sett-roast-label-show-machine').checked = roastLayout.machine !== false;
+        document.getElementById('sett-roast-label-show-coffee-code').checked = roastLayout.coffee_code !== false;
+    }
+    if (document.getElementById('sett-packed-label-show-code')) {
+        document.getElementById('sett-packed-label-show-code').checked = packedLayout.code !== false;
+        document.getElementById('sett-packed-label-show-coffee-name').checked = packedLayout.coffee_name !== false;
+        document.getElementById('sett-packed-label-show-dates').checked = packedLayout.dates !== false;
+        document.getElementById('sett-packed-label-show-machine').checked = packedLayout.machine !== false;
     }
 }
 

@@ -820,7 +820,7 @@ async function getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roa
     return saved || newLot;
 }
 
-function printLotBarcodeLabels(lot, requested) {
+function printLotBarcodeLabels(lot, requested, machines) {
     // Production date = the lot's roast/pack date (production_date). Expiry
     // is a fixed 1-year shelf life from that date — no separate field to
     // track, just computed at print time. dd-mm-yyyy per the label spec
@@ -838,22 +838,33 @@ function printLotBarcodeLabels(lot, requested) {
         return `${dd}${mm}${yy}`;
     };
     const dateRangeStr = `${fmtDDMMYY(prodDate)} - ${fmtDDMMYY(expDate)}`;
+    const machineName = ((machines || []).find(m => m.id === lot.machine_id) || {}).name || '';
+
+    // Which lines print alongside the barcode — see Settings → Production →
+    // Label Layout (companySettings.label_layout.packed). "code" controls
+    // JsBarcode's own displayValue (the lot code text under the bars), not a
+    // separate line — the barcode graphic itself always prints regardless.
+    const cfg = (companySettings.label_layout && companySettings.label_layout.packed) || {};
+    const showCode = cfg.code !== false;
+    const showCoffeeName = cfg.coffee_name !== false;
+    const showDates = cfg.dates !== false;
+    const showMachine = cfg.machine !== false;
 
     // Physical sticker is exactly 50×25mm — one label per printed page (roll
     // printer), content flex-centered/space-evenly so it fills the sticker
-    // instead of floating in whitespace. Barcode (tall, for reliable
-    // scanning; JsBarcode's own displayValue already prints the lot code as
-    // text under the bars, so no separate "lot code :" line here) / size /
-    // prod-exp date range. Coffee name dropped per feedback — redundant with
-    // what's already on the physical packaging.
+    // instead of floating in whitespace.
     let labelsHtml = '';
     requested.forEach(r => {
         for (let i = 0; i < r.qty; i++) {
+            let linesHtml = '';
+            if (showCoffeeName) linesHtml += `<div class="lbl-coffee">${lot.coffee_name}</div>`;
+            linesHtml += `<div class="lbl-size">${r.label}</div>`;
+            if (showMachine && machineName) linesHtml += `<div class="lbl-machine">${machineName}</div>`;
+            if (showDates) linesHtml += `<div class="lbl-dates">${dateRangeStr}</div>`;
             labelsHtml += `
                 <div class="barcode-label-item">
                     <svg class="lot-barcode-svg" data-value="${lot.lot_code}"></svg>
-                    <div class="lbl-size">${r.label}</div>
-                    <div class="lbl-dates">${dateRangeStr}</div>
+                    ${linesHtml}
                 </div>
             `;
         }
@@ -891,14 +902,21 @@ function printLotBarcodeLabels(lot, requested) {
                clipping. min-width:0 is required because this SVG is a flex
                item, whose default min-width:auto would otherwise pin it to its
                intrinsic width and overflow the sticker. */
-            .lot-barcode-svg { width: 100%; height: auto; display: block; min-width: 0; }
-            .lbl-size { font-size: 13px; font-weight: 700; line-height: 1; }
-            .lbl-dates { font-size: 18px; font-weight: 700; line-height: 1; }
+            /* max-height (not width:100%/height:auto) — a shorter code would
+               otherwise stretch proportionally TALLER than a longer one to
+               fill the sticker's width, making the rendered height depend on
+               how many characters the code has. Capping height and letting
+               width shrink-to-fit keeps it predictable either way. */
+            .lot-barcode-svg { max-width: 100%; max-height: 8mm; width: auto; height: auto; display: block; margin: 0 auto; }
+            .lbl-coffee { font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+            .lbl-size { font-size: 10px; font-weight: 700; line-height: 1; }
+            .lbl-machine { font-size: 9px; font-weight: 600; line-height: 1; color: #333; }
+            .lbl-dates { font-size: 12px; font-weight: 700; line-height: 1; }
         </style></head><body>
         ${labelsHtml}
         <script>
             document.querySelectorAll('.lot-barcode-svg').forEach(el => {
-                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.1, height: 46, displayValue: true, fontSize: 9, margin: 2 });
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.1, height: 46, displayValue: ${showCode}, fontSize: 9, margin: 2 });
             });
             setTimeout(() => { window.print(); }, 500);
         <\/script>
@@ -976,7 +994,7 @@ async function openPrintBarcodeModal(bulkId) {
         }
 
         const lot = await getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roastBatches);
-        printLotBarcodeLabels(lot, requested);
+        printLotBarcodeLabels(lot, requested, machines);
         document.getElementById('btn-close-modal').click();
     });
 }

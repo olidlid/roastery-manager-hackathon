@@ -2681,6 +2681,11 @@ async function openRoastBatchModal(plan = null, editId = null) {
     });
 }
 
+// Same physical size and visual style as the packed coffee lot label
+// (printLotBarcodeLabels in packing.js): fixed 50x25mm, Arial, a scannable
+// CODE128 barcode (here encoding the batch's own batch_code) that always
+// prints, plus whichever text lines are enabled in Settings → Production →
+// Label Layout (companySettings.label_layout.roasting).
 async function printStickerLabel(id) {
     const [
         { data: batches },
@@ -2698,64 +2703,65 @@ async function printStickerLabel(id) {
     if (!batch) return;
 
     let coffeeName = '';
+    let coffeeCode = '';
     if (batch.coffee_type === 'Single') {
         const gb = greenbeans.find(g => g.id === batch.single_coffee_id);
         coffeeName = gb ? gb.name : 'Single Origin';
+        coffeeCode = gb ? (gb.code || '') : '';
     } else {
         const r = recipes.find(rec => rec.id === batch.blend_recipe_id);
         coffeeName = r ? r.name : 'Blend Recipe';
+        coffeeCode = r ? (r.code || '') : '';
     }
 
     const mach = machines.find(m => m.id === batch.machine_id);
     const machineName = mach ? mach.name : 'Unknown';
 
-    // Settings fallback
-    const width = companySettings.label_width || 50;
-    const height = companySettings.label_height || 30;
-    
-    const showCode = companySettings.label_show_code !== false;
-    const showCoffee = companySettings.label_show_coffee !== false;
-    const showDate = companySettings.label_show_date !== false;
-    const showMachine = companySettings.label_show_machine !== false;
-    const showWeight = companySettings.label_show_weight !== false;
-    const showDep = companySettings.label_show_dep !== false;
-    const showOperator = companySettings.label_show_operator !== false;
+    const cfg = (companySettings.label_layout && companySettings.label_layout.roasting) || {};
+    const showCoffeeName = cfg.coffee_name !== false;
+    const showMachine = cfg.machine !== false;
+    const showCoffeeCode = cfg.coffee_code !== false;
 
-    let fieldsHtml = '';
-    if (showCode) fieldsHtml += `<div style="font-size:0.75rem; font-weight:bold; border-bottom:1px solid #000; padding-bottom:2px; margin-bottom:4px; font-family:monospace;">${batch.batch_code}</div>`;
-    if (showCoffee) fieldsHtml += `<div class="mb-05"><strong>Coffee:</strong> ${coffeeName}</div>`;
-    if (showDate) fieldsHtml += `<div class="mb-05"><strong>Date:</strong> ${batch.roast_date}</div>`;
-    if (showMachine) fieldsHtml += `<div class="mb-05"><strong>Machine:</strong> ${machineName}</div>`;
-    if (showWeight) fieldsHtml += `<div class="mb-05"><strong>Yield:</strong> ${(batch.output_weight_kg * 1000).toFixed(0)} g</div>`;
-    if (showDep) fieldsHtml += `<div class="mb-05"><strong>Depreciation:</strong> ${(100 - batch.yield_percentage).toFixed(1)}%</div>`;
-    if (showOperator) fieldsHtml += `<div class="mb-05"><strong>Operator:</strong> ${batch.roaster_operator}</div>`;
+    let linesHtml = '';
+    if (showCoffeeName) linesHtml += `<div class="lbl-line lbl-line-bold">${coffeeName}</div>`;
+    if (showMachine) linesHtml += `<div class="lbl-line">${machineName}</div>`;
+    if (showCoffeeCode && coffeeCode) linesHtml += `<div class="lbl-line">${coffeeCode}</div>`;
+
+    // Shared rules for both contexts, minus the height on .sticker-item —
+    // that has to differ: the actual print window's document body IS the
+    // 25mm page (so 100vh correctly fills it), but the in-app preview box
+    // below is just a 50x25mm-sized <div> sitting inside the normal page
+    // viewport, where 100vh would mean the whole browser window instead —
+    // each context appends its own height rule (100% vs 100vh).
+    const stickerStyleBase = `
+        @page { size: 50mm 25mm; margin: 1mm; }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+        .sticker-item {
+            width: 100%; box-sizing: border-box;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 0.6mm; text-align: center; padding: 0 1mm;
+        }
+        /* max-height (not width:100%/height:auto) — batch_code is shorter
+           than a lot_code, so scaling it to fill the sticker's full width
+           would stretch it proportionally TALLER than the packed-coffee
+           barcode, blowing the 25mm height budget. Capping height and
+           letting width shrink-to-fit keeps it predictable regardless of
+           how many characters the code has. */
+        .sticker-svg { max-width: 100%; max-height: 11mm; width: auto; height: auto; display: block; margin: 0 auto; }
+        .lbl-line { font-size: 11px; font-weight: 700; line-height: 1; }
+        .lbl-line-bold { font-size: 13px; }
+    `;
 
     const html = `
         <div style="display:flex; flex-direction:column; align-items:center; gap:20px; padding:10px;">
-            <p style="color:var(--text-muted); font-size:0.85rem; text-align:center;">This is a print preview matching your active label configuration (${width}mm x ${height}mm).</p>
-            
-            <!-- Real-size container -->
-            <div id="thermal-sticker-preview" style="
-                width: ${width}mm; 
-                height: ${height}mm; 
-                background: #ffffff; 
-                color: #000000; 
-                border: 1px dashed #666; 
-                border-radius: 2px;
-                padding: 3mm;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.15);
-                display: flex;
-                flex-direction: column;
-                justify-content: flex-start;
-                font-family: 'Courier New', Courier, monospace;
-                font-size: 0.65rem;
-                line-height: 1.2;
-                overflow: hidden;
-                box-sizing: border-box;
-            ">
-                ${fieldsHtml}
+            <p style="color:var(--text-muted); font-size:0.85rem; text-align:center;">Print preview — 50mm × 25mm, same size/style as the Packed Coffee label.</p>
+            <div style="width:50mm; height:25mm; background:#fff; border:1px dashed #666; border-radius:2px; box-shadow:0 4px 15px rgba(0,0,0,0.15); overflow:hidden;">
+                <style>${stickerStyleBase} .sticker-item { height: 100%; }</style>
+                <div class="sticker-item">
+                    <svg id="sticker-preview-barcode" class="sticker-svg"></svg>
+                    ${linesHtml}
+                </div>
             </div>
-
             <div style="display:flex; justify-content:flex-end; gap:12px; width:100%; border-top:1px solid var(--border); padding-top:15px; margin-top:10px;">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Close</button>
                 <button type="button" class="btn btn-primary" id="btn-execute-label-print">
@@ -2767,39 +2773,28 @@ async function printStickerLabel(id) {
 
     openModal('Label Print Preview', html);
 
+    // JsBarcode is loaded globally (index.html <head>) for the scanner
+    // listener elsewhere, so it's available here without a separate include.
+    if (typeof JsBarcode !== 'undefined') {
+        JsBarcode('#sticker-preview-barcode', batch.batch_code, { format: 'CODE128', width: 1.1, height: 46, displayValue: true, fontSize: 9, margin: 2 });
+    }
+
     document.getElementById('btn-execute-label-print').addEventListener('click', () => {
         const printWin = window.open('', '', 'width=400,height=300');
         printWin.document.write(`
-            <html>
-            <head>
-                <title>Print Label</title>
-                <style>
-                    body { margin:0; padding:0; display:flex; justify-content:center; align-items:center; height:100vh; background:#fff; }
-                    .label { 
-                        width: ${width}mm; 
-                        height: ${height}mm; 
-                        box-sizing: border-box; 
-                        padding: 3mm; 
-                        font-family: 'Courier New', Courier, monospace; 
-                        font-size: 8pt; 
-                        line-height: 1.2; 
-                        color: #000;
-                    }
-                    @media print {
-                        @page { size: ${width}mm ${height}mm; margin: 0; }
-                        body { width: ${width}mm; height: ${height}mm; }
-                    }
-                </style>
-            </head>
+            <html><head><title>Print Label</title>
+            <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+            <style>${stickerStyleBase} .sticker-item { height: 100vh; }</style></head>
             <body>
-                <div class="label">
-                    ${fieldsHtml}
+                <div class="sticker-item">
+                    <svg id="print-barcode" class="sticker-svg"></svg>
+                    ${linesHtml}
                 </div>
                 <script>
-                    window.onload = function() { window.print(); window.close(); }
-                </script>
-            </body>
-            </html>
+                    JsBarcode('#print-barcode', ${JSON.stringify(batch.batch_code)}, { format: 'CODE128', width: 1.1, height: 46, displayValue: true, fontSize: 9, margin: 2 });
+                    setTimeout(() => { window.print(); window.close(); }, 400);
+                <\/script>
+            </body></html>
         `);
         printWin.document.close();
         document.getElementById('btn-close-modal').click();

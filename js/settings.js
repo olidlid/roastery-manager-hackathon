@@ -771,22 +771,20 @@ document.getElementById('settings-print-form').addEventListener('submit', async 
     alert(window.t("alert_settings_saved"));
 });
 
-document.getElementById('settings-label-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    companySettings.label_width = parseInt(document.getElementById('sett-label-width').value);
-    companySettings.label_height = parseInt(document.getElementById('sett-label-height').value);
-    companySettings.label_show_code = document.getElementById('sett-label-show-code').checked;
-    companySettings.label_show_coffee = document.getElementById('sett-label-show-coffee').checked;
-    companySettings.label_show_date = document.getElementById('sett-label-show-date').checked;
-    companySettings.label_show_machine = document.getElementById('sett-label-show-machine').checked;
-    companySettings.label_show_weight = document.getElementById('sett-label-show-weight').checked;
-    companySettings.label_show_dep = document.getElementById('sett-label-show-dep').checked;
-    companySettings.label_show_operator = document.getElementById('sett-label-show-operator').checked;
+// Roasting log sticker and packed coffee sticker are now both a fixed
+// 50x25mm with a scannable barcode (see printStickerLabel in roasting.js and
+// printLotBarcodeLabels in packing.js) — no more width/height inputs here,
+// just which text lines print alongside each sticker's barcode. Both forms
+// write into the single label_layout JSONB column (company_settings), one
+// key per sticker type, so future field additions don't need a new migration.
+async function saveLabelLayout(section, patch) {
+    companySettings.label_layout = companySettings.label_layout || {};
+    companySettings.label_layout[section] = { ...(companySettings.label_layout[section] || {}), ...patch };
 
     if (isMockMode) {
         localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
     } else {
-        const { error } = await upsertData('company_settings', { id: 1, ...companySettings });
+        const { error } = await upsertData('company_settings', { id: 1, label_layout: companySettings.label_layout });
         if (error) {
             alert("Failed to save label settings: " + error.message);
             return;
@@ -795,6 +793,25 @@ document.getElementById('settings-label-form').addEventListener('submit', async 
 
     applyCompanySettings();
     alert(window.t("alert_settings_saved"));
+}
+
+document.getElementById('settings-roast-label-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await saveLabelLayout('roasting', {
+        coffee_name: document.getElementById('sett-roast-label-show-coffee-name').checked,
+        machine: document.getElementById('sett-roast-label-show-machine').checked,
+        coffee_code: document.getElementById('sett-roast-label-show-coffee-code').checked,
+    });
+});
+
+document.getElementById('settings-packed-label-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await saveLabelLayout('packed', {
+        code: document.getElementById('sett-packed-label-show-code').checked,
+        coffee_name: document.getElementById('sett-packed-label-show-coffee-name').checked,
+        dates: document.getElementById('sett-packed-label-show-dates').checked,
+        machine: document.getElementById('sett-packed-label-show-machine').checked,
+    });
 });
 
 // Logo base64 converter
