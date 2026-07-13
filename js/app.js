@@ -3890,13 +3890,19 @@ function printSingleBarcode(barcodeValue, coffeeName, machineName) {
 // and single-label thermal/sticker roll printers (one label per physical
 // page so the roll advances correctly). barW/barH/fontSize are tuned per
 // preset so the barcode + text stay legible at that label's physical size.
+// barMaxHeightMm caps the rendered barcode height (mm) for pagePerLabel
+// presets, same fix already proven on the roasting/packed-coffee stickers:
+// without it, a long RMP:Type:id:machineId code forces the SVG to shrink to
+// fit the label's width, and since height wasn't independently capped the
+// bars end up razor-thin/too-short to scan (this is what was broken here —
+// see the 2026-07-13 "greenbean barcode unreadable" fix).
 const BARCODE_PRINT_PRESETS = {
     'a4-3col':      { label: 'A4 — 3 labels per row (standard)',        pageSize: 'A4',            margin: '10mm', columns: 3, barW: 1.2, barH: 40, fontSize: 9,  pagePerLabel: false },
     'a4-2col':      { label: 'A4 — 2 labels per row (larger)',          pageSize: 'A4',            margin: '10mm', columns: 2, barW: 1.6, barH: 55, fontSize: 12, pagePerLabel: false },
     'letter-3col':  { label: 'Letter — 3 labels per row',               pageSize: 'letter',        margin: '10mm', columns: 3, barW: 1.2, barH: 40, fontSize: 9,  pagePerLabel: false },
-    'sticker-100x50': { label: 'Sticker roll 100×50mm — 1 per page',    pageSize: '100mm 50mm',    margin: '3mm',  columns: 1, barW: 2,   barH: 45, fontSize: 12, pagePerLabel: true },
-    'sticker-60x40':  { label: 'Sticker roll 60×40mm — 1 per page',     pageSize: '60mm 40mm',     margin: '2mm',  columns: 1, barW: 1.3, barH: 28, fontSize: 8,  pagePerLabel: true },
-    'sticker-50x25':  { label: 'Sticker roll 50×25mm — 1 per page',     pageSize: '50mm 25mm',     margin: '1mm',  columns: 1, barW: 1.0, barH: 16, fontSize: 6,  pagePerLabel: true },
+    'sticker-100x50': { label: 'Sticker roll 100×50mm — 1 per page',    pageSize: '100mm 50mm',    margin: '3mm',  columns: 1, barW: 2,   barH: 60, fontSize: 12, pagePerLabel: true, barMaxHeightMm: 20 },
+    'sticker-60x40':  { label: 'Sticker roll 60×40mm — 1 per page',     pageSize: '60mm 40mm',     margin: '2mm',  columns: 1, barW: 1.5, barH: 55, fontSize: 9,  pagePerLabel: true, barMaxHeightMm: 14 },
+    'sticker-50x25':  { label: 'Sticker roll 50×25mm — 1 per page',     pageSize: '50mm 25mm',     margin: '1mm',  columns: 1, barW: 1.3, barH: 50, fontSize: 9,  pagePerLabel: true, barMaxHeightMm: 11 },
 };
 
 function openBarcodePrintSizeModal() {
@@ -3990,7 +3996,11 @@ async function printAllBarcodes(sizeKey = 'a4-3col') {
             ${pageBreakRule}
             .name { font-weight: 700; font-size: ${preset.fontSize + 2}px; margin-top: 3px; }
             .machine { font-size: ${preset.fontSize}px; color: #666; }
-            svg { max-width: 100%; }
+            /* width:auto + height:auto (not width:100%) preserves the
+               barcode's aspect ratio when it shrinks to fit — otherwise a
+               long RMP:Type:id:machineId code gets squashed thinner than
+               its module width setting, which is what made it unscannable. */
+            svg.bc { max-width: 100%; width: auto; height: auto; display: block; margin: 0 auto; ${preset.pagePerLabel ? `max-height: ${preset.barMaxHeightMm || 20}mm;` : ''} }
         </style></head><body>
         <div class="grid">${allLabels}</div>
         <script>
