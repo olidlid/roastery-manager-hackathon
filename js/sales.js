@@ -1390,7 +1390,17 @@ async function openSalesRequestModal(orderId = null) {
         if (activeOrderIds.includes(item.request_order_id)) {
             if (orderId !== null && item.request_order_id === orderId) return;
             const cId = item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
-            const qty = parseInt(item.quantity_pending) || parseInt(item.quantity_requested) || 0;
+            // A fully-handed-over item commits nothing further, regardless of
+            // its (possibly legitimately 0) quantity_pending. Otherwise use
+            // quantity_pending if it's been set at all — including a real 0,
+            // which `|| quantity_requested` used to wrongly treat as "not set"
+            // (0 is falsy in JS) and fall back to the full original request,
+            // over-committing stock for orders that don't need any more of it
+            // (found live 2026-07-16: a "Ready for Handover" item with
+            // quantity_pending=0 was still reserving quantity_requested).
+            const qty = item.item_status === 'Ready for Handover'
+                ? 0
+                : (item.quantity_pending != null ? (parseInt(item.quantity_pending) || 0) : (parseInt(item.quantity_requested) || 0));
             const key = `${item.coffee_type}-${cId}-${item.bag_size_g}`;
             committedPackedMap[key] = (committedPackedMap[key] || 0) + qty;
             if (item.machine_id) {
