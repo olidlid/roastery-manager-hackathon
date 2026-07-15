@@ -109,6 +109,11 @@ async function performTrackingSearch(rawCode) {
 
     const roastBatch = (roastBatches || []).find(b => b.id === lot.latest_roast_batch_id);
     const roastDateText = roastBatch ? (roastBatch.roast_date || '-') : '-';
+    // V2 1F: single-value for now, same limitation as roastDateText above
+    // (only the lot's latest_roast_batch_id, not every batch that fed it —
+    // full "show ALL values as lists" multi-batch support is deferred to the
+    // Tracking precision rework, see V2_ROADMAP.md 1·CHAIN).
+    const roastDegreeText = (roastBatch && roastBatch.roast_degree != null) ? roastBatch.roast_degree : '-';
 
     document.getElementById('tracking-result-coffee-name').textContent = lot.coffee_name || '-';
     document.getElementById('tracking-result-lot-code').textContent = lot.lot_code;
@@ -117,6 +122,7 @@ async function performTrackingSearch(rawCode) {
     document.getElementById('tracking-result-machine').textContent = machine ? machine.name : '-';
     document.getElementById('tracking-result-greenbean-date').textContent = greenbeanDateText;
     document.getElementById('tracking-result-roast-date').textContent = roastDateText;
+    document.getElementById('tracking-result-roast-degree').textContent = roastDegreeText;
     document.getElementById('tracking-result-pack-date').textContent = lot.production_date || '-';
 
     setTrackingResultState('result');

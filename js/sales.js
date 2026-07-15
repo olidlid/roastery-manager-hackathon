@@ -357,26 +357,28 @@ async function loadSalesDispatchRequestsTable() {
     const batchMap = new Map();
     (roastBatches || []).forEach(b => batchMap.set(b.id, b));
 
+    // Keyed by coffee+size+machine — packed stock from different machines is
+    // not interchangeable (confirmed 2026-07-15), matching openOrderDetailPopup.
     const stockMap = new Map();
     (packedGoods || []).forEach(p => {
         if (p.roast_batch_id) {
             const batch = batchMap.get(p.roast_batch_id);
-            if (batch) {
+            if (batch && batch.machine_id) {
                 const cId = batch.coffee_type === 'Single' ? batch.single_coffee_id : batch.blend_recipe_id;
-                const key = `${batch.coffee_type}-${cId}-${p.bag_size_g}`;
+                const key = `${batch.coffee_type}-${cId}-${p.bag_size_g}-${batch.machine_id}`;
                 stockMap.set(key, (stockMap.get(key) || 0) + (parseInt(p.quantity) || 0));
             }
         }
         // Also match packed_coffee saved via daily packing (custom_coffee_name, no roast_batch_id)
-        if (!p.roast_batch_id && p.custom_coffee_name) {
+        if (!p.roast_batch_id && p.custom_coffee_name && p.machine_id) {
             let resolvedKey = null;
             const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
             const matchGb = (greenbeans || []).find(g => g.name === cleanName);
             if (matchGb) {
-                resolvedKey = `Single-${matchGb.id}-${p.bag_size_g}`;
+                resolvedKey = `Single-${matchGb.id}-${p.bag_size_g}-${p.machine_id}`;
             } else {
                 const matchRec = (recipes || []).find(r => r.name === cleanName);
-                if (matchRec) resolvedKey = `Blend-${matchRec.id}-${p.bag_size_g}`;
+                if (matchRec) resolvedKey = `Blend-${matchRec.id}-${p.bag_size_g}-${p.machine_id}`;
             }
             if (resolvedKey) {
                 stockMap.set(resolvedKey, (stockMap.get(resolvedKey) || 0) + (parseInt(p.quantity) || 0));
@@ -469,10 +471,10 @@ async function loadSalesDispatchRequestsTable() {
                 const type = item.coffee_type;
                 const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
                 const size = parseInt(item.bag_size_g);
-                
-                const key = `${type}-${coffeeId}-${size}`;
-                const packedStock = stockMap.get(key) || 0;
-                
+
+                const key = `${type}-${coffeeId}-${size}-${item.machine_id}`;
+                const packedStock = item.machine_id ? (stockMap.get(key) || 0) : 0;
+
                 if (item.quantity_requested > packedStock) {
                     needsRoast = true;
                     break;
@@ -826,8 +828,15 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
     // For orders not yet approved, quantity_allocated/quantity_pending haven't
     // been decided yet (approveSalesOrder() is what sets them) — they'd just
     // read as 0. So for a still-pending order, compute a live snapshot of
-    // packed stock per coffee/size/machine instead, matching the same lookup
-    // openSalesRequestModal uses for its stock-check box.
+    // packed stock per coffee/size/machine instead.
+    //
+    // Partitioned by machine (confirmed correct 2026-07-15 — packed stock
+    // from different machines is NOT interchangeable; a bag roasted on
+    // machine A is not the same fulfillable unit as one from machine B even
+    // for "the same" coffee+size). This was briefly (and incorrectly) changed
+    // to pool across machines to match 4 other lookups in the app — those 4
+    // are the ones that need fixing to match THIS behavior, not the other
+    // way around. See V2_ROADMAP.md / project memory for the correction.
     const isPending = order.status === 'Pending Approval';
     const perMachinePackedStock = {};
     if (isPending) {
@@ -842,7 +851,7 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                 }
             }
             // Fallback for packed_coffee rows with no roast_batch_id link —
-            // match by custom_coffee_name instead, same as openSalesRequestModal.
+            // match by custom_coffee_name instead.
             if (!coffeeType && p.custom_coffee_name) {
                 const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
                 const matchGb = (greenbeans || []).find(g => g.name === cleanName);
@@ -1042,25 +1051,27 @@ async function approveSalesOrder(orderId) {
             coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
         }
         
+        // Machine-partitioned (confirmed 2026-07-15): packed stock from a
+        // different machine is not a valid fulfillment source for this item.
         const matchingPacked = (packedGoods || []).filter(p => {
             if (p.roast_batch_id) {
                 const batch = (roastBatches || []).find(b => b.id === p.roast_batch_id);
-                return batch && batch.coffee_type === type && (batch.single_coffee_id === coffeeId || batch.blend_recipe_id === coffeeId);
+                return batch && batch.coffee_type === type && (batch.single_coffee_id === coffeeId || batch.blend_recipe_id === coffeeId) && batch.machine_id === item.machine_id;
             }
             // Also match by custom_coffee_name
             if (p.custom_coffee_name) {
                 const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
                 if (type === 'Single') {
                     const gb = (greenbeans || []).find(g => g.id === coffeeId);
-                    return gb && gb.name === cleanName;
+                    return gb && gb.name === cleanName && p.machine_id === item.machine_id;
                 } else {
                     const rec = (recipes || []).find(r => r.id === coffeeId);
-                    return rec && rec.name === cleanName;
+                    return rec && rec.name === cleanName && p.machine_id === item.machine_id;
                 }
             }
             return false;
         });
-        const szItems = matchingPacked.filter(p => parseInt(p.bag_size_g) === size);
+        const szItems = item.machine_id ? matchingPacked.filter(p => parseInt(p.bag_size_g) === size) : [];
         const packedStock = szItems.reduce((acc, p) => acc + (parseInt(p.quantity) || 0), 0);
         
         let fulfillQty = Math.min(packedStock, item.quantity_requested);
@@ -1149,28 +1160,32 @@ async function approveSalesOrder(orderId) {
             
             await saveData('request_order_items', item);
             
-            // Deduct packed stock
+            // Deduct packed stock — machine-partitioned (confirmed 2026-07-15):
+            // must only deduct from the SAME machine the item requested,
+            // otherwise this would silently deplete a different machine's
+            // stock than what the "Packed Stock" figure shown to the approver
+            // was actually based on.
             if (fQty > 0) {
                 const type = item.coffee_type;
                 const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
                 const matchingPacked = (packedGoods || []).filter(p => {
                     if (p.roast_batch_id) {
                         const batch = (roastBatches || []).find(b => b.id === p.roast_batch_id);
-                        return batch && batch.coffee_type === type && (batch.single_coffee_id === coffeeId || batch.blend_recipe_id === coffeeId);
+                        return batch && batch.coffee_type === type && (batch.single_coffee_id === coffeeId || batch.blend_recipe_id === coffeeId) && batch.machine_id === item.machine_id;
                     }
                     if (p.custom_coffee_name) {
                         const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
                         if (type === 'Single') {
                             const gb = (greenbeans || []).find(g => g.id === coffeeId);
-                            return gb && gb.name === cleanName;
+                            return gb && gb.name === cleanName && p.machine_id === item.machine_id;
                         } else {
                             const rec = (recipes || []).find(r => r.id === coffeeId);
-                            return rec && rec.name === cleanName;
+                            return rec && rec.name === cleanName && p.machine_id === item.machine_id;
                         }
                     }
                     return false;
                 });
-                const szItems = matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g));
+                const szItems = item.machine_id ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
                 
                 let remainingDeduct = fQty;
                 for (const p of szItems) {

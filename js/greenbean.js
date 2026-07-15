@@ -116,6 +116,20 @@ async function openEditGreenbeanStockModal(id) {
                     <input type="text" id="m-gb-supplier" class="form-control" value="${bean.supplier || ''}">
                 </div>
             </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Moisture Content % (optional)</label>
+                    <input type="number" step="0.1" id="m-gb-moisture" class="form-control" value="${bean.moisture_content ?? ''}" placeholder="e.g. 11.5">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Water Activity aw (optional)</label>
+                    <input type="number" step="0.01" id="m-gb-water-activity" class="form-control" value="${bean.water_activity ?? ''}" placeholder="e.g. 0.55">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Density g/L (optional)</label>
+                    <input type="number" step="1" id="m-gb-density" class="form-control" value="${bean.density ?? ''}" placeholder="e.g. 700">
+                </div>
+            </div>
             <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Adjustment</button>
@@ -129,21 +143,50 @@ async function openEditGreenbeanStockModal(id) {
     document.getElementById('modal-gb-stock-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const newStock = parseFloat(document.getElementById('m-gb-stock').value) || 0;
+        const prevStock = parseFloat(bean.stock_kg || 0);
+        const stockDelta = newStock - prevStock;
 
+        // V2: stock_kg is DERIVED (trigger-summed from green_coffee_lots.remaining_kg
+        // — see database/v2_lot_tracking_migration.sql), so it's intentionally NOT
+        // included here. Writing it directly would get silently reverted the next
+        // time any lot for this coffee changes. The correction is instead applied
+        // to the lot ledger below, after this save succeeds.
         const record = {
-            ...bean,
+            id: bean.id,
             name: document.getElementById('m-gb-name').value.trim(),
             code: document.getElementById('m-gb-code').value.trim(),
             origin: document.getElementById('m-gb-origin').value.trim(),
             process: document.getElementById('m-gb-process').value.trim(),
-            stock_kg: newStock,
-            supplier: document.getElementById('m-gb-supplier').value.trim()
+            supplier: document.getElementById('m-gb-supplier').value.trim(),
+            moisture_content: document.getElementById('m-gb-moisture').value ? parseFloat(document.getElementById('m-gb-moisture').value) : null,
+            water_activity: document.getElementById('m-gb-water-activity').value ? parseFloat(document.getElementById('m-gb-water-activity').value) : null,
+            density: document.getElementById('m-gb-density').value ? parseFloat(document.getElementById('m-gb-density').value) : null
         };
         const { error } = await saveData('green_coffee', record);
 
         if (error) {
             alert("Failed to save: " + error.message);
         } else {
+            // Apply the stock correction to the lot ledger rather than stock_kg
+            // directly: an increase is recorded as a clearly-labeled adjustment
+            // lot (dated today, so it doesn't masquerade as an old arrival);
+            // a decrease is deducted FIFO oldest-first via the same consumption
+            // helper roasting.js uses, so it comes off the stalest stock first.
+            if (Math.abs(stockDelta) > 0.0001) {
+                if (stockDelta > 0) {
+                    await createGreenCoffeeLot({
+                        coffeeId: bean.id,
+                        coffeeCode: record.code,
+                        arrivalDate: new Date().toISOString().split('T')[0],
+                        quantityKg: stockDelta,
+                        supplier: 'Manual Stock Adjustment',
+                        purchasePricePerKg: null
+                    });
+                } else {
+                    await consumeGreenCoffeeLotsFifo(bean.id, Math.abs(stockDelta));
+                }
+            }
+
             document.getElementById('modal-container').classList.add('hidden');
             loadGreenbeanInventory();
             initAppDashboard();
@@ -230,7 +273,7 @@ async function openIntakeModal(editId = null) {
     const coffeeOptionsHtml = [...inventory].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(g => {
         const selected = linkedBean && linkedBean.id === g.id ? 'selected' : '';
         const stockLabel = `${parseFloat(g.stock_kg || 0).toFixed(1)} ${companySettings.weight_unit}`;
-        return `<option value="${g.id}" data-code="${g.code || ''}" data-origin="${g.origin || ''}" data-process="${g.process || ''}" data-supplier="${g.supplier || ''}" ${selected}>${g.name} — ${g.code || 'no code'} — ${stockLabel} in stock</option>`;
+        return `<option value="${g.id}" data-code="${g.code || ''}" data-origin="${g.origin || ''}" data-process="${g.process || ''}" data-supplier="${g.supplier || ''}" data-price="${g.purchase_price_per_kg ?? ''}" data-moisture="${g.moisture_content ?? ''}" data-water-activity="${g.water_activity ?? ''}" data-density="${g.density ?? ''}" ${selected}>${g.name} — ${g.code || 'no code'} — ${stockLabel} in stock</option>`;
     }).join('');
 
     // Editing an old intake row that predates green_coffee_id and whose
@@ -305,6 +348,20 @@ async function openIntakeModal(editId = null) {
                     <input type="number" step="0.01" id="m-int-price" class="form-control" value="${linkedBean ? (linkedBean.purchase_price_per_kg || '') : ''}" placeholder="e.g. 85000">
                 </div>
             </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Moisture Content % (optional)</label>
+                    <input type="number" step="0.1" id="m-int-moisture" class="form-control" value="${linkedBean ? (linkedBean.moisture_content ?? '') : ''}" placeholder="e.g. 11.5">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Water Activity aw (optional)</label>
+                    <input type="number" step="0.01" id="m-int-water-activity" class="form-control" value="${linkedBean ? (linkedBean.water_activity ?? '') : ''}" placeholder="e.g. 0.55">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Density g/L (optional)</label>
+                    <input type="number" step="1" id="m-int-density" class="form-control" value="${linkedBean ? (linkedBean.density ?? '') : ''}" placeholder="e.g. 700">
+                </div>
+            </div>
             ${editId ? '' : `
             <div class="form-group">
                 <label class="form-label">Lot Stickers to Print</label>
@@ -329,6 +386,9 @@ async function openIntakeModal(editId = null) {
     const processInput = document.getElementById('m-int-process');
     const supplierInput = document.getElementById('m-int-supplier');
     const priceInput = document.getElementById('m-int-price');
+    const moistureInput = document.getElementById('m-int-moisture');
+    const waterActivityInput = document.getElementById('m-int-water-activity');
+    const densityInput = document.getElementById('m-int-density');
     const stickerCountInput = document.getElementById('m-int-sticker-count');
 
     // Selecting an existing coffee locks identity to its row.id (no more
@@ -346,6 +406,10 @@ async function openIntakeModal(editId = null) {
             originInput.value = opt.getAttribute('data-origin') || '';
             processInput.value = opt.getAttribute('data-process') || '';
             supplierInput.value = opt.getAttribute('data-supplier') || '';
+            priceInput.value = opt.getAttribute('data-price') || '';
+            moistureInput.value = opt.getAttribute('data-moisture') || '';
+            waterActivityInput.value = opt.getAttribute('data-water-activity') || '';
+            densityInput.value = opt.getAttribute('data-density') || '';
         }
     }
     coffeeSelect.addEventListener('change', syncFieldsFromSelect);
@@ -361,6 +425,9 @@ async function openIntakeModal(editId = null) {
         const supplier = supplierInput.value.trim();
         const coffeeSelectVal = coffeeSelect.value;
         const priceRaw = priceInput.value ? parseFloat(priceInput.value) : null;
+        const moistureRaw = moistureInput.value ? parseFloat(moistureInput.value) : null;
+        const waterActivityRaw = waterActivityInput.value ? parseFloat(waterActivityInput.value) : null;
+        const densityRaw = densityInput.value ? parseFloat(densityInput.value) : null;
         const stickerCount = stickerCountInput ? (parseInt(stickerCountInput.value) || 0) : 0;
 
         if (!coffeeSelectVal) return; // native `required` blocks this, but guard anyway
@@ -396,7 +463,8 @@ async function openIntakeModal(editId = null) {
 
             const newBean = {
                 code, name: newName, origin, process,
-                stock_kg: quantity, purchase_price_per_kg: priceRaw || 0.0, supplier
+                stock_kg: quantity, purchase_price_per_kg: priceRaw || 0.0, supplier,
+                moisture_content: moistureRaw, water_activity: waterActivityRaw, density: densityRaw
             };
             const { data: savedBean, error } = await saveData('green_coffee', newBean);
             if (error) { alert('Failed to create coffee: ' + error.message); return; }
@@ -412,6 +480,9 @@ async function openIntakeModal(editId = null) {
             if (process) bean.process = process;
             if (supplier) bean.supplier = supplier;
             if (priceRaw !== null) bean.purchase_price_per_kg = priceRaw;
+            if (moistureRaw !== null) bean.moisture_content = moistureRaw;
+            if (waterActivityRaw !== null) bean.water_activity = waterActivityRaw;
+            if (densityRaw !== null) bean.density = densityRaw;
             await saveData('green_coffee', bean);
             targetCoffeeId = bean.id;
             targetName = bean.name;

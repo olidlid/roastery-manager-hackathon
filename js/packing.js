@@ -258,30 +258,33 @@ async function loadPackingRequestsSection() {
         return;
     }
     
-    // Build a stock lookup map: "Type-CoffeeId-SizeG" -> total stock
+    // Build a stock lookup map: "Type-CoffeeId-SizeG-MachineId" -> total stock.
+    // Machine-partitioned (confirmed 2026-07-15): packed stock from a
+    // different machine is not interchangeable, matching openOrderDetailPopup
+    // and approveSalesOrder in js/sales.js.
     const batchMap = new Map();
     (roastBatches || []).forEach(b => batchMap.set(b.id, b));
-    
+
     const stockMap = new Map();
     (packedGoods || []).forEach(p => {
         if (p.roast_batch_id) {
             const batch = batchMap.get(p.roast_batch_id);
-            if (batch) {
+            if (batch && batch.machine_id) {
                 const cId = batch.coffee_type === 'Single' ? batch.single_coffee_id : batch.blend_recipe_id;
-                const key = `${batch.coffee_type}-${cId}-${p.bag_size_g}`;
+                const key = `${batch.coffee_type}-${cId}-${p.bag_size_g}-${batch.machine_id}`;
                 stockMap.set(key, (stockMap.get(key) || 0) + (parseInt(p.quantity) || 0));
             }
         }
-        if (!p.roast_batch_id && p.custom_coffee_name) {
+        if (!p.roast_batch_id && p.custom_coffee_name && p.machine_id) {
             const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
             const matchGb = (greenbeans || []).find(g => g.name === cleanName);
             if (matchGb) {
-                const key = `Single-${matchGb.id}-${p.bag_size_g}`;
+                const key = `Single-${matchGb.id}-${p.bag_size_g}-${p.machine_id}`;
                 stockMap.set(key, (stockMap.get(key) || 0) + (parseInt(p.quantity) || 0));
             } else {
                 const matchRec = (recipes || []).find(r => r.name === cleanName);
                 if (matchRec) {
-                    const key = `Blend-${matchRec.id}-${p.bag_size_g}`;
+                    const key = `Blend-${matchRec.id}-${p.bag_size_g}-${p.machine_id}`;
                     stockMap.set(key, (stockMap.get(key) || 0) + (parseInt(p.quantity) || 0));
                 }
             }
@@ -326,9 +329,9 @@ async function loadPackingRequestsSection() {
             const pendingPack = Math.max(0, totalRequested - alreadyPrepared);
             const isCompleted = alreadyPrepared >= totalRequested;
             
-            // Get current packed stock for this coffee+size
-            const stockKey = `${type}-${coffeeId}-${item.bag_size_g}`;
-            const currentStock = stockMap.get(stockKey) || 0;
+            // Get current packed stock for this coffee+size+machine
+            const stockKey = `${type}-${coffeeId}-${item.bag_size_g}-${item.machine_id}`;
+            const currentStock = item.machine_id ? (stockMap.get(stockKey) || 0) : 0;
             
             // Max the user can input = min(pendingPack, currentStock)
             const maxReady = Math.min(pendingPack, currentStock);
@@ -497,29 +500,33 @@ async function markOrderItemReady(orderId, itemId, qtyToReady) {
     const actualQty = Math.min(qtyToReady, pendingPack);
     if (actualQty <= 0) return;
     
-    // Deduct from packed_coffee stock
+    // Deduct from packed_coffee stock — machine-partitioned (confirmed
+    // 2026-07-15): only deduct from the SAME machine the item requested,
+    // consistent with the "From Stock" figure this action was driven by
+    // (loadPackingRequestsSection's stockMap, above) and with sales.js's
+    // approveSalesOrder/openOrderDetailPopup.
     const type = item.coffee_type;
     const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
-    
+
     const matchingPacked = (packedGoods || []).filter(p => {
         if (p.roast_batch_id) {
             const batch = (roastBatches || []).find(b => b.id === p.roast_batch_id);
             if (!batch) return false;
-            return batch.coffee_type === type && (type === 'Single' ? batch.single_coffee_id === coffeeId : batch.blend_recipe_id === coffeeId);
+            return batch.coffee_type === type && (type === 'Single' ? batch.single_coffee_id === coffeeId : batch.blend_recipe_id === coffeeId) && batch.machine_id === item.machine_id;
         }
         if (p.custom_coffee_name) {
             const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
             if (type === 'Single') {
                 const gb = (greenbeans || []).find(g => g.id === coffeeId);
-                return gb && gb.name === cleanName;
+                return gb && gb.name === cleanName && p.machine_id === item.machine_id;
             } else {
                 const rec = (recipes || []).find(r => r.id === coffeeId);
-                return rec && rec.name === cleanName;
+                return rec && rec.name === cleanName && p.machine_id === item.machine_id;
             }
         }
         return false;
     });
-    const szItems = matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g));
+    const szItems = item.machine_id ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
     
     let remainingDeduct = actualQty;
     for (const p of szItems) {

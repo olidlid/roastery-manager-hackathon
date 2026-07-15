@@ -682,12 +682,25 @@ async function openRecipeModal(id = null) {
     const [
         { data: machines },
         { data: greenbeansRaw },
-        { data: ingredients }
+        { data: ingredients },
+        { data: greenCoffeeLots }
     ] = await Promise.all([
         fetchData('machines'),
         fetchData('green_coffee'),
-        fetchData('blend_ingredients')
+        fetchData('blend_ingredients'),
+        fetchData('green_coffee_lots')
     ]);
+
+    // V2 1D: informational only — the blend barcode/consumption logic already
+    // auto-resolves each ingredient's oldest lot on its own (see
+    // consumeGreenCoffeeLotsFifo in the roast-batch save path); this just
+    // surfaces that same recommendation live while building the recipe.
+    function findFifoLotCode(greenbeanId) {
+        const candidates = (greenCoffeeLots || [])
+            .filter(l => l.green_coffee_id === parseInt(greenbeanId) && parseFloat(l.remaining_kg || 0) > 0)
+            .sort((a, b) => new Date(a.arrival_date) - new Date(b.arrival_date) || a.id - b.id);
+        return candidates[0] ? candidates[0].lot_code : null;
+    }
     // Sorted once here so both the ingredient dropdown (built per-row in
     // addComponentRow below) and the "default first coffee" fallback stay
     // alphabetical/consistent.
@@ -778,6 +791,7 @@ async function openRecipeModal(id = null) {
                 <select class="form-control comp-select" required>
                     ${greenbeanOpts}
                 </select>
+                <small class="comp-fifo-lot" style="display:block; color:var(--text-muted); margin-top:2px;"></small>
             </div>
             <div class="form-group flex-1" >
                 <input type="number" step="0.1" class="form-control comp-ratio" value="${percentageVal.toFixed(1)}" placeholder="Ratio (%)" required>
@@ -789,6 +803,15 @@ async function openRecipeModal(id = null) {
 
         const ratioInput = row.querySelector('.comp-ratio');
         const removeBtn = row.querySelector('.btn-remove-row');
+        const coffeeSelect = row.querySelector('.comp-select');
+        const fifoLabel = row.querySelector('.comp-fifo-lot');
+
+        function updateFifoLabel() {
+            const lotCode = findFifoLotCode(coffeeSelect.value);
+            fifoLabel.textContent = lotCode ? `FIFO lot: ${lotCode}` : 'FIFO lot: no stock';
+        }
+        updateFifoLabel();
+        coffeeSelect.addEventListener('change', updateFifoLabel);
 
         ratioInput.addEventListener('input', () => {
             updateRatioSum();
@@ -1719,35 +1742,15 @@ async function deletePlan(id) {
 
 async function deleteBatch(id) {
     if (await showDeleteConfirmModal('this roasting batch log')) {
-        const [
-            { data: batches },
-            { data: greenbeans }
-        ] = await Promise.all([
-            fetchData('roast_batches'),
-            fetchData('green_coffee')
-        ]);
+        const { data: batches } = await fetchData('roast_batches');
         const batch = batches.find(b => b.id === id);
-        
+
         if (batch) {
-            // Restore green coffee stocks
-            if (batch.coffee_type === 'Single') {
-                const gb = greenbeans.find(g => g.id === batch.single_coffee_id);
-                if (gb) {
-                    gb.stock_kg = parseFloat(gb.stock_kg || 0) + parseFloat(batch.input_weight_kg);
-                    await saveData('green_coffee', gb);
-                }
-            } else {
-                const { data: ingredients } = await fetchData('blend_ingredients');
-                const recipeIngs = ingredients.filter(ing => ing.blend_recipe_id === batch.blend_recipe_id);
-                for (const ing of recipeIngs) {
-                    const gb = greenbeans.find(g => g.id === ing.green_coffee_id);
-                    if (gb) {
-                        const req = (parseFloat(ing.percentage) / 100) * parseFloat(batch.input_weight_kg);
-                        gb.stock_kg = parseFloat(gb.stock_kg || 0) + req;
-                        await saveData('green_coffee', gb);
-                    }
-                }
-            }
+            // V2 1B: restore stock via the lots this batch actually drew from
+            // (green_coffee.stock_kg is DERIVED — see the comment above
+            // consumeGreenCoffeeLotsFifo). Must run before the roast_batches
+            // delete below, since roast_batch_green_lots cascades on it.
+            await refundGreenCoffeeLotsForBatch(id);
 
             // Refund/deduct from bulk_roasted_coffee if it was already approved/Success
             if (batch.qc_status === 'Success') {
@@ -2177,6 +2180,10 @@ async function openRoastBatchModal(plan = null, editId = null) {
                     <label class="form-label">Depreciation (%)</label>
                     <input type="text" id="m-bat-depreciation" class="form-control" style="background:var(--border); font-weight:700; color:var(--warning);" readonly value="0.0%">
                 </div>
+                <div class="form-group flex-1">
+                    <label class="form-label">Roast Degree / Agtron (optional)</label>
+                    <input type="number" step="1" id="m-bat-degree" class="form-control" placeholder="e.g. 58">
+                </div>
             </div>
 
             <div class="form-group mt-3" >
@@ -2202,8 +2209,27 @@ async function openRoastBatchModal(plan = null, editId = null) {
     const greenbeanWeightInput = document.getElementById('m-bat-greenbean');
     const roastedWeightInput = document.getElementById('m-bat-roasted');
     const depreciationInput = document.getElementById('m-bat-depreciation');
+    const degreeInput = document.getElementById('m-bat-degree');
 
     const notesTextarea = document.getElementById('m-bat-notes');
+
+    // V2 1F: auto pre-fill Roast Degree from the most recently logged batch of
+    // the same coffee + machine (editable — the operator can override). Blank
+    // if no prior batch exists for that combo. Skipped when editing (the
+    // batch's own saved value is shown instead, set in the edit branch below).
+    function prefillRoastDegree(coffeeVal, machineId) {
+        if (!coffeeVal || !machineId) { degreeInput.value = ''; return; }
+        const [type, idStr] = coffeeVal.split('-');
+        const id = parseInt(idStr);
+        const mId = parseInt(machineId);
+        const match = (batches || [])
+            .filter(b => b.machine_id === mId && b.roast_degree != null &&
+                (type === 'Single' ? b.single_coffee_id === id : b.blend_recipe_id === id))
+            .sort((a, b) => new Date(b.roast_date) - new Date(a.roast_date) || b.id - a.id)[0];
+        degreeInput.value = match ? match.roast_degree : '';
+    }
+    coffeeSelect.addEventListener('change', () => { if (!editId) prefillRoastDegree(coffeeSelect.value, machineSelect.value); });
+    machineSelect.addEventListener('change', () => { if (!editId) prefillRoastDegree(coffeeSelect.value, machineSelect.value); });
 
     // Set today's date as default
     const todayStr = new Date().toISOString().split('T')[0];
@@ -2359,6 +2385,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
         greenbeanWeightInput.value = (existingBatch.input_weight_kg * 1000).toFixed(0);
         roastedWeightInput.value = (existingBatch.output_weight_kg * 1000).toFixed(0);
         notesTextarea.value = existingBatch.notes || '';
+        degreeInput.value = existingBatch.roast_degree ?? '';
         calcDepreciation();
         checkBatchStock();
     } else if (plan) {
@@ -2369,6 +2396,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
         greenbeanWeightInput.value = ((plan.target_roasted_kg / 0.85) * 1000).toFixed(0);
         roastedWeightInput.value = (plan.target_roasted_kg * 1000).toFixed(0);
         notesTextarea.value = '';
+        prefillRoastDegree(coffeeSelect.value, machineSelect.value);
         calcDepreciation();
         updateGeneratedBatchCodeAndWeight();
         checkBatchStock();
@@ -2401,6 +2429,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
         
         roastedWeightInput.value = '';
         notesTextarea.value = '';
+        prefillRoastDegree(coffeeSelect.value, machineSelect.value);
         calcDepreciation();
         updateGeneratedBatchCodeAndWeight();
         checkBatchStock();
@@ -2452,66 +2481,28 @@ async function openRoastBatchModal(plan = null, editId = null) {
         const singleId = type === 'Single' ? coffeeId : null;
         const blendId = type === 'Blend' ? coffeeId : null;
 
-        // 1. Stock Verification (including refund of editing batch weights)
-        const currentStocks = {};
-        greenbeans.forEach(gb => {
-            currentStocks[gb.id] = parseFloat(gb.stock_kg || 0);
-        });
-
-        if (editId && existingBatch) {
-            // Add back old weights for checks
-            if (existingBatch.coffee_type === 'Single') {
-                currentStocks[existingBatch.single_coffee_id] += parseFloat(existingBatch.input_weight_kg);
-            } else {
-                const recipeIngs = ingredients.filter(ing => ing.blend_recipe_id === existingBatch.blend_recipe_id);
-                recipeIngs.forEach(ing => {
-                    const req = (parseFloat(ing.percentage) / 100) * parseFloat(existingBatch.input_weight_kg);
-                    currentStocks[ing.green_coffee_id] += req;
-                });
-            }
+        // V2 1B: green_coffee.stock_kg is DERIVED (trigger-summed from
+        // green_coffee_lots.remaining_kg — see database/v2_lot_tracking_migration.sql),
+        // so consumption must go through the lots, not a direct stock_kg write
+        // (a direct write here would get silently reverted the next time any
+        // lot for that coffee changes, same class of bug fixed in 1A for
+        // intake edit/delete). On edit, first refund exactly what the old
+        // batch drew (via its recorded roast_batch_green_lots rows), then
+        // re-consume FIFO oldest-first for the new input weight.
+        if (editId) {
+            await refundGreenCoffeeLotsForBatch(editId);
         }
 
-
-        // 2. Adjust database greenbean inventory stocks
-        if (editId && existingBatch) {
-            // First refund old
-            if (existingBatch.coffee_type === 'Single') {
-                const gb = greenbeans.find(g => g.id === existingBatch.single_coffee_id);
-                if (gb) {
-                    gb.stock_kg = parseFloat(gb.stock_kg || 0) + parseFloat(existingBatch.input_weight_kg);
-                    await saveData('green_coffee', gb);
-                }
-            } else {
-                const recipeIngs = ingredients.filter(ing => ing.blend_recipe_id === existingBatch.blend_recipe_id);
-                for (const ing of recipeIngs) {
-                    const gb = greenbeans.find(g => g.id === ing.green_coffee_id);
-                    if (gb) {
-                        const req = (parseFloat(ing.percentage) / 100) * parseFloat(existingBatch.input_weight_kg);
-                        gb.stock_kg = parseFloat(gb.stock_kg || 0) + req;
-                        await saveData('green_coffee', gb);
-                    }
-                }
-            }
-        }
-
-        // Deduct new
+        const lotDraws = [];
         if (type === 'Single') {
-            const gb = greenbeans.find(g => g.id === singleId);
-            if (gb && parseFloat(gb.stock_kg || 0) > 0) {
-                let current = parseFloat(gb.stock_kg || 0);
-                gb.stock_kg = Math.max(0, current - inputKg);
-                await saveData('green_coffee', gb);
-            }
+            const { draws } = await consumeGreenCoffeeLotsFifo(singleId, inputKg);
+            lotDraws.push(...draws);
         } else {
             const recipeIngs = ingredients.filter(ing => ing.blend_recipe_id === blendId);
             for (const ing of recipeIngs) {
-                const gb = greenbeans.find(g => g.id === ing.green_coffee_id);
-                if (gb && parseFloat(gb.stock_kg || 0) > 0) {
-                    const req = (parseFloat(ing.percentage) / 100) * inputKg;
-                    let current = parseFloat(gb.stock_kg || 0);
-                    gb.stock_kg = Math.max(0, current - req);
-                    await saveData('green_coffee', gb);
-                }
+                const req = (parseFloat(ing.percentage) / 100) * inputKg;
+                const { draws } = await consumeGreenCoffeeLotsFifo(ing.green_coffee_id, req);
+                lotDraws.push(...draws);
             }
         }
 
@@ -2534,7 +2525,8 @@ async function openRoastBatchModal(plan = null, editId = null) {
             yield_percentage: yieldPct,
             roast_type: isTest ? 'Test' : 'Regular',
             qc_status: qcStatus,
-            notes: notes || null
+            notes: notes || null,
+            roast_degree: degreeInput.value ? parseFloat(degreeInput.value) : null
         };
 
         if (editId) {
@@ -2558,6 +2550,10 @@ async function openRoastBatchModal(plan = null, editId = null) {
             alert(msg);
             return;
         }
+
+        // V2 1B: persist which lot(s) this batch drew from, now that the
+        // batch has an id (feeds future costing + Tracking traceability).
+        await recordRoastBatchGreenLots(savedBatch.id, lotDraws);
 
         // 4. Update associated plan status
         const { data: plans } = await fetchData('roasting_plans');
@@ -2659,8 +2655,38 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 await saveData('bulk_roasted_coffee', existingBulk);
             }
 
+        } else if (qcStatus === 'Success' && prevQcStatus === 'Success' && editId && existingBatch) {
+            // Staying Success but the batch was edited (e.g. yield/output weight
+            // changed) — bulk_available was already counted using the OLD
+            // output weight and never gets touched again once it's "already
+            // counted", so an edited yield silently never reached bulk stock
+            // (bug reported 2026-07-15). Refund the exact old amount from the
+            // OLD identity's bulk record, then add the new amount via the
+            // normal helper (which resolves/creates the current identity's
+            // record) — robust even if coffee/machine also changed on edit.
+            const { data: bulkList } = await fetchData('bulk_roasted_coffee');
+            const oldBulk = bulkList.find(b =>
+                b.coffee_type === existingBatch.coffee_type &&
+                (existingBatch.coffee_type === 'Single'
+                    ? b.single_coffee_id === existingBatch.single_coffee_id
+                    : b.blend_recipe_id === existingBatch.blend_recipe_id) &&
+                b.machine_id === existingBatch.machine_id
+            );
+            if (oldBulk) {
+                oldBulk.bulk_available = Math.max(0, parseFloat(oldBulk.bulk_available || 0) - parseFloat(existingBatch.output_weight_kg || 0));
+                await saveData('bulk_roasted_coffee', oldBulk);
+            }
+            let coffeeName = '';
+            if (type === 'Single') {
+                const gb = greenbeans.find(g => g.id === singleId);
+                coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
+            } else {
+                const r = recipes.find(rec => rec.id === blendId);
+                coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+            }
+            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg);
         }
-        // else: Success → Success  → no change needed (already counted)
+        // else: new batch not Success (Pending, first save) → nothing counted yet
 
 
         // 5. If QC fails, log to waste inventory
@@ -2852,18 +2878,115 @@ function applyBatchColumnVisibility() {
     });
 }
 
+// ==========================================================================
+// V2 1B — FIFO green coffee lot consumption for roast batches.
+// green_coffee.stock_kg is DERIVED (trigger-summed from
+// green_coffee_lots.remaining_kg — see database/v2_lot_tracking_migration.sql),
+// so any roast batch save/edit/delete must adjust the lots themselves rather
+// than writing stock_kg directly, or the write gets silently reverted the
+// next time any lot for that coffee changes (same bug class fixed in 1A for
+// intake edit/delete).
+// ==========================================================================
+
+// Deducts kgToConsume from green_coffee_lots for greenCoffeeId. If
+// preferredLotId is given (a scanned sack), that lot is drawn from first;
+// any shortfall is pulled oldest-arrival-first from the coffee's other lots
+// — this WILL draw from an older lot the operator skipped, by design (see
+// V2_ROADMAP.md 1B). Clamps at total availability instead of erroring:
+// returns {draws: [{lotId, kg}], shortfallKg} so the caller can persist the
+// draws to roast_batch_green_lots and optionally warn on a nonzero shortfall.
+async function consumeGreenCoffeeLotsFifo(greenCoffeeId, kgToConsume, preferredLotId = null) {
+    const { data: allLots } = await fetchData('green_coffee_lots');
+    const lots = (allLots || [])
+        .filter(l => l.green_coffee_id === greenCoffeeId && parseFloat(l.remaining_kg || 0) > 0)
+        .sort((a, b) => new Date(a.arrival_date) - new Date(b.arrival_date) || a.id - b.id);
+
+    const ordered = preferredLotId
+        ? [...lots.filter(l => l.id === preferredLotId), ...lots.filter(l => l.id !== preferredLotId)]
+        : lots;
+
+    let remainingNeeded = kgToConsume;
+    const draws = [];
+    for (const lot of ordered) {
+        if (remainingNeeded <= 0) break;
+        const take = Math.min(parseFloat(lot.remaining_kg || 0), remainingNeeded);
+        if (take <= 0) continue;
+        const newRemaining = parseFloat(lot.remaining_kg) - take;
+        await saveData('green_coffee_lots', { id: lot.id, remaining_kg: newRemaining });
+        draws.push({ lotId: lot.id, kg: take });
+        remainingNeeded -= take;
+    }
+    return { draws, shortfallKg: Math.max(0, remainingNeeded) };
+}
+
+// Reverses a batch's previously recorded consumption (used before
+// re-consuming on edit) by adding kg back to the exact lots it was drawn
+// from, then removes those roast_batch_green_lots rows. Safe no-op if the
+// batch has none (e.g. logged before 1B shipped, or a lot was deleted since).
+async function refundGreenCoffeeLotsForBatch(roastBatchId) {
+    const { data: allDraws } = await fetchData('roast_batch_green_lots');
+    const mine = (allDraws || []).filter(d => d.roast_batch_id === roastBatchId);
+    if (mine.length === 0) return;
+    const { data: allLots } = await fetchData('green_coffee_lots');
+    for (const d of mine) {
+        const lot = (allLots || []).find(l => l.id === d.green_coffee_lot_id);
+        if (lot) {
+            await saveData('green_coffee_lots', { id: lot.id, remaining_kg: parseFloat(lot.remaining_kg || 0) + parseFloat(d.kg_consumed || 0) });
+        }
+        await deleteData('roast_batch_green_lots', d.id);
+    }
+}
+
+// Persists the per-lot draws for a just-saved roast batch.
+async function recordRoastBatchGreenLots(roastBatchId, draws) {
+    for (const d of draws) {
+        await saveData('roast_batch_green_lots', { roast_batch_id: roastBatchId, green_coffee_lot_id: d.lotId, kg_consumed: d.kg });
+    }
+}
+
 async function handleBarcodeScan(barcode) {
-    // Parse barcode: RMP:Single:5:2 or RMP:Blend:3:1
+    // Parse barcode: RMP:Single:5:2 or RMP:Blend:3:1 or RMP:Lot:{green_coffee_lot_id}:2 (V2 1B, sack sticker printed by 1A)
     const parts = barcode.split(':');
     if (parts.length !== 4 || parts[0] !== 'RMP') {
         alert('Invalid barcode format: ' + barcode);
         return;
     }
-    
+
     const [prefix, coffeeType, coffeeIdStr, machineIdStr] = parts;
     const coffeeId = parseInt(coffeeIdStr);
     const machineId = parseInt(machineIdStr);
-    
+
+    if (coffeeType === 'Lot') {
+        // V2 1B: a sack barcode encodes the specific green_coffee_lots row,
+        // not the coffee directly — resolve it, then warn if an OLDER lot of
+        // the same coffee still has stock (the operator may have grabbed a
+        // newer sack out of order). Cancel aborts entirely — the Quick Roast
+        // Log modal does not open (see V2_ROADMAP.md 1B).
+        const lotId = coffeeId;
+        const { data: lots } = await fetchData('green_coffee_lots');
+        const scannedLot = (lots || []).find(l => l.id === lotId);
+        if (!scannedLot) {
+            alert('This lot could not be found (it may have been deleted). Scan a current sack label, or log this batch manually.');
+            return;
+        }
+
+        const olderLot = (lots || [])
+            .filter(l => l.green_coffee_id === scannedLot.green_coffee_id && l.id !== lotId && parseFloat(l.remaining_kg || 0) > 0)
+            .filter(l => new Date(l.arrival_date) < new Date(scannedLot.arrival_date))
+            .sort((a, b) => new Date(a.arrival_date) - new Date(b.arrival_date))[0];
+
+        if (olderLot) {
+            const proceed = await showWarningModal(
+                `An older lot of this coffee is still in stock: ${olderLot.lot_code} (arrived ${olderLot.arrival_date}, ${parseFloat(olderLot.remaining_kg).toFixed(1)}kg left).\n\nThis sack is from a newer lot (${scannedLot.lot_code}, arrived ${scannedLot.arrival_date}). Roast the older lot first for freshness rotation, unless there's a good reason not to.\n\nProceed with this sack anyway?`,
+                true
+            );
+            if (!proceed) return;
+        }
+
+        await openQuickRoastModal('Single', scannedLot.green_coffee_id, machineId, lotId);
+        return;
+    }
+
     // Open the quick roast form
     await openQuickRoastModal(coffeeType, coffeeId, machineId);
 }
@@ -2871,7 +2994,7 @@ async function handleBarcodeScan(barcode) {
 // ==========================================================================
 // QUICK ROAST MODAL (Barcode Scan)
 // ==========================================================================
-async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
+async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId = null) {
     // Fetch required data
     const [
         { data: greenbeans },
@@ -2981,6 +3104,10 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
                     <label class="form-label">Depreciation (%)</label>
                     <input type="text" id="m-bat-depreciation" class="form-control" style="background:var(--border); font-weight:700; color:var(--warning);" readonly value="0.0%">
                 </div>
+                <div class="form-group flex-1">
+                    <label class="form-label">Roast Degree / Agtron (optional)</label>
+                    <input type="number" step="1" id="m-bat-degree" class="form-control" placeholder="e.g. 58">
+                </div>
             </div>
             <div class="form-group mt-3" >
                 <label class="form-label">Notes</label>
@@ -2992,9 +3119,9 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
             </div>
         </form>
     `;
-    
+
     openModal('⚡ Quick Roast Log (Barcode Scan)', html);
-    
+
     const batchCodeInput = document.getElementById('m-bat-code');
     const dateInput = document.getElementById('m-bat-date');
     const machineSelect = document.getElementById('m-bat-machine');
@@ -3002,7 +3129,26 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
     const greenbeanWeightInput = document.getElementById('m-bat-greenbean');
     const roastedWeightInput = document.getElementById('m-bat-roasted');
     const depreciationInput = document.getElementById('m-bat-depreciation');
-    
+    const degreeInput = document.getElementById('m-bat-degree');
+
+    // V2 1F: auto pre-fill Roast Degree from the most recently logged batch of
+    // the same coffee + machine (editable — operator can override); blank if
+    // no prior batch exists for that combo. Same idiom as openRoastBatchModal.
+    function prefillRoastDegree(coffeeVal, mid) {
+        if (!coffeeVal || !mid) { degreeInput.value = ''; return; }
+        const [cType, cIdStr] = coffeeVal.split('-');
+        const cId = parseInt(cIdStr);
+        const mIdNum = parseInt(mid);
+        const match = (batches || [])
+            .filter(b => b.machine_id === mIdNum && b.roast_degree != null &&
+                (cType === 'Single' ? b.single_coffee_id === cId : b.blend_recipe_id === cId))
+            .sort((a, b) => new Date(b.roast_date) - new Date(a.roast_date) || b.id - a.id)[0];
+        degreeInput.value = match ? match.roast_degree : '';
+    }
+    coffeeSelect.addEventListener('change', () => prefillRoastDegree(coffeeSelect.value, machineSelect.value));
+    machineSelect.addEventListener('change', () => prefillRoastDegree(coffeeSelect.value, machineSelect.value));
+    prefillRoastDegree(coffeeSelect.value, machineSelect.value);
+
     // Auto-generate batch code
     async function generateCode() {
         const cv = coffeeSelect.value;
@@ -3080,25 +3226,24 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
         const singleId = type === 'Single' ? id : null;
         const blendId = type === 'Blend' ? id : null;
         
-        // Deduct greenbean stock
+        // V2 1B: consume from green_coffee_lots (FIFO), not a direct stock_kg
+        // write — see the matching comment in openRoastBatchModal's submit
+        // handler for why. A single scanned via a sack barcode draws from
+        // that exact lot first, then any shortfall oldest-first; a blend
+        // (or a manually re-picked single) has no lot preference.
+        const lotDraws = [];
         if (type === 'Single') {
-            const gb = (greenbeans || []).find(g => g.id === id);
-            if (gb) {
-                gb.stock_kg = Math.max(0, parseFloat(gb.stock_kg || 0) - inputKg);
-                await saveData('green_coffee', gb);
-            }
+            const { draws } = await consumeGreenCoffeeLotsFifo(id, inputKg, scannedLotId);
+            lotDraws.push(...draws);
         } else {
             const recipeIngs = (ingredients || []).filter(ing => ing.blend_recipe_id === blendId);
             for (const ing of recipeIngs) {
-                const gb = (greenbeans || []).find(g => g.id === ing.green_coffee_id);
-                if (gb) {
-                    const req = (parseFloat(ing.percentage) / 100) * inputKg;
-                    gb.stock_kg = Math.max(0, parseFloat(gb.stock_kg || 0) - req);
-                    await saveData('green_coffee', gb);
-                }
+                const req = (parseFloat(ing.percentage) / 100) * inputKg;
+                const { draws } = await consumeGreenCoffeeLotsFifo(ing.green_coffee_id, req);
+                lotDraws.push(...draws);
             }
         }
-        
+
         const qcStatus = isTest ? 'Pending' : 'Success';
 
         const yieldPct = outputKg > 0 && inputKg > 0 ? parseFloat(((outputKg / inputKg) * 100).toFixed(2)) : null;
@@ -3115,7 +3260,8 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
             yield_percentage: yieldPct,
             roast_type: isTest ? 'Test' : 'Regular',
             qc_status: qcStatus,
-            notes: notes || null
+            notes: notes || null,
+            roast_degree: degreeInput.value ? parseFloat(degreeInput.value) : null
         };
 
         const { data: savedBatch, error } = await saveData('roast_batches', record);
@@ -3132,6 +3278,9 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId) {
             alert(msg);
             return;
         }
+
+        // V2 1B: persist which lot(s) this batch drew from.
+        await recordRoastBatchGreenLots(savedBatch.id, lotDraws);
 
         // Update associated plan(s) — same matching/fulfillment logic as the
         // regular Roasting Log form (openRoastBatchModal). Without this, a
