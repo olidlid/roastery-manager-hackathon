@@ -1378,22 +1378,33 @@ async function openSalesRequestModal(orderId = null) {
         }
     });
 
-    // Subtract committed (Pending / Preparing) orders from packed stock
+    // Subtract committed (Pending / Preparing) orders from packed stock —
+    // tracked both in aggregate and per-machine (machine-partitioned, same
+    // rule as everywhere else: another order's claim on machine A's stock
+    // must not reduce what THIS order's machine-B row shows as available).
     const activeOrders = (requestOrders || []).filter(o => ['Pending Approval', 'Preparing'].includes(o.status));
     const activeOrderIds = activeOrders.map(o => o.id);
     const committedPackedMap = {};
+    const committedPackedMapByMachine = {};
     (requestOrderItems || []).forEach(item => {
         if (activeOrderIds.includes(item.request_order_id)) {
             if (orderId !== null && item.request_order_id === orderId) return;
             const cId = item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
-            const key = `${item.coffee_type}-${cId}-${item.bag_size_g}`;
             const qty = parseInt(item.quantity_pending) || parseInt(item.quantity_requested) || 0;
+            const key = `${item.coffee_type}-${cId}-${item.bag_size_g}`;
             committedPackedMap[key] = (committedPackedMap[key] || 0) + qty;
+            if (item.machine_id) {
+                const mKey = `${key}-${item.machine_id}`;
+                committedPackedMapByMachine[mKey] = (committedPackedMapByMachine[mKey] || 0) + qty;
+            }
         }
     });
 
     Object.keys(originalPackedStocks).forEach(k => {
         originalPackedStocks[k] = Math.max(0, originalPackedStocks[k] - (committedPackedMap[k] || 0));
+    });
+    Object.keys(perMachinePackedStocks).forEach(k => {
+        perMachinePackedStocks[k] = Math.max(0, perMachinePackedStocks[k] - (committedPackedMapByMachine[k] || 0));
     });
 
     // ── Layer 3: Calculate Greenbean Allocations from OTHER rows ────────────
@@ -1577,15 +1588,24 @@ async function openSalesRequestModal(orderId = null) {
 
     // ── Reactive Stock Allocation (Layer 2 & 3) ─────────────────────────────
     function getAllocations() {
+        // Keyed by coffee+size+machine — packed stock from different
+        // machines is not interchangeable (same rule as the 5 lookups fixed
+        // 2026-07-15 in approveSalesOrder/loadPackingRequestsSection/etc.),
+        // so two rows in the same not-yet-submitted order for the same
+        // coffee+size but different machines must NOT share one reservation
+        // pool. Rows with no machine picked yet fall under a shared 'none'
+        // bucket, which simply won't match any real per-machine stock key.
         const alloc = {};
         itemsList.querySelectorAll('.sales-item-row').forEach(row => {
             const sel = row.querySelector('.item-select');
             const sizeEl = row.querySelector('.item-size');
             const qtyEl = row.querySelector('.item-qty');
+            const machineEl = row.querySelector('.item-machine');
             if (!sel.value) return;
             const qty = parseInt(qtyEl.value) || 0;
             if (qty <= 0) return;
-            const key = `${sel.value}-${sizeEl.value}`;
+            const machineId = machineEl && machineEl.value ? machineEl.value : 'none';
+            const key = `${sel.value}-${sizeEl.value}-${machineId}`;
             alloc[key] = (alloc[key] || 0) + qty;
         });
         return alloc;
@@ -1640,7 +1660,18 @@ async function openSalesRequestModal(orderId = null) {
                     visibleSizes.forEach(s => {
                         const sz = parseFloat(s.gram);
                         const mKey = `${type}-${coffeeId}-${sz}-${m.id}`;
-                        const machStock = perMachinePackedStocks[mKey] || 0;
+                        const rawMachStock = perMachinePackedStocks[mKey] || 0;
+                        // Subtract what OTHER rows in this same unsubmitted order
+                        // already reserved for this exact coffee+size+machine, so
+                        // two lines can't both show the full stock and jointly
+                        // overcommit it (reported live 2026-07-16: two rows for the
+                        // same coffee+size+machine both showed the full 3 in stock
+                        // even after the first row already claimed 2 of it).
+                        const allocKey = `${sel.value}-${sz}-${m.id}`;
+                        const totalAllocForKey = totalAlloc[allocKey] || 0;
+                        const allocByThisRowForKey = (isActiveMachine && sz === sizeG) ? currentQty : 0;
+                        const otherAllocForKey = Math.max(0, totalAllocForKey - allocByThisRowForKey);
+                        const machStock = Math.max(0, rawMachStock - otherAllocForKey);
                         const isSelected = (sz === sizeG);
                         const highlight = isSelected ? 'font-weight:700; color: var(--text-primary);' : 'color: var(--text-muted);';
                         sizesHtml += `<span style="${highlight} font-size: 0.75rem; margin-right: 8px;">${s.label}: <strong>${machStock}</strong></span>`;
@@ -1655,15 +1686,19 @@ async function openSalesRequestModal(orderId = null) {
                 });
                 machineCardsHtml += '</div>';
                 
-                // Calculate aggregate for validation (subtract other rows' allocations)
+                // Calculate aggregate for validation (subtract other rows'
+                // allocations) — machine-partitioned, same reasoning as the
+                // display cards above: a row with no machine selected yet has
+                // no real per-machine stock to draw from, so it's 0 until a
+                // machine is picked.
                 let currentSizeAvailPacked = 0;
                 {
-                    const stockKey = `${sel.value}-${sizeG}`;
+                    const stockKey = `${sel.value}-${sizeG}-${selectedMachineId || 'none'}`;
                     const totalAllocForThisSize = totalAlloc[stockKey] || 0;
                     const allocByThisRow = currentQty;
                     const otherAlloc = Math.max(0, totalAllocForThisSize - allocByThisRow);
-                    const packKey = `${type}-${coffeeId}-${sizeG}`;
-                    const totalPacked = originalPackedStocks[packKey] || 0;
+                    const packKey = `${type}-${coffeeId}-${sizeG}-${selectedMachineId}`;
+                    const totalPacked = selectedMachineId ? (perMachinePackedStocks[packKey] || 0) : 0;
                     currentSizeAvailPacked = Math.max(0, totalPacked - otherAlloc);
                 }
 
