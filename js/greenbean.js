@@ -292,13 +292,26 @@ async function openIntakeModal(editId = null) {
                     </datalist>
                 </div>
             </div>
-            <div class="form-group">
-                <label class="form-label">Supplier Name</label>
-                <input type="text" id="m-int-supplier" list="int-suppliers-list" class="form-control" value="${defaultSupplier}" placeholder="e.g. Gayo Estate" required autocomplete="off">
-                <datalist id="int-suppliers-list">
-                    ${supplierOpts}
-                </datalist>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Supplier Name</label>
+                    <input type="text" id="m-int-supplier" list="int-suppliers-list" class="form-control" value="${defaultSupplier}" placeholder="e.g. Gayo Estate" required autocomplete="off">
+                    <datalist id="int-suppliers-list">
+                        ${supplierOpts}
+                    </datalist>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Purchase Price / kg (optional)</label>
+                    <input type="number" step="0.01" id="m-int-price" class="form-control" value="${linkedBean ? (linkedBean.purchase_price_per_kg || '') : ''}" placeholder="e.g. 85000">
+                </div>
             </div>
+            ${editId ? '' : `
+            <div class="form-group">
+                <label class="form-label">Lot Stickers to Print</label>
+                <input type="number" step="1" min="0" id="m-int-sticker-count" class="form-control" value="0" placeholder="How many sacks?">
+                <div style="font-size:0.78rem; color:var(--text-muted); margin-top:4px;">One barcode per machine is printed on each sticker — stick one on every sack. Leave 0 to skip printing now.</div>
+            </div>
+            `}
 
             <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
@@ -315,6 +328,8 @@ async function openIntakeModal(editId = null) {
     const originInput = document.getElementById('m-int-origin');
     const processInput = document.getElementById('m-int-process');
     const supplierInput = document.getElementById('m-int-supplier');
+    const priceInput = document.getElementById('m-int-price');
+    const stickerCountInput = document.getElementById('m-int-sticker-count');
 
     // Selecting an existing coffee locks identity to its row.id (no more
     // matching by typed name+code text) and refreshes the other fields from
@@ -345,6 +360,8 @@ async function openIntakeModal(editId = null) {
         const quantity = parseFloat(document.getElementById('m-int-qty').value);
         const supplier = supplierInput.value.trim();
         const coffeeSelectVal = coffeeSelect.value;
+        const priceRaw = priceInput.value ? parseFloat(priceInput.value) : null;
+        const stickerCount = stickerCountInput ? (parseInt(stickerCountInput.value) || 0) : 0;
 
         if (!coffeeSelectVal) return; // native `required` blocks this, but guard anyway
 
@@ -379,7 +396,7 @@ async function openIntakeModal(editId = null) {
 
             const newBean = {
                 code, name: newName, origin, process,
-                stock_kg: quantity, purchase_price_per_kg: 0.0, supplier
+                stock_kg: quantity, purchase_price_per_kg: priceRaw || 0.0, supplier
             };
             const { data: savedBean, error } = await saveData('green_coffee', newBean);
             if (error) { alert('Failed to create coffee: ' + error.message); return; }
@@ -394,6 +411,7 @@ async function openIntakeModal(editId = null) {
             if (origin) bean.origin = origin;
             if (process) bean.process = process;
             if (supplier) bean.supplier = supplier;
+            if (priceRaw !== null) bean.purchase_price_per_kg = priceRaw;
             await saveData('green_coffee', bean);
             targetCoffeeId = bean.id;
             targetName = bean.name;
@@ -410,7 +428,37 @@ async function openIntakeModal(editId = null) {
             quantity,
             supplier
         };
-        await saveData('green_coffee_intake', intakeRecord);
+        const { data: savedIntake } = await saveData('green_coffee_intake', intakeRecord);
+
+        // V2 1A: one intake = one green lot. green_coffee.stock_kg is now a
+        // DERIVED value (trigger-summed from green_coffee_lots.remaining_kg
+        // — see database/v2_lot_tracking_migration.sql), so the lot itself
+        // must stay in sync with the intake or the manual stock_kg writes
+        // above get silently reverted the next time any lot changes.
+        if (!editId) {
+            const newLot = await createGreenCoffeeLot({
+                coffeeId: targetCoffeeId,
+                coffeeCode: code,
+                arrivalDate: date,
+                quantityKg: quantity,
+                supplier,
+                purchasePricePerKg: priceRaw
+            });
+            if (newLot) {
+                // Link the intake back to the lot it created so a later edit/delete
+                // of this intake can find and adjust the same lot.
+                await saveData('green_coffee_intake', { id: savedIntake.id, green_coffee_lot_id: newLot.id });
+                if (stickerCount > 0) {
+                    await printGreenLotStickers(newLot, { code, name: targetName }, stickerCount);
+                }
+            }
+        } else if (intakeItem && intakeItem.green_coffee_lot_id) {
+            // Editing a lot that may already be partially consumed (once 1B
+            // ships) is still out of scope — this assumes nothing has drawn
+            // from the lot yet, so quantity_kg and remaining_kg move together.
+            const delta = quantity - parseFloat(intakeItem.quantity || 0);
+            await adjustGreenCoffeeLotQuantity(intakeItem.green_coffee_lot_id, delta);
+        }
 
         modalContainer.classList.add('hidden');
 
@@ -418,6 +466,123 @@ async function openIntakeModal(editId = null) {
         loadGreenbeanInventory();
         scheduleDashboardRefresh(); // Update stats
     });
+}
+
+// V2 1A: builds a green_coffee_lots row for a fresh intake and generates its
+// human-readable lot code — {coffee code}-GL-{YYMMDD}-{NN} (2-digit year, per
+// V2_ROADMAP.md 1A e.g. "YAM-GL-260712-01"), where {NN} is a GLOBAL daily
+// sequence across ALL green intakes that day (not per coffee), which is what
+// guarantees uniqueness even though green_coffee.code isn't enforced unique.
+// Falls back to the coffee's internal id (e.g. "C12") when its code is blank.
+// Retries on a lot_code collision (two intakes racing for the same daily
+// sequence number) since the count-then-insert isn't atomic.
+async function createGreenCoffeeLot({ coffeeId, coffeeCode, arrivalDate, quantityKg, supplier, purchasePricePerKg }) {
+    const sanitize = (s) => (s || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+    const codeSegment = sanitize(coffeeCode) || `C${coffeeId}`;
+    const [yyyy, mm, dd] = arrivalDate.split('-');
+    const dateCompact = `${yyyy.slice(2)}${mm}${dd}`; // YYMMDD per V2_ROADMAP.md 1A
+    const dateISO = arrivalDate.replace(/-/g, '');     // full-year key for matching existing lots' arrival_date
+
+    const MAX_ATTEMPTS = 5;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        const { data: existingLots } = await fetchData('green_coffee_lots');
+        const sameDayCount = (existingLots || []).filter(l => (l.arrival_date || '').replace(/-/g, '') === dateISO).length;
+        const seq = String(sameDayCount + 1).padStart(2, '0');
+        const lotCode = `${codeSegment}-GL-${dateCompact}-${seq}`;
+
+        const { data: savedLot, error } = await saveData('green_coffee_lots', {
+            green_coffee_id: coffeeId,
+            lot_code: lotCode,
+            quantity_kg: quantityKg,
+            remaining_kg: quantityKg,
+            supplier,
+            arrival_date: arrivalDate,
+            purchase_price_per_kg: purchasePricePerKg
+        });
+        if (!error) return savedLot;
+
+        const isDupCode = error.code === '23505' || /duplicate key|already exists/i.test(error.message || '');
+        if (isDupCode && attempt < MAX_ATTEMPTS - 1) continue; // re-fetch and retry with the next sequence number
+
+        // Non-fatal: the intake record itself already saved and green_coffee.stock_kg
+        // was already updated directly above, so the arrival is not lost — only the
+        // lot-level breakdown (FIFO/traceability) is missing until this is retried.
+        console.error('Failed to create green_coffee_lots row (lot tracking degraded):', error);
+        return null;
+    }
+    return null;
+}
+
+// V2 1A: keeps a lot's quantity_kg/remaining_kg in sync when the intake that
+// created it is edited (deltaKg = new intake qty - old intake qty). Both
+// fields move together because nothing can have drawn from the lot yet (1B
+// consumption isn't wired up); clamped at 0 as a safety floor.
+async function adjustGreenCoffeeLotQuantity(lotId, deltaKg) {
+    const { data: lots } = await fetchData('green_coffee_lots');
+    const lot = (lots || []).find(l => l.id === lotId);
+    if (!lot) return;
+    const newQuantity = Math.max(0, parseFloat(lot.quantity_kg || 0) + deltaKg);
+    const newRemaining = Math.max(0, parseFloat(lot.remaining_kg || 0) + deltaKg);
+    const { error } = await saveData('green_coffee_lots', { id: lotId, quantity_kg: newQuantity, remaining_kg: newRemaining });
+    if (error) console.error('Failed to adjust green_coffee_lots row after intake edit:', error);
+}
+
+// V2 1A: prints `stickerCount` copies of the lot's sticker — one per sack —
+// each carrying the human-readable info (coffee code, arrival date, coffee
+// name) plus ONE BARCODE PER MACHINE, so whichever machine ends up roasting
+// that sack, the matching barcode on the sticker is the one to scan. Barcode
+// payload format `RMP:Lot:{green_coffee_lots.id}:{machineId}` is parsed by
+// the scan handler built in 1B.
+async function printGreenLotStickers(lot, coffee, stickerCount) {
+    const { data: machines } = await fetchData('machines');
+    if (!machines || machines.length === 0) {
+        alert('No machines configured. Please add machines in Settings first.');
+        return;
+    }
+
+    let labelsHtml = '';
+    for (let i = 0; i < stickerCount; i++) {
+        let barcodesHtml = '';
+        machines.forEach(m => {
+            barcodesHtml += `
+                <div style="display:inline-block; text-align:center; margin: 2px 6px;">
+                    <svg class="green-lot-barcode-svg" data-value="RMP:Lot:${lot.id}:${m.id}"></svg>
+                    <div style="font-size:9px;">${m.name}</div>
+                </div>
+            `;
+        });
+        labelsHtml += `
+            <div class="green-lot-sticker" style="display:inline-block; text-align:center; padding:10px; margin:6px; border:1px dashed #999; page-break-inside: avoid;">
+                <div style="font-weight:700; font-size:13px;">${coffee.code || coffee.name}</div>
+                <div style="font-size:12px;">${coffee.name}</div>
+                <div style="font-size:11px; color:#555;">${lot.arrival_date}</div>
+                <div style="margin-top:6px;">${barcodesHtml}</div>
+            </div>
+        `;
+    }
+
+    const printWin = window.open('', '_blank', 'width=900,height=700');
+    if (!printWin) {
+        alert('Could not open the print window — please allow pop-ups for this site and try again.');
+        return;
+    }
+    printWin.document.write(`
+        <html><head><title>Green Lot Stickers</title>
+        <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 0; padding: 10px; }
+            @media print { body { margin: 0; } }
+        </style></head><body>
+        ${labelsHtml}
+        <script>
+            document.querySelectorAll('.green-lot-barcode-svg').forEach(el => {
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.3, height: 35, displayValue: false, margin: 2 });
+            });
+            setTimeout(() => { window.print(); }, 500);
+        <\/script>
+        </body></html>
+    `);
+    printWin.document.close();
 }
 
 async function deleteIntake(deleteId) {
@@ -441,6 +606,14 @@ async function deleteIntake(deleteId) {
         if (match) {
             match.stock_kg = Math.max(0, parseFloat(match.stock_kg) - parseFloat(item.quantity));
             await saveData('green_coffee', match);
+        }
+
+        // V2 1A: delete the lot this intake created (if any) — green_coffee.stock_kg
+        // is DERIVED from green_coffee_lots.remaining_kg via trigger, so leaving the
+        // lot behind would silently resurrect the "deleted" stock the next time any
+        // lot for this coffee changes and the trigger recomputes the sum.
+        if (item.green_coffee_lot_id) {
+            await deleteData('green_coffee_lots', item.green_coffee_lot_id);
         }
 
         // Delete from DB

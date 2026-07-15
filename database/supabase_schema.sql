@@ -99,7 +99,15 @@ CREATE TABLE IF NOT EXISTS public.green_coffee (
     purchase_date DATE,
     purchase_price_per_kg NUMERIC,
     supplier TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    moisture_content NUMERIC,           -- V2 1E, nullable, shown on Tracking
+    water_activity NUMERIC,             -- V2 1E, nullable, shown on Tracking
+    density NUMERIC                     -- V2 1E, nullable, shown on Tracking
+    -- stock_kg above is now a TRIGGER-MAINTAINED DERIVED value (V2 1·CHAIN):
+    -- kept in sync from SUM(green_coffee_lots.remaining_kg) by
+    -- sync_green_coffee_stock() (see database/v2_lot_tracking_migration.sql).
+    -- No code needs to change to READ stock_kg; app code should stop WRITING
+    -- it directly once 1A/1B ship (they write green_coffee_lots instead).
 );
 
 -- 5. Green bean intake / arrival history
@@ -117,7 +125,8 @@ CREATE TABLE IF NOT EXISTS public.green_coffee_intake (
     origin TEXT,
     process TEXT,
     quantity NUMERIC DEFAULT 0,
-    supplier TEXT
+    supplier TEXT,
+    green_coffee_lot_id INTEGER REFERENCES public.green_coffee_lots(id) ON DELETE SET NULL  -- V2 1A: links back to the lot this intake created, so editing/deleting the intake can keep the lot's quantity_kg/remaining_kg in sync
 );
 
 -- 5b. Green bean outbound (shipments to other roasteries) — added 2026-07-09
@@ -146,7 +155,8 @@ CREATE TABLE IF NOT EXISTS public.blend_recipes (
     components JSONB DEFAULT '[]'::jsonb,       -- legacy (app uses blend_ingredients table)
     created_at TIMESTAMPTZ DEFAULT NOW(),
     machine_id INTEGER,
-    batch_size_g NUMERIC
+    batch_size_g NUMERIC,
+    is_post_blend BOOLEAN DEFAULT FALSE  -- V2 1I-b: Recipe tab's pre-blend/post-blend sub-tab flag
 );
 
 -- 7. Blend ingredients (green_coffee -> blend_recipes)
@@ -190,7 +200,9 @@ CREATE TABLE IF NOT EXISTS public.roasting_plans (
     target_roasted_kg NUMERIC DEFAULT 0,
     fulfilled_roasted_kg NUMERIC DEFAULT 0,
     order_ref TEXT,
-    request_order_item_id INTEGER
+    request_order_item_id INTEGER,
+    parent_plan_id INTEGER REFERENCES public.roasting_plans(id) ON DELETE CASCADE,  -- V2 1I-b: sub-plan → parent post-blend plan
+    is_post_blend_component BOOLEAN DEFAULT FALSE                                    -- V2 1I-b: marks an exploded single-origin sub-plan
 );
 
 -- 10. Roast batches
@@ -236,7 +248,8 @@ CREATE TABLE IF NOT EXISTS public.roast_batches (
     roast_type TEXT DEFAULT 'Regular',
     qc_status TEXT DEFAULT 'Success',
     remaining_bulk_kg NUMERIC,
-    roaster_operator TEXT
+    roaster_operator TEXT,
+    roast_degree NUMERIC  -- V2 1F: Agtron value, auto pre-filled from the last batch of the same coffee+machine, editable, shown on Tracking
 );
 
 -- 11. Bulk roasted coffee (roasted, not yet packed)
@@ -252,7 +265,10 @@ CREATE TABLE IF NOT EXISTS public.bulk_roasted_coffee (
     single_coffee_id INTEGER,
     blend_recipe_id INTEGER,
     coffee_type TEXT,
-    bulk_available NUMERIC DEFAULT 0
+    bulk_available NUMERIC DEFAULT 0,
+    is_post_blend BOOLEAN DEFAULT FALSE,  -- V2 1I: true for both custom (1I-a) and recipe-assembled (1I-b) post-blends
+    custom_blend_name TEXT,               -- V2 1I-a: user-typed name for a custom post-blend
+    custom_blend_code TEXT                -- V2 1I-a: date-based identity code for a custom post-blend
 );
 
 -- 12. Waste inventory (failed test batches etc.)
@@ -444,7 +460,8 @@ CREATE TABLE IF NOT EXISTS public.green_coffee_lots (
     remaining_kg NUMERIC NOT NULL DEFAULT 0,
     supplier TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    arrival_date DATE DEFAULT CURRENT_DATE
+    arrival_date DATE DEFAULT CURRENT_DATE,
+    purchase_price_per_kg NUMERIC  -- V2 1·CHAIN: per-lot price, data captured for future costing (1C, not built yet)
 );
 
 -- 24. Packed coffee lots (shadow schema for V2 packed lot tracking)
@@ -456,7 +473,8 @@ CREATE TABLE IF NOT EXISTS public.packed_coffee_lots (
     quantity_pcs INTEGER NOT NULL DEFAULT 0,
     remaining_pcs INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    packed_date DATE DEFAULT CURRENT_DATE
+    packed_date DATE DEFAULT CURRENT_DATE,
+    production_lot_id INTEGER REFERENCES public.production_lots(id) ON DELETE SET NULL  -- V2 1·CHAIN: which production lot this was packed from (populated starting 1G-1)
 );
 
 -- 25. Production lots (traceability for "Ready to Pack" barcode workflow —
@@ -474,6 +492,59 @@ CREATE TABLE IF NOT EXISTS public.production_lots (
     coffee_name TEXT,
     production_date DATE NOT NULL DEFAULT CURRENT_DATE,
     latest_roast_batch_id INTEGER REFERENCES public.roast_batches(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 26. Roast batch → green lot consumption (V2 1·CHAIN / 1B — see
+-- database/v2_lot_tracking_migration.sql). One roast batch can draw from
+-- several green lots (blend, or a single batch spilling across lots);
+-- always recorded precisely in kg per lot. Feeds future costing (1C) and
+-- Tracking traceability.
+CREATE TABLE IF NOT EXISTS public.roast_batch_green_lots (
+    id SERIAL PRIMARY KEY,
+    roast_batch_id INTEGER REFERENCES public.roast_batches(id) ON DELETE CASCADE,
+    green_coffee_lot_id INTEGER REFERENCES public.green_coffee_lots(id) ON DELETE SET NULL,
+    kg_consumed NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 27. Production lot → roast batch, day-level precision (V2 1·CHAIN).
+-- Snapshots the roast_batches of the same coffee+machine roasted on a
+-- production_lot's production_date. Replaces the old single
+-- latest_roast_batch_id approximation. Carryover from prior days is
+-- deliberately not modeled (accepted inaccuracy).
+CREATE TABLE IF NOT EXISTS public.production_lot_batches (
+    id SERIAL PRIMARY KEY,
+    production_lot_id INTEGER REFERENCES public.production_lots(id) ON DELETE CASCADE,
+    roast_batch_id INTEGER REFERENCES public.roast_batches(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(production_lot_id, roast_batch_id)
+);
+
+-- 28. Dispatch lot items (V2 1G) — POS dispatch fulfillment record: which
+-- packed lot, how much, went to which order line / customer. Powers the
+-- "Customer Order History" lot→customer traceability UI.
+CREATE TABLE IF NOT EXISTS public.dispatch_lot_items (
+    id SERIAL PRIMARY KEY,
+    request_order_item_id INTEGER REFERENCES public.request_order_items(id) ON DELETE CASCADE,
+    packed_coffee_lot_id INTEGER REFERENCES public.packed_coffee_lots(id) ON DELETE SET NULL,
+    customer_id INTEGER,
+    qty INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 29. Post-blend components (V2 1I) — records what went into a post-blend
+-- bulk. Used by both custom post-blend (1I-a: source_type 'Bulk'/'Packed',
+-- pulling from existing stock) and, indirectly via the same bulk row, the
+-- recipe-based post-blend (1I-b, whose components are fresh roast batches
+-- tracked via roast_batch_green_lots/production_lot_batches instead).
+CREATE TABLE IF NOT EXISTS public.post_blend_components (
+    id SERIAL PRIMARY KEY,
+    blend_bulk_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,  -- 'Bulk' | 'Packed'
+    source_bulk_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE SET NULL,
+    source_packed_lot_id INTEGER REFERENCES public.packed_coffee_lots(id) ON DELETE SET NULL,
+    kg NUMERIC NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -496,7 +567,9 @@ BEGIN
     'packaging_sizes','packed_coffee','packing_records','customers',
     'sales_agents','request_orders','request_order_items','sales_orders',
     'stock_takes','stock_take_items',
-    'green_coffee_lots','packed_coffee_lots','production_lots'
+    'green_coffee_lots','packed_coffee_lots','production_lots',
+    'roast_batch_green_lots','production_lot_batches',
+    'dispatch_lot_items','post_blend_components'
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);
@@ -532,3 +605,36 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- ============================================================================
+-- GREEN COFFEE STOCK SYNC TRIGGER (added V2 1·CHAIN, 2026-07-12 — see
+-- database/v2_lot_tracking_migration.sql)
+-- ============================================================================
+-- green_coffee.stock_kg is a TRIGGER-MAINTAINED DERIVED value: kept in sync
+-- from SUM(green_coffee_lots.remaining_kg) whenever green_coffee_lots
+-- changes. No app code needs to change to READ stock_kg; app code should
+-- stop WRITING it directly once 1A/1B ship (they write green_coffee_lots
+-- instead, and this trigger guarantees stock_kg can never drift out of sync).
+CREATE OR REPLACE FUNCTION public.sync_green_coffee_stock()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    target_id INTEGER;
+BEGIN
+    target_id := COALESCE(NEW.green_coffee_id, OLD.green_coffee_id);
+    IF target_id IS NOT NULL THEN
+        UPDATE public.green_coffee
+        SET stock_kg = (
+            SELECT COALESCE(SUM(remaining_kg), 0)
+            FROM public.green_coffee_lots
+            WHERE green_coffee_id = target_id
+        )
+        WHERE id = target_id;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_green_coffee_stock ON public.green_coffee_lots;
+CREATE TRIGGER trg_sync_green_coffee_stock
+AFTER INSERT OR UPDATE OF remaining_kg OR DELETE ON public.green_coffee_lots
+FOR EACH ROW EXECUTE FUNCTION public.sync_green_coffee_stock();
