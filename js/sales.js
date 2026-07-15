@@ -1156,8 +1156,21 @@ async function approveSalesOrder(orderId) {
             
             item.quantity_allocated = fQty;
             item.quantity_pending = pQty;
-            item.item_status = pQty > 0 ? 'Planned' : 'Packing';
-            
+            // Credit the stock-fulfilled portion as already "prepared" — it's
+            // deducted from packed_coffee below, so js/packing.js's Pending
+            // Pack / Ready button must not ask for (and re-deduct) it again.
+            // Without this, quantity_prepared stayed 0 here and
+            // markOrderItemReady later treated the FULL quantity_requested as
+            // still needing packing, double-deducting stock for the fQty
+            // that was already fulfilled at approval (confirmed 2026-07-16 by
+            // reproducing it live: a fully stock-fulfilled item still showed
+            // "Pending Pack" for its whole quantity, and clicking Ready
+            // deducted packed_coffee a second time for the same units).
+            item.quantity_prepared = fQty;
+            item.item_status = fQty >= (parseInt(item.quantity_requested) || 0)
+                ? 'Ready for Handover'
+                : (pQty > 0 ? 'Planned' : 'Packing');
+
             await saveData('request_order_items', item);
             
             // Deduct packed stock — machine-partitioned (confirmed 2026-07-15):
