@@ -1429,19 +1429,20 @@ async function loadPackedCoffeeSection() {
 
     const resolved = (packed || []).map(item => {
         let coffeeName = item.custom_coffee_name || 'Roasted Coffee';
+        let coffeeCode = '';
         if (item.roast_batch_id) {
             const b = batches.find(x => x.id === item.roast_batch_id);
             if (b) {
                 if (b.coffee_type === 'Single') {
                     const gb = greenbeans.find(g => g.id === b.single_coffee_id);
-                    if (gb) coffeeName = gb.name;
+                    if (gb) { coffeeName = gb.name; coffeeCode = gb.code || ''; }
                 } else {
                     const r = recipes.find(rec => rec.id === b.blend_recipe_id);
-                    if (r) coffeeName = r.name;
+                    if (r) { coffeeName = r.name; coffeeCode = r.code || ''; }
                 }
             }
         }
-        
+
         // Normalize names to avoid duplicates like "Sidikalang Robusta (Single)" vs "Sidikalang Robusta"
         if (coffeeName.endsWith(' (Single)')) {
             coffeeName = coffeeName.replace(' (Single)', '');
@@ -1449,19 +1450,27 @@ async function loadPackedCoffeeSection() {
         if (coffeeName.endsWith(' (Blend)')) {
             coffeeName = coffeeName.replace(' (Blend)', '');
         }
-        
-        return { ...item, coffeeName };
+        // Custom/manual packing entries have no roast_batch_id to resolve a
+        // code from directly — fall back to matching by name against the
+        // greenbean/recipe lists, same identity loadPackedCoffeeSection groups by.
+        if (!coffeeCode) {
+            const gbMatch = greenbeans.find(g => g.name === coffeeName);
+            const rMatch = recipes.find(r => r.name === coffeeName);
+            coffeeCode = (gbMatch && gbMatch.code) || (rMatch && rMatch.code) || '';
+        }
+
+        return { ...item, coffeeName, coffeeCode };
     });
 
     // Group by coffee name and then machine
     const grouped = {};
-    
+
     // First, ensure ALL green beans and blend recipes are present in the grouped object
     (greenbeans || []).forEach(gb => {
-        if (!grouped[gb.name]) grouped[gb.name] = { coffeeName: gb.name, machines: {} };
+        if (!grouped[gb.name]) grouped[gb.name] = { coffeeName: gb.name, coffeeCode: gb.code || '', machines: {} };
     });
     (recipes || []).forEach(r => {
-        if (!grouped[r.name]) grouped[r.name] = { coffeeName: r.name, machines: {} };
+        if (!grouped[r.name]) grouped[r.name] = { coffeeName: r.name, coffeeCode: r.code || '', machines: {} };
     });
 
     resolved.forEach(item => {
@@ -1476,11 +1485,11 @@ async function loadPackedCoffeeSection() {
                 if (m) machineName = m.name;
             }
         }
-        
+
         item.machineName = machineName;
         const groupKey = item.coffeeName;
-        
-        if (!grouped[groupKey]) grouped[groupKey] = { coffeeName: item.coffeeName, machines: {} };
+
+        if (!grouped[groupKey]) grouped[groupKey] = { coffeeName: item.coffeeName, coffeeCode: item.coffeeCode, machines: {} };
         if (!grouped[groupKey].machines[machineName]) {
             grouped[groupKey].machines[machineName] = { machineName: machineName, sizes: {} };
         }
@@ -1551,7 +1560,8 @@ async function loadPackedCoffeeSection() {
     Object.values(grouped).sort((a,b) => a.coffeeName.localeCompare(b.coffeeName)).forEach(group => {
         const tr = document.createElement('tr');
 
-        let html = `<td><strong class="packed-stock-row-name" data-coffee="${encodeURIComponent(group.coffeeName)}" style="cursor:pointer; text-decoration:underline dotted;" title="Click to view stock by lot">${group.coffeeName}</strong></td>`;
+        const codeLabel = group.coffeeCode ? `<code style="font-size:0.78rem; color:var(--text-muted); margin-right:6px;">${group.coffeeCode}</code>` : '';
+        let html = `<td>${codeLabel}<strong class="packed-stock-row-name" data-coffee="${encodeURIComponent(group.coffeeName)}" style="cursor:pointer; text-decoration:underline dotted;" title="Click to view stock by lot">${group.coffeeName}</strong></td>`;
 
         activeMachinesList.forEach((mach, mIdx) => {
             const machData = group.machines[mach.name] || { sizes: {} };
@@ -1649,6 +1659,11 @@ async function openPackedLotsModal(coffeeName) {
         return { ...item, resolvedName: name };
     });
 
+    const gbMatch = (greenbeans || []).find(g => g.name === coffeeName);
+    const rMatch = (recipes || []).find(r => r.name === coffeeName);
+    const coffeeCode = (gbMatch && gbMatch.code) || (rMatch && rMatch.code) || '';
+    const displayName = coffeeCode ? `${coffeeCode} — ${coffeeName}` : coffeeName;
+
     const matchingPackedIds = new Set(resolved.filter(r => r.resolvedName === coffeeName).map(r => r.id));
     const lotRows = (packedLots || [])
         .filter(pl => matchingPackedIds.has(pl.packed_coffee_id) && parseInt(pl.remaining_pcs) > 0)
@@ -1663,35 +1678,76 @@ async function openPackedLotsModal(coffeeName) {
                 remaining: parseInt(pl.remaining_pcs) || 0
             };
         })
-        .sort((a, b) => new Date(a.packedDate || 0) - new Date(b.packedDate || 0));
+        // Grouped by machine+size first (so the same fulfillable bucket
+        // stays together), oldest-first within each group — the top row of
+        // each group is exactly the lot FIFO dispatch should pick next.
+        .sort((a, b) =>
+            a.machineName.localeCompare(b.machineName) ||
+            (parseInt(a.sizeG) || 0) - (parseInt(b.sizeG) || 0) ||
+            new Date(a.packedDate || 0) - new Date(b.packedDate || 0)
+        );
 
     let rowsHtml = '';
     if (lotRows.length === 0) {
         rowsHtml = `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.9rem;">No per-lot stock recorded yet for this coffee — only packing done after this feature shipped is tracked by lot.</div>`;
     } else {
+        let bodyRows = '';
+        let prevGroupKey = null;
+        let groupTotal = 0;
+        const groupBlocks = [];
+        let currentBlockRows = '';
+
+        const flushGroup = () => {
+            if (prevGroupKey !== null) {
+                groupBlocks.push({ rows: currentBlockRows, total: groupTotal });
+            }
+            currentBlockRows = '';
+            groupTotal = 0;
+        };
+
+        lotRows.forEach(r => {
+            const groupKey = `${r.machineName}|${r.sizeG}`;
+            const isNewGroup = groupKey !== prevGroupKey;
+            if (isNewGroup) {
+                flushGroup();
+                prevGroupKey = groupKey;
+            }
+            groupTotal += r.remaining;
+            currentBlockRows += `
+                <tr>
+                    <td><code>${r.lotCode}</code>${isNewGroup ? ' <span style="font-size:0.68rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px; margin-left:6px;">PICK FIRST</span>' : ''}</td>
+                    <td>${r.machineName}</td>
+                    <td>${r.sizeG}g</td>
+                    <td>${r.packedDate || '-'}</td>
+                    <td style="text-align:right;"><strong>${r.remaining}</strong></td>
+                </tr>
+            `;
+        });
+        flushGroup();
+
+        const grandTotal = lotRows.reduce((sum, r) => sum + r.remaining, 0);
+
         rowsHtml = `
             <table class="table" style="width:100%;">
                 <thead><tr>
-                    <th>Lot Code</th><th>Machine</th><th>Size</th><th>Packed Date</th><th>Remaining</th>
+                    <th>Lot Code</th><th>Machine</th><th>Size</th><th>Packed Date</th><th style="text-align:right;">Remaining</th>
                 </tr></thead>
                 <tbody>
-                    ${lotRows.map(r => `
-                        <tr>
-                            <td><code>${r.lotCode}</code></td>
-                            <td>${r.machineName}</td>
-                            <td>${r.sizeG}g</td>
-                            <td>${r.packedDate || '-'}</td>
-                            <td><strong>${r.remaining}</strong></td>
-                        </tr>
-                    `).join('')}
+                    ${groupBlocks.map(g => g.rows).join('')}
                 </tbody>
+                <tfoot>
+                    <tr style="border-top: 2px solid var(--border);">
+                        <td colspan="4" style="text-align:right; font-weight:700;">Total (all lots)</td>
+                        <td style="text-align:right; font-weight:700;">${grandTotal}</td>
+                    </tr>
+                </tfoot>
             </table>
         `;
     }
 
     const html = `
         <div>
-            <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px;">Packed stock by lot for <strong>${coffeeName}</strong>, oldest first (FIFO order).</p>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px;">Packed stock by lot for <strong>${displayName}</strong>, oldest first (FIFO order).</p>
             <div style="max-height: 400px; overflow-y: auto;">
                 ${rowsHtml}
             </div>
@@ -1700,7 +1756,7 @@ async function openPackedLotsModal(coffeeName) {
             </div>
         </div>
     `;
-    openModal(`Stock by Lot — ${coffeeName}`, html, '650px');
+    openModal(`Stock by Lot — ${displayName}`, html, '650px');
 }
 
 async function openEditPackedModal(coffeeName) {
