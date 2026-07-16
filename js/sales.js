@@ -218,43 +218,77 @@ async function viewCustomerHistory(customerId) {
     const { data: customers } = await fetchData('customers');
     const customer = (customers || []).find(c => c.id === customerId);
     if (!customer) return;
-    
+
     const [
         { data: orders },
-        { data: orderItems }
+        { data: orderItems },
+        { data: dispatchLotItems },
+        { data: packedLots },
+        { data: greenbeans },
+        { data: recipes }
     ] = await Promise.all([
         fetchData('request_orders'),
-        fetchData('request_order_items')
+        fetchData('request_order_items'),
+        fetchData('dispatch_lot_items'),
+        fetchData('packed_coffee_lots'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
     ]);
-    
+
+    // Same coffee-name resolution convention as the dispatch checkout modal
+    // (js/packing.js coffeeLabel) — request_order_items carries its own
+    // coffee_type/single_coffee_id/blend_recipe_id directly, no join needed.
+    function coffeeLabel(type, coffeeId) {
+        if (type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === coffeeId);
+            return gb ? `${gb.name} (Single)` : 'Single Origin';
+        }
+        const r = (recipes || []).find(rec => rec.id === coffeeId);
+        return r ? `${r.name} (Blend)` : 'Blend Recipe';
+    }
+
     const custOrders = (orders || []).filter(o => o.customer_id === customerId);
-    
+
     let historyHtml = '';
     if (custOrders.length === 0) {
         historyHtml = '<p class="table-empty-state">No order history for this customer</p>';
     } else {
         historyHtml = `<table class="data-table" style="width:100%;">
             <thead><tr>
-                <th>Order #</th><th>Date</th><th>Items</th><th>Status</th>
+                <th>Order #</th><th>Date</th><th>Items</th><th>Lots Dispatched</th><th>Status</th>
             </tr></thead><tbody>`;
-        
+
         custOrders.sort((a, b) => (b.order_date || '').localeCompare(a.order_date || ''));
-        
+
         custOrders.forEach(o => {
             const items = (orderItems || []).filter(i => i.request_order_id === o.id);
-            const itemsSummary = items.map(i => `${i.coffee_name || 'Item'} (${i.grind || '-'}, ${i.size_g || '-'}g x${i.quantity || 0})`).join('<br>');
+            const itemsSummary = items.map(i => {
+                const label = coffeeLabel(i.coffee_type, i.coffee_type === 'Single' ? i.single_coffee_id : i.blend_recipe_id);
+                return `${label} — ${i.bag_size_g || '-'}g x${i.quantity_requested || 0}`;
+            }).join('<br>') || '-';
+
+            const itemIds = items.map(i => i.id);
+            const lotRows = (dispatchLotItems || []).filter(d => itemIds.includes(d.request_order_item_id));
+            const lotsSummary = lotRows.length
+                ? lotRows.map(d => {
+                    const lot = (packedLots || []).find(l => l.id === d.packed_coffee_lot_id);
+                    return `<code>${lot ? lot.lot_code : '—'}</code> ×${d.qty}`;
+                  }).join('<br>')
+                : '<span style="color:var(--text-muted);">—</span>';
+
             const statusColor = o.status === 'Dispatched' ? 'var(--success)' : o.status === 'Approved' ? 'var(--primary)' : 'var(--warning)';
-            
+
             historyHtml += `<tr>
                 <td><code>${o.order_number || '#ORD-'+o.id}</code></td>
                 <td>${o.order_date || '-'}</td>
-                <td style="font-size:0.8rem;">${itemsSummary || '-'}</td>
+                <td style="font-size:0.8rem;">${itemsSummary}</td>
+                <td style="font-size:0.8rem;">${lotsSummary}</td>
                 <td><span style="color:${statusColor}; font-weight:600;">${o.status || 'Pending'}</span></td>
             </tr>`;
         });
         historyHtml += '</tbody></table>';
     }
-    
+
     const html = `
         <div style="margin-bottom: 16px; padding: 16px; background: var(--card-bg); border-radius: 8px; border: 1px solid var(--border-color);">
             <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -272,8 +306,84 @@ async function viewCustomerHistory(customerId) {
         <h4 style="margin-bottom: 12px;">Order History (${custOrders.length} orders)</h4>
         ${historyHtml}
     `;
-    
-    openModal(`Customer: ${customer.name}`, html, '800px');
+
+    openModal(`Customer: ${customer.name}`, html, '900px');
+}
+
+// V2 1G — reverse lookup: "which customers received lot X". Searches
+// packed_coffee_lots by lot_code, then dispatch_lot_items for who it went to.
+async function openLotCodeLookupModal() {
+    const html = `
+        <div class="form-group">
+            <label class="form-label">Lot Code</label>
+            <input type="text" id="lot-lookup-input" class="form-control" placeholder="e.g. PKL-25-1784197076303" oninput="searchLotCodeLookup(this.value)" autocomplete="off">
+        </div>
+        <div id="lot-lookup-results" style="margin-top:16px;"></div>
+    `;
+    openModal('Find Customers by Lot Code', html, '700px');
+    setTimeout(() => document.getElementById('lot-lookup-input')?.focus(), 50);
+}
+
+async function searchLotCodeLookup(query) {
+    const resultsEl = document.getElementById('lot-lookup-results');
+    if (!resultsEl) return;
+    const q = (query || '').trim().toLowerCase();
+    if (!q) { resultsEl.innerHTML = ''; return; }
+
+    const [
+        { data: packedLots },
+        { data: dispatchLotItems },
+        { data: orderItems },
+        { data: orders },
+        { data: customers }
+    ] = await Promise.all([
+        fetchData('packed_coffee_lots'),
+        fetchData('dispatch_lot_items'),
+        fetchData('request_order_items'),
+        fetchData('request_orders'),
+        fetchData('customers')
+    ]);
+
+    const matchingLots = (packedLots || []).filter(l => (l.lot_code || '').toLowerCase().includes(q));
+    if (matchingLots.length === 0) {
+        resultsEl.innerHTML = '<p class="table-empty-state">No matching lot codes</p>';
+        return;
+    }
+
+    const lotIds = matchingLots.map(l => l.id);
+    const matches = (dispatchLotItems || []).filter(d => lotIds.includes(d.packed_coffee_lot_id));
+
+    if (matches.length === 0) {
+        resultsEl.innerHTML = '<p class="table-empty-state">Matching lot(s) found, but not dispatched to any customer yet</p>';
+        return;
+    }
+
+    const rows = matches.map(d => {
+        const lot = matchingLots.find(l => l.id === d.packed_coffee_lot_id);
+        const item = (orderItems || []).find(i => i.id === d.request_order_item_id);
+        const order = item ? (orders || []).find(o => o.id === item.request_order_id) : null;
+        const customer = (customers || []).find(c => c.id === d.customer_id) || (order ? (customers || []).find(c => c.id === order.customer_id) : null);
+        return {
+            lotCode: lot ? lot.lot_code : '—',
+            customerName: customer ? customer.name : (order ? (order.customer_name || '-') : '-'),
+            orderNumber: order ? (order.order_number || '#ORD-' + order.id) : '-',
+            date: order ? order.order_date : null,
+            qty: d.qty
+        };
+    });
+
+    rows.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    resultsEl.innerHTML = `<table class="data-table" style="width:100%;">
+        <thead><tr><th>Lot Code</th><th>Customer</th><th>Order #</th><th>Date</th><th>Qty</th></tr></thead>
+        <tbody>${rows.map(r => `<tr>
+            <td><code>${r.lotCode}</code></td>
+            <td>${r.customerName}</td>
+            <td><code>${r.orderNumber}</code></td>
+            <td>${r.date || '-'}</td>
+            <td>${r.qty}</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
 }
 
 // ==========================================================================
