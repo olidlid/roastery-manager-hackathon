@@ -1052,10 +1052,18 @@ async function openPrintBarcodeModal(bulkId) {
 async function openPackBulkModal(bulkId) {
     const [
         { data: bulkList },
-        { data: packagingSizes }
+        { data: packagingSizes },
+        { data: machines },
+        { data: greenbeans },
+        { data: recipes },
+        { data: roastBatches }
     ] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
-        fetchData('packaging_sizes')
+        fetchData('packaging_sizes'),
+        fetchData('machines'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('roast_batches')
     ]);
     const bulk = (bulkList || []).find(b => b.id === bulkId);
     if (!bulk) return;
@@ -1142,6 +1150,13 @@ async function openPackBulkModal(bulkId) {
             const { data: packedList } = await fetchData('packed_coffee');
             const packingDate = new Date().toISOString().split('T')[0];
 
+            // V2 1G-1 (packed_coffee_lots foundation): resolve/create today's
+            // production lot for this bulk so each size packed can be linked
+            // back to it — same lot the "Print Barcode" step uses, so a
+            // sticker printed either before or after packing points at the
+            // same lot record.
+            const productionLot = await getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roastBatches);
+
             for (const add of additions) {
                 const existing = (packedList || []).find(p =>
                     !p.roast_batch_id &&
@@ -1149,11 +1164,13 @@ async function openPackBulkModal(bulkId) {
                     parseInt(p.bag_size_g) === parseInt(add.gram) &&
                     parseInt(p.machine_id) === parseInt(bulk.machine_id)
                 );
+                let packedCoffeeId = null;
                 if (existing) {
                     existing.quantity = parseInt(existing.quantity) + add.qty;
                     await saveData('packed_coffee', existing);
+                    packedCoffeeId = existing.id;
                 } else {
-                    await saveData('packed_coffee', {
+                    const { data: savedPacked } = await saveData('packed_coffee', {
                         roast_batch_id: null,
                         machine_id: bulk.machine_id,
                         custom_coffee_name: bulk.coffee_name,
@@ -1161,6 +1178,10 @@ async function openPackBulkModal(bulkId) {
                         quantity: add.qty,
                         selling_price: 12.00
                     });
+                    packedCoffeeId = savedPacked ? savedPacked.id : null;
+                }
+                if (packedCoffeeId) {
+                    await createPackedCoffeeLot(packedCoffeeId, add.qty, productionLot ? productionLot.id : null);
                 }
                 await saveData('packing_records', {
                     date: packingDate,
@@ -1185,6 +1206,26 @@ async function openPackBulkModal(bulkId) {
             alert('Error during packing save: ' + err.message);
         }
     });
+}
+
+// V2 1G-1 (packed_coffee_lots foundation): one row per pack action —
+// packed_coffee itself stays a merged running total (unchanged for now,
+// still what every existing view/deduction reads), this is purely additive
+// so it can't regress anything already working. lot_code just needs to be
+// globally unique; it isn't user-facing (only production_lots.lot_code is
+// printed on stickers), so a timestamp suffix is enough. productionLotId is
+// null for custom/manual packing entries that have no source bulk lot.
+async function createPackedCoffeeLot(packedCoffeeId, qty, productionLotId, roastBatchId = null) {
+    const { error } = await saveData('packed_coffee_lots', {
+        packed_coffee_id: packedCoffeeId,
+        roast_batch_id: roastBatchId,
+        lot_code: `PKL-${packedCoffeeId}-${Date.now()}`,
+        quantity_pcs: qty,
+        remaining_pcs: qty,
+        packed_date: new Date().toISOString().split('T')[0],
+        production_lot_id: productionLotId
+    });
+    if (error) console.error('Failed to create packed_coffee_lots row:', error);
 }
 
 // Adjust Packed Coffee Stock level manually
@@ -1510,7 +1551,7 @@ async function loadPackedCoffeeSection() {
     Object.values(grouped).sort((a,b) => a.coffeeName.localeCompare(b.coffeeName)).forEach(group => {
         const tr = document.createElement('tr');
 
-        let html = `<td><strong>${group.coffeeName}</strong></td>`;
+        let html = `<td><strong class="packed-stock-row-name" data-coffee="${encodeURIComponent(group.coffeeName)}" style="cursor:pointer; text-decoration:underline dotted;" title="Click to view stock by lot">${group.coffeeName}</strong></td>`;
 
         activeMachinesList.forEach((mach, mIdx) => {
             const machData = group.machines[mach.name] || { sizes: {} };
@@ -1540,6 +1581,10 @@ async function loadPackedCoffeeSection() {
         tbody.appendChild(tr);
     });
 
+    document.querySelectorAll('.packed-stock-row-name').forEach(el => {
+        el.addEventListener('click', () => openPackedLotsModal(decodeURIComponent(el.getAttribute('data-coffee'))));
+    });
+
     document.querySelectorAll('.btn-edit-packed').forEach(btn => {
         btn.addEventListener('click', () => openEditPackedModal(decodeURIComponent(btn.getAttribute('data-coffee'))));
     });
@@ -1558,6 +1603,99 @@ async function loadPackedCoffeeSection() {
             scheduleDashboardRefresh();
         });
     });
+}
+
+// V2 1G-1: read-only drill-down of a coffee's packed stock by individual
+// lot (machine + size + packed date + remaining pcs) — the first visible
+// proof that packed_coffee_lots (populated by createPackedCoffeeLot on
+// every pack action) is actually tracking real per-lot stock, ahead of the
+// bigger FIFO-dispatch rework that will make it the source of truth.
+async function openPackedLotsModal(coffeeName) {
+    const [
+        { data: packed },
+        { data: packedLots },
+        { data: machines },
+        { data: batches },
+        { data: greenbeans },
+        { data: recipes }
+    ] = await Promise.all([
+        fetchData('packed_coffee'),
+        fetchData('packed_coffee_lots'),
+        fetchData('machines'),
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
+    ]);
+
+    const resolved = (packed || []).map(item => {
+        let name = item.custom_coffee_name || 'Roasted Coffee';
+        if (item.roast_batch_id) {
+            const b = (batches || []).find(x => x.id === item.roast_batch_id);
+            if (b) {
+                if (b.coffee_type === 'Single') {
+                    const gb = (greenbeans || []).find(g => g.id === b.single_coffee_id);
+                    if (gb) name = gb.name;
+                } else {
+                    const r = (recipes || []).find(rec => rec.id === b.blend_recipe_id);
+                    if (r) name = r.name;
+                }
+            }
+        }
+        return { ...item, resolvedName: name };
+    });
+
+    const matchingPackedIds = new Set(resolved.filter(r => r.resolvedName === coffeeName).map(r => r.id));
+    const lotRows = (packedLots || [])
+        .filter(pl => matchingPackedIds.has(pl.packed_coffee_id) && parseInt(pl.remaining_pcs) > 0)
+        .map(pl => {
+            const parentPacked = resolved.find(r => r.id === pl.packed_coffee_id);
+            const machine = parentPacked && parentPacked.machine_id ? (machines || []).find(m => m.id === parentPacked.machine_id) : null;
+            return {
+                lotCode: pl.lot_code,
+                machineName: machine ? machine.name : 'Unknown',
+                sizeG: parentPacked ? parentPacked.bag_size_g : '-',
+                packedDate: pl.packed_date,
+                remaining: parseInt(pl.remaining_pcs) || 0
+            };
+        })
+        .sort((a, b) => new Date(a.packedDate || 0) - new Date(b.packedDate || 0));
+
+    let rowsHtml = '';
+    if (lotRows.length === 0) {
+        rowsHtml = `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.9rem;">No per-lot stock recorded yet for this coffee — only packing done after this feature shipped is tracked by lot.</div>`;
+    } else {
+        rowsHtml = `
+            <table class="table" style="width:100%;">
+                <thead><tr>
+                    <th>Lot Code</th><th>Machine</th><th>Size</th><th>Packed Date</th><th>Remaining</th>
+                </tr></thead>
+                <tbody>
+                    ${lotRows.map(r => `
+                        <tr>
+                            <td><code>${r.lotCode}</code></td>
+                            <td>${r.machineName}</td>
+                            <td>${r.sizeG}g</td>
+                            <td>${r.packedDate || '-'}</td>
+                            <td><strong>${r.remaining}</strong></td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    }
+
+    const html = `
+        <div>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px;">Packed stock by lot for <strong>${coffeeName}</strong>, oldest first (FIFO order).</p>
+            <div style="max-height: 400px; overflow-y: auto;">
+                ${rowsHtml}
+            </div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Close</button>
+            </div>
+        </div>
+    `;
+    openModal(`Stock by Lot — ${coffeeName}`, html, '650px');
 }
 
 async function openEditPackedModal(coffeeName) {
@@ -1757,16 +1895,18 @@ async function openCustomPackingModal() {
 
         for (const item of packsToSave) {
             // Find existing row matching the exact custom coffee name, machine, and size
-            const existing = (packed || []).find(p => 
-                p.roast_batch_id === null && 
-                p.machine_id === machineId && 
-                p.bag_size_g === item.gram && 
+            const existing = (packed || []).find(p =>
+                p.roast_batch_id === null &&
+                p.machine_id === machineId &&
+                p.bag_size_g === item.gram &&
                 (p.custom_coffee_name || '').toLowerCase() === coffeeName.toLowerCase()
             );
 
+            let packedCoffeeId = null;
             if (existing) {
                 existing.quantity = (parseInt(existing.quantity) || 0) + item.qty;
                 await saveData('packed_coffee', existing);
+                packedCoffeeId = existing.id;
             } else {
                 const newPacked = {
                     roast_batch_id: null,
@@ -1775,7 +1915,12 @@ async function openCustomPackingModal() {
                     bag_size_g: item.gram,
                     quantity: item.qty
                 };
-                await saveData('packed_coffee', newPacked);
+                const { data: savedPacked } = await saveData('packed_coffee', newPacked);
+                packedCoffeeId = savedPacked ? savedPacked.id : null;
+            }
+            // V2 1G-1: no source bulk/production lot for a manual entry — link left null.
+            if (packedCoffeeId) {
+                await createPackedCoffeeLot(packedCoffeeId, item.qty, null);
             }
         }
 
