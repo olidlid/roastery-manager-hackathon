@@ -358,7 +358,8 @@ const PERMISSION_GROUPS = [
         { key: 'packing_order_view', label: 'View Order Requests' },
         { key: 'packing_records_view', label: 'View Records' },
         { key: 'packing_unpack', label: 'Unpack' },
-        { key: 'packing_completed_view', label: 'View Completed Orders' }
+        { key: 'packing_completed_view', label: 'View Completed Orders' },
+        { key: 'packing_dispatch_checkout', label: 'Checkout Order (POS Dispatch)' }
     ]},
     { label: '🚚 Sales — Dispatch Request', keys: [
         { key: 'sales_request_view', label: 'View' },
@@ -922,7 +923,7 @@ async function loadPackagingSizesTable() {
         console.error('[PackagingSize] Fetch error:', fetchErr);
         // Force direct fetch bypassing cache
         try {
-            const { data: directData } = await window.supabaseClient.from('packaging_sizes').select('id, label, gram, is_visible');
+            const { data: directData } = await window.supabaseClient.from('packaging_sizes').select('id, label, gram, is_visible, carton_multiplier');
             console.log('[PackagingSize] Direct fetch result:', directData);
             if (directData && directData.length > 0) {
                 renderPackagingSizesRows(tbody, directData);
@@ -944,7 +945,7 @@ function renderPackagingSizesRows(tbody, sizes) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td><strong>${s.label}</strong></td>
-            <td>${s.gram} g</td>
+            <td>${s.gram} g${s.carton_multiplier ? ` <span style="color: var(--text-secondary); font-size: 0.8em;">(&times;${s.carton_multiplier}/carton)</span>` : ''}</td>
             <td>
                 <label class="switch" style="transform: scale(0.8); transform-origin: left center;">
                     <input type="checkbox" class="toggle-visibility-pack" data-id="${s.id}" ${s.is_visible ? 'checked' : ''} disabled>
@@ -976,7 +977,7 @@ function renderPackagingSizesRows(tbody, sizes) {
 }
 
 async function openPackagingSizeModal(id = null) {
-    let size = { label: '', gram: 250, is_visible: true };
+    let size = { label: '', gram: 250, is_visible: true, carton_multiplier: null };
     if (id) {
         const { data: sizes } = await fetchData('packaging_sizes');
         const found = sizes.find(s => s.id === id);
@@ -992,6 +993,10 @@ async function openPackagingSizeModal(id = null) {
             <div class="form-group">
                 <label class="form-label">Weight in Grams (Used for Stock Deduction)</label>
                 <input type="number" id="m-ps-gram" class="form-control" value="${size.gram}" min="1" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Pcs per Carton (optional)</label>
+                <input type="number" id="m-ps-carton" class="form-control" value="${size.carton_multiplier ?? ''}" min="1" placeholder="e.g. 10 — leave blank for no carton label option">
             </div>
             <div class="form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 20px;">
                 <label class="switch">
@@ -1015,10 +1020,12 @@ async function openPackagingSizeModal(id = null) {
             return;
         }
         
+        const cartonInput = document.getElementById('m-ps-carton').value;
         const saveDataObj = {
             label: labelInput,
             gram: parseFloat(gramInput),
-            is_visible: document.getElementById('m-ps-visible').checked
+            is_visible: document.getElementById('m-ps-visible').checked,
+            carton_multiplier: cartonInput ? parseFloat(cartonInput) : null
         };
         
         if (id) saveDataObj.id = id;

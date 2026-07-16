@@ -185,6 +185,10 @@ const PERMISSION_FALLBACKS = {
     // default; admins can restrict either action separately later.
     packing_print_barcode: 'packing_daily',
     packing_manual_add: 'packing_daily',
+    // POS dispatch checkout (V2 1G) is a new action split out of the old
+    // per-line "Ready" button in Order Requests — anyone who could already
+    // view/prepare order requests keeps doing so by default.
+    packing_dispatch_checkout: 'packing_order_view',
 };
 
 // Effective permission for a specific role object, honouring PERMISSION_FALLBACKS

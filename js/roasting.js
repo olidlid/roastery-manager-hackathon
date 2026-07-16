@@ -2945,10 +2945,34 @@ async function recordRoastBatchGreenLots(roastBatchId, draws) {
 }
 
 async function handleBarcodeScan(barcode) {
-    // Parse barcode: RMP:Single:5:2 or RMP:Blend:3:1 or RMP:Lot:{green_coffee_lot_id}:2 (V2 1B, sack sticker printed by 1A)
+    // Parse barcode: RMP:Single:5:2 or RMP:Blend:3:1 or RMP:Lot:{green_coffee_lot_id}:2
+    // (V2 1B, sack sticker printed by 1A) or RMP:PackLot:{lot_code}:{sizeG}[:{multiplier}]
+    // (V2 1G, packed lot sticker printed by Ready to Pack — the trailing
+    // multiplier segment only appears on carton labels, so PackLot is the
+    // one type allowed 5 parts instead of the usual 4).
     const parts = barcode.split(':');
-    if (parts.length !== 4 || parts[0] !== 'RMP') {
-        alert('Invalid barcode format: ' + barcode);
+    const isPackLot = parts.length >= 2 && parts[1] === 'PackLot';
+    const expectedLength = isPackLot ? (parts.length === 5 ? 5 : 4) : 4;
+    if (parts.length !== expectedLength || parts[0] !== 'RMP') {
+        if (isPackLot) {
+            await showWarningModal('Invalid barcode format: ' + barcode, false);
+        } else {
+            alert('Invalid barcode format: ' + barcode);
+        }
+        return;
+    }
+
+    if (isPackLot) {
+        // V2 1G: only meaningful while a dispatch checkout modal is open —
+        // it registers itself as the active handler (see
+        // js/packing.js openDispatchCheckoutModal) so scans land in the
+        // right cart instead of silently doing nothing.
+        const [, , lotCode, sizeGStr, multiplierStr] = parts;
+        if (typeof window.activeDispatchCheckoutHandler !== 'function') {
+            await showWarningModal('Scan this inside an order\'s Checkout screen (Packing → Order Requests → Prepare) — no checkout is open right now.', false);
+            return;
+        }
+        await window.activeDispatchCheckoutHandler(lotCode, parseFloat(sizeGStr), multiplierStr ? parseFloat(multiplierStr) : null);
         return;
     }
 

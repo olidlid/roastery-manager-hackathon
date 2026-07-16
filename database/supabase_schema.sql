@@ -292,7 +292,8 @@ CREATE TABLE IF NOT EXISTS public.packaging_sizes (
     min_stock INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     gram NUMERIC DEFAULT 250,
-    is_visible BOOLEAN DEFAULT TRUE
+    is_visible BOOLEAN DEFAULT TRUE,
+    carton_multiplier NUMERIC                   -- V2 1G: pcs per carton for this size; NULL = no carton label option configured
 );
 
 -- 14. Packed coffee stock (finished goods)

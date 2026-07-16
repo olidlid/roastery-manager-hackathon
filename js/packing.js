@@ -231,8 +231,6 @@ async function loadPackingRequestsSection() {
         { data: orderItems },
         { data: greenbeans },
         { data: recipes },
-        { data: packedGoods },
-        { data: roastBatches },
         { data: machines },
         { data: customers }
     ] = await Promise.all([
@@ -240,77 +238,48 @@ async function loadPackingRequestsSection() {
         fetchData('request_order_items'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
-        fetchData('packed_coffee'),
-        fetchData('roast_batches'),
         fetchData('machines'),
         fetchData('customers')
     ]);
     
-    const tbody = document.getElementById('packing-requests-table-body');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-    
+    const container = document.getElementById('packing-requests-cards');
+    const emptyEl = document.getElementById('packing-requests-empty');
+    if (!container) return;
+    container.innerHTML = '';
+
     // Filter only orders in "Preparing" status
     const preparingOrders = (orders || []).filter(o => o.status === 'Preparing');
-    
+
     if (preparingOrders.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="text-center-muted">${window.t ? window.t("msg_no_preparing") : "No preparing orders found."}</td></tr>`;
+        if (emptyEl) emptyEl.classList.remove('hidden');
         return;
     }
-    
-    // Build a stock lookup map: "Type-CoffeeId-SizeG-MachineId" -> total stock.
-    // Machine-partitioned (confirmed 2026-07-15): packed stock from a
-    // different machine is not interchangeable, matching openOrderDetailPopup
-    // and approveSalesOrder in js/sales.js.
-    const batchMap = new Map();
-    (roastBatches || []).forEach(b => batchMap.set(b.id, b));
+    if (emptyEl) emptyEl.classList.add('hidden');
 
-    const stockMap = new Map();
-    (packedGoods || []).forEach(p => {
-        if (p.roast_batch_id) {
-            const batch = batchMap.get(p.roast_batch_id);
-            if (batch && batch.machine_id) {
-                const cId = batch.coffee_type === 'Single' ? batch.single_coffee_id : batch.blend_recipe_id;
-                const key = `${batch.coffee_type}-${cId}-${p.bag_size_g}-${batch.machine_id}`;
-                stockMap.set(key, (stockMap.get(key) || 0) + (parseInt(p.quantity) || 0));
-            }
-        }
-        if (!p.roast_batch_id && p.custom_coffee_name && p.machine_id) {
-            const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
-            const matchGb = (greenbeans || []).find(g => g.name === cleanName);
-            if (matchGb) {
-                const key = `Single-${matchGb.id}-${p.bag_size_g}-${p.machine_id}`;
-                stockMap.set(key, (stockMap.get(key) || 0) + (parseInt(p.quantity) || 0));
-            } else {
-                const matchRec = (recipes || []).find(r => r.name === cleanName);
-                if (matchRec) {
-                    const key = `Blend-${matchRec.id}-${p.bag_size_g}-${p.machine_id}`;
-                    stockMap.set(key, (stockMap.get(key) || 0) + (parseInt(p.quantity) || 0));
-                }
-            }
-        }
-    });
-    
     // Sort by order_date descending
     preparingOrders.sort((a, b) => new Date(b.order_date) - new Date(a.order_date) || b.id - a.id);
     const limitedPreparingOrders = preparingOrders.slice(0, 50);
     
-    let tbodyHtml = '';
+    // V2 1G: cards instead of a table row per order — per-line "Ready"
+    // inputs are gone, replaced by the "Prepare" button opening the POS
+    // checkout modal (openDispatchCheckoutModal) where fulfillment happens
+    // by scan or manual lot pick. A card still shows Dispatch directly when
+    // every line is already fully prepared (nothing left to check out).
+    let cardsHtml = '';
     for (const order of limitedPreparingOrders) {
         const items = (orderItems || []).filter(i => i.request_order_id === order.id);
-        
-        // Check if ALL items in this order are fully prepared
+
         const allItemsReady = items.length > 0 && items.every(i => {
             const req = parseInt(i.quantity_requested) || 0;
             const prep = parseInt(i.quantity_prepared) || 0;
             return prep >= req;
         });
-        
-        let itemsHtml = `<div style="display: flex; flex-direction: column; gap: 8px;">`;
+
+        let linesHtml = '';
         for (const item of items) {
             const type = item.coffee_type;
             const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
-            
+
             let coffeeName = '';
             if (type === 'Single') {
                 const gb = (greenbeans || []).find(g => g.id === coffeeId);
@@ -319,143 +288,59 @@ async function loadPackingRequestsSection() {
                 const r = (recipes || []).find(rec => rec.id === coffeeId);
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
-            
-            // Machine info
+
             const itemMachine = item.machine_id ? (machines || []).find(m => m.id === item.machine_id) : null;
-            const machineTag = itemMachine ? `<span style="font-size:0.72rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:1px 6px; border-radius:4px; margin-left:6px;">${itemMachine.name}</span>` : '';
-            
+
             const totalRequested = parseInt(item.quantity_requested) || 0;
             const alreadyPrepared = parseInt(item.quantity_prepared) || 0;
-            const pendingPack = Math.max(0, totalRequested - alreadyPrepared);
             const isCompleted = alreadyPrepared >= totalRequested;
-            
-            // Get current packed stock for this coffee+size+machine
-            const stockKey = `${type}-${coffeeId}-${item.bag_size_g}-${item.machine_id}`;
-            const currentStock = item.machine_id ? (stockMap.get(stockKey) || 0) : 0;
-            
-            // Max the user can input = min(pendingPack, currentStock)
-            const maxReady = Math.min(pendingPack, currentStock);
-            
-            // If ALL items ready, hide individual Ready buttons — Dispatch button shown at order level
-            let packHtml = '';
-            if (allItemsReady) {
-                packHtml = `
-                    <span style="color: var(--success); font-weight: bold; font-size: 0.8rem; display: flex; align-items: center; gap: 4px;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                        Completed
-                    </span>
-                `;
-            } else if (isCompleted) {
-                packHtml = `
-                    <span style="color: var(--success); font-weight: bold; font-size: 0.8rem; display: flex; align-items: center; gap: 4px;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                        Completed
-                    </span>
-                `;
-            } else {
-                packHtml = `
-                    <div style="display:flex; align-items:center; gap: 10px;">
-                        <input type="number" class="form-control inp-prepared" min="0" max="${maxReady}" data-max="${maxReady}" value="0" style="width: 80px; padding: 4px 8px;" placeholder="0">
-                        <button class="btn btn-primary btn-sm btn-mark-ready" data-id="${item.id}" data-order="${order.id}" ${maxReady === 0 ? 'disabled style="opacity:0.5; pointer-events:none;"' : ''}>Ready</button>
-                    </div>
-                `;
-            }
-            
-            // Build info line
-            let infoLine = `Requested: <strong>${totalRequested}</strong> | From Stock: <strong>${currentStock}</strong>`;
-            if (alreadyPrepared > 0 && !isCompleted) {
-                infoLine += ` | Prepared: <strong style="color: var(--primary);">${alreadyPrepared}</strong> | Pending Pack: <strong style="color: var(--danger);">${pendingPack}</strong>`;
-            } else if (!isCompleted) {
-                infoLine += ` | Pending Pack: <strong style="color: var(--danger);">${pendingPack}</strong>`;
-            } else {
-                infoLine += ` | Prepared: <strong style="color: var(--success);">${alreadyPrepared}</strong>`;
-            }
-            
-            itemsHtml += `
-                <div style="display: flex; justify-content: space-between; align-items: center; background: ${allItemsReady ? 'rgba(16,185,129,0.06)' : 'rgba(0,0,0,0.02)'}; padding: 8px; border-radius: 4px; border: 1px solid ${allItemsReady ? 'rgba(16,185,129,0.25)' : 'var(--border-color)'};">
-                    <div style="font-size: 0.85rem;">
-                        <strong>${coffeeName}</strong> - ${item.bag_size_g}g${machineTag}<br/>
-                        <span style="color: var(--text-secondary); font-size: 0.75rem;">
-                            ${infoLine}
-                        </span>
-                    </div>
-                    <div>
-                        ${packHtml}
-                    </div>
+
+            linesHtml += `
+                <div style="display: flex; align-items: baseline; gap: 8px; font-size: 0.82rem;">
+                    <span style="font-weight: 600;">${coffeeName}</span>
+                    <span style="color: var(--text-muted);">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</span>
+                    <span style="margin-left: auto; font-weight: 600; color: ${isCompleted ? 'var(--success)' : 'var(--danger)'};">${alreadyPrepared} / ${totalRequested}</span>
                 </div>
             `;
         }
-        itemsHtml += `</div>`;
-        
-        // Dispatch button (shown when ALL items are ready)
-        const dispatchBtnHtml = allItemsReady ? `
-            <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
-                <button class="btn btn-success btn-sm btn-dispatch-order" data-order="${order.id}" style="padding: 6px 20px; font-weight: 700; font-size: 0.85rem; display: flex; align-items: center; gap: 6px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-                    Dispatch
-                </button>
+
+        const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
+
+        const actionBtnHtml = allItemsReady
+            ? `<button class="btn btn-success btn-sm btn-dispatch-order" data-order="${order.id}" style="flex: 1; font-weight: 700;">Dispatch</button>`
+            : `<button class="btn btn-primary btn-sm btn-prepare-order" data-order="${order.id}" style="flex: 1; font-weight: 700;" ${hasPermission('packing_dispatch_checkout') ? '' : 'disabled title="No permission to checkout orders"'}>Prepare</button>`;
+
+        cardsHtml += `
+            <div class="card" style="padding: 16px 18px; margin: 0;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                    <div>
+                        <div style="font-weight: 600; font-size: 0.95rem;"><code>${order.order_number || '#ORD-' + order.id}</code></div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">${order.sales_name}${cust ? ` &middot; ${cust.name}` : ''}</div>
+                    </div>
+                    <span style="font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; background: rgba(217,119,6,0.12); color: #d97706; font-weight: 600; white-space: nowrap;">Preparing</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px;">
+                    ${linesHtml}
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-secondary btn-sm btn-print-order" data-id="${order.id}" style="flex: 1;">Print</button>
+                    ${actionBtnHtml}
+                </div>
             </div>
-        ` : '';
-        
-        tbodyHtml += `
-        <tr>
-            <td class="va-top-pt-3">
-                ${order.order_date}<br/>
-                <code>${order.order_number || '#ORD-'+order.id}</code>
-            </td>
-            <td class="va-top-pt-3">
-                <strong>${order.sales_name}</strong>
-                ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span class="text-secondary-xs">👤 ${cust.name}</span>` : ''; })()}
-            </td>
-            <td class="va-top-pt-3">${itemsHtml}${dispatchBtnHtml}</td>
-            <td class="va-top-pt-3">
-                <button class="btn btn-secondary btn-sm btn-print-order" data-id="${order.id}" style="display:inline-flex; align-items:center; gap:4px; white-space:nowrap;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                    Print Order
-                </button>
-            </td>
-        </tr>
         `;
     }
-    tbody.innerHTML = tbodyHtml;
-    
-    // Clamp input value in real-time
-    tbody.addEventListener('input', function(e) {
-        const inp = e.target.closest('.inp-prepared');
-        if (inp) {
-            const max = parseInt(inp.getAttribute('data-max')) || 0;
-            let val = parseInt(inp.value) || 0;
-            if (val < 0) { inp.value = 0; }
-            if (val > max) { inp.value = max; }
-        }
-    });
-    
+    container.innerHTML = cardsHtml;
+
     // EVENT DELEGATION
-    tbody.onclick = async function(e) {
-        // Handle Ready button
-        const btnReady = e.target.closest('.btn-mark-ready');
-        if (btnReady) {
-            const itemId = parseInt(btnReady.getAttribute('data-id'));
-            const orderId = parseInt(btnReady.getAttribute('data-order'));
-            const inp = btnReady.closest('div').querySelector('.inp-prepared');
-            const max = parseInt(inp.getAttribute('data-max')) || 0;
-            let qtyToReady = parseInt(inp.value) || 0;
-            
-            if (qtyToReady <= 0) {
-                await showWarningModal('Please enter a quantity greater than 0.', false);
-                return;
-            }
-            
-            // Enforce max limit
-            if (qtyToReady > max) {
-                qtyToReady = max;
-                inp.value = max;
-            }
-            
-            await markOrderItemReady(orderId, itemId, qtyToReady);
+    container.onclick = async function(e) {
+        // Handle Prepare button — opens the POS checkout modal
+        const btnPrepare = e.target.closest('.btn-prepare-order');
+        if (btnPrepare) {
+            const orderId = parseInt(btnPrepare.getAttribute('data-order'));
+            await openDispatchCheckoutModal(orderId);
             return;
         }
-        
+
         // Handle Dispatch button
         const btnDispatch = e.target.closest('.btn-dispatch-order');
         if (btnDispatch) {
@@ -464,7 +349,7 @@ async function loadPackingRequestsSection() {
             await dispatchOrder(orderId);
             return;
         }
-        
+
         // Handle Print Order button
         const btnPrint = e.target.closest('.btn-print-order');
         if (btnPrint) {
@@ -474,88 +359,456 @@ async function loadPackingRequestsSection() {
     };
 }
 
-async function markOrderItemReady(orderId, itemId, qtyToReady) {
+// ==========================================================================
+// V2 1G — DISPATCH CHECKOUT (POS-style fulfillment)
+// ==========================================================================
+// Which checkout modal (if any) is currently open, so the global barcode
+// scanner listener (js/roasting.js handleBarcodeScan) can route a
+// RMP:PackLot:... scan here instead of falling through to Quick Roast Log.
+// Set on open, cleared on close/cancel/successful checkout. See
+// database/v2_1g_migration.sql / V2_ROADMAP.md 1G.
+window.activeDispatchCheckoutHandler = null;
+
+async function openDispatchCheckoutModal(orderId) {
     const [
-        { data: orderItems },
+        { data: orders },
+        { data: orderItemsAll },
         { data: packedGoods },
+        { data: packedLots },
+        { data: machines },
         { data: greenbeans },
         { data: recipes },
+        { data: customers },
         { data: roastBatches }
     ] = await Promise.all([
+        fetchData('request_orders'),
         fetchData('request_order_items'),
         fetchData('packed_coffee'),
+        fetchData('packed_coffee_lots'),
+        fetchData('machines'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
+        fetchData('customers'),
         fetchData('roast_batches')
     ]);
-    
-    const item = orderItems.find(i => i.id === itemId);
-    if (!item) return;
-    
-    const totalRequested = parseInt(item.quantity_requested) || 0;
-    const alreadyPrepared = parseInt(item.quantity_prepared) || 0;
-    const pendingPack = totalRequested - alreadyPrepared;
-    
-    // Clamp qty: cannot exceed pending
-    const actualQty = Math.min(qtyToReady, pendingPack);
-    if (actualQty <= 0) return;
-    
-    // Deduct from packed_coffee stock — machine-partitioned (confirmed
-    // 2026-07-15): only deduct from the SAME machine the item requested,
-    // consistent with the "From Stock" figure this action was driven by
-    // (loadPackingRequestsSection's stockMap, above) and with sales.js's
-    // approveSalesOrder/openOrderDetailPopup.
-    const type = item.coffee_type;
-    const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
 
-    const matchingPacked = (packedGoods || []).filter(p => {
+    const order = (orders || []).find(o => o.id === orderId);
+    if (!order) return;
+    const items = (orderItemsAll || []).filter(i => i.request_order_id === orderId);
+    const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
+
+    // Resolve a packed_coffee row's (type, coffeeId) identity — same matching
+    // pattern used throughout sales.js/packing.js for coffee+machine lookups.
+    function resolvePackedIdentity(p) {
         if (p.roast_batch_id) {
             const batch = (roastBatches || []).find(b => b.id === p.roast_batch_id);
-            if (!batch) return false;
-            return batch.coffee_type === type && (type === 'Single' ? batch.single_coffee_id === coffeeId : batch.blend_recipe_id === coffeeId) && batch.machine_id === item.machine_id;
+            if (!batch) return null;
+            return { type: batch.coffee_type, coffeeId: batch.coffee_type === 'Single' ? batch.single_coffee_id : batch.blend_recipe_id };
         }
         if (p.custom_coffee_name) {
             const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
-            if (type === 'Single') {
-                const gb = (greenbeans || []).find(g => g.id === coffeeId);
-                return gb && gb.name === cleanName && p.machine_id === item.machine_id;
+            const gb = (greenbeans || []).find(g => g.name === cleanName);
+            if (gb) return { type: 'Single', coffeeId: gb.id };
+            const rec = (recipes || []).find(r => r.name === cleanName);
+            if (rec) return { type: 'Blend', coffeeId: rec.id };
+        }
+        return null;
+    }
+
+    function coffeeLabel(type, coffeeId) {
+        if (type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === coffeeId);
+            return gb ? `${gb.name} (Single)` : 'Single Origin';
+        }
+        const r = (recipes || []).find(rec => rec.id === coffeeId);
+        return r ? `${r.name} (Blend)` : 'Blend Recipe';
+    }
+
+    // For every order line, find ALL packed_coffee_lots for that coffee+size
+    // (across every machine, so a machine-mismatch pick is still visible —
+    // just flagged, per the "warn instead of block" decision), oldest first.
+    const lotsByItem = {};
+    items.forEach(item => {
+        const itemCoffeeId = item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
+        const matchingPacked = (packedGoods || []).filter(p => {
+            if (parseInt(p.bag_size_g) !== parseInt(item.bag_size_g)) return false;
+            const idn = resolvePackedIdentity(p);
+            return idn && idn.type === item.coffee_type && idn.coffeeId === itemCoffeeId;
+        });
+        const packedIds = new Set(matchingPacked.map(p => p.id));
+        const machineByPackedId = new Map(matchingPacked.map(p => [p.id, p.machine_id]));
+        const lots = (packedLots || [])
+            .filter(l => packedIds.has(l.packed_coffee_id) && (parseInt(l.remaining_pcs) || 0) > 0)
+            .map(l => ({
+                id: l.id,
+                lotCode: l.lot_code,
+                packedDate: l.packed_date,
+                remaining: parseInt(l.remaining_pcs) || 0,
+                machineId: machineByPackedId.get(l.packed_coffee_id) || null
+            }))
+            .sort((a, b) => new Date(a.packedDate) - new Date(b.packedDate) || a.id - b.id);
+        lotsByItem[item.id] = lots;
+    });
+
+    // Live per-lot remaining stock for this checkout session — decremented as
+    // cart rows are added, so a second add sees what the first one already
+    // took, without needing another DB round-trip.
+    const liveRemaining = {};
+    Object.values(lotsByItem).flat().forEach(l => { liveRemaining[l.id] = l.remaining; });
+
+    // Cart rows keyed by "orderItemId:lotId" — scanning/adding the same
+    // coffee+lot+size again increments the existing row.
+    const cart = new Map();
+
+    const machineName = (id) => { const m = (machines || []).find(mm => mm.id === id); return m ? m.name : 'Unknown'; };
+    const fifoLotForItemMachine = (itemId) => {
+        const item = items.find(i => i.id === itemId);
+        return (lotsByItem[itemId] || []).find(l => l.machineId === item.machine_id) || null;
+    };
+    const alreadyInCartForItem = (itemId) => {
+        let sum = 0;
+        cart.forEach(row => { if (row.orderItemId === itemId) sum += row.qty; });
+        return sum;
+    };
+
+    const itemOptionsHtml = items.map(item => {
+        const label = `${coffeeLabel(item.coffee_type, item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id)} — ${item.bag_size_g}g, ${machineName(item.machine_id)}`;
+        return `<option value="${item.id}">${label}</option>`;
+    }).join('');
+
+    const html = `
+        <div id="dispatch-checkout-body">
+            <table class="nested-table-rows" style="width:100%; margin-bottom:16px;">
+                <thead><tr>
+                    <th>Coffee</th><th>Size / Machine</th>
+                    <th class="text-right">Requested</th><th class="text-right">Fulfilled</th><th class="text-right">Remaining</th>
+                </tr></thead>
+                <tbody id="dc-summary-body"></tbody>
+            </table>
+
+            <div style="display:flex; gap:8px; margin-bottom:6px;">
+                <input type="text" id="dc-scan-input" class="form-control" placeholder="Scan a package or carton barcode" autocomplete="off" style="flex:1;">
+                <button type="button" id="dc-btn-manual-toggle" class="btn btn-secondary">Add manually</button>
+            </div>
+            <p style="font-size:0.78rem; color:var(--text-muted); margin: 0 0 12px;">Stays focused while this checkout is open.</p>
+
+            <div id="dc-manual-form" class="hidden" style="display:none; gap:8px; align-items:flex-end; padding:12px; background:rgba(0,0,0,0.03); border-radius:8px; margin-bottom:16px;">
+                <div class="form-group flex-1-mb-0" style="flex:1.4;">
+                    <label class="form-label">Coffee</label>
+                    <select id="dc-manual-item" class="form-control">${itemOptionsHtml}</select>
+                </div>
+                <div class="form-group flex-1-mb-0" style="flex:1.6;">
+                    <label class="form-label">Lot (FIFO first)</label>
+                    <select id="dc-manual-lot" class="form-control"></select>
+                </div>
+                <div class="form-group flex-1-mb-0" style="width:70px;">
+                    <label class="form-label">Qty</label>
+                    <input type="number" id="dc-manual-qty" class="form-control" value="1" min="1">
+                </div>
+                <button type="button" id="dc-btn-manual-add" class="btn btn-primary">Add</button>
+            </div>
+
+            <p style="font-weight:600; font-size:0.85rem; margin-bottom:6px;">Cart</p>
+            <table class="nested-table-rows" style="width:100%; margin-bottom:12px;">
+                <thead><tr><th>Lot</th><th>Machine</th><th>Size</th><th class="text-right">Stock</th><th class="text-right">Qty</th><th></th></tr></thead>
+                <tbody id="dc-cart-body"></tbody>
+            </table>
+
+            <div id="dc-warning" class="hidden" style="background: rgba(217,119,6,0.12); border: 1px solid #d97706; color: #d97706; padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; margin-bottom: 12px;"></div>
+
+            <div class="modal-footer-actions-lg">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                <button type="button" id="dc-btn-checkout" class="btn btn-primary">Checkout</button>
+            </div>
+        </div>
+    `;
+
+    openModal(`Checkout — ${order.order_number || '#ORD-' + order.id}`, html, '700px');
+
+    function renderSummary() {
+        const rows = items.map(item => {
+            const requested = parseInt(item.quantity_requested) || 0;
+            const prepared = parseInt(item.quantity_prepared) || 0;
+            const inCart = alreadyInCartForItem(item.id);
+            const fulfilled = prepared + inCart;
+            const remaining = Math.max(0, requested - fulfilled);
+            return `
+                <tr>
+                    <td>${coffeeLabel(item.coffee_type, item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id)}</td>
+                    <td class="text-secondary-xs">${item.bag_size_g}g, ${machineName(item.machine_id)}</td>
+                    <td class="text-right">${requested}</td>
+                    <td class="text-right">${fulfilled}</td>
+                    <td class="text-right" style="font-weight:600; color:${remaining === 0 ? 'var(--success)' : 'var(--danger)'};">${remaining}</td>
+                </tr>
+            `;
+        }).join('');
+        document.getElementById('dc-summary-body').innerHTML = rows;
+
+        const anyRemaining = items.some(item => {
+            const requested = parseInt(item.quantity_requested) || 0;
+            const fulfilled = (parseInt(item.quantity_prepared) || 0) + alreadyInCartForItem(item.id);
+            return fulfilled < requested;
+        });
+        const warnEl = document.getElementById('dc-warning');
+        if (anyRemaining && cart.size > 0) {
+            warnEl.classList.remove('hidden');
+            warnEl.style.display = '';
+            warnEl.textContent = 'Some lines are still short — checking out now leaves this order partially open, to finish later.';
+        } else {
+            warnEl.classList.add('hidden');
+            warnEl.style.display = 'none';
+        }
+    }
+
+    function renderCart() {
+        const rows = [];
+        cart.forEach((row, key) => {
+            rows.push(`
+                <tr data-key="${key}">
+                    <td class="text-secondary-xs">${row.lotCode}</td>
+                    <td>${row.machineName}</td>
+                    <td>${row.sizeG}g</td>
+                    <td class="text-right text-secondary-xs">${liveRemaining[row.lotId] + row.qty}</td>
+                    <td class="text-right"><input type="number" min="1" class="form-control dc-cart-qty" data-key="${key}" value="${row.qty}" style="width:64px; text-align:right;"></td>
+                    <td class="text-right"><button type="button" class="btn btn-danger btn-sm dc-cart-remove" data-key="${key}">&times;</button></td>
+                </tr>
+            `);
+        });
+        document.getElementById('dc-cart-body').innerHTML = rows.join('') || `<tr><td colspan="6" class="text-center-muted">No lots added yet.</td></tr>`;
+    }
+
+    function populateManualLotOptions() {
+        const itemId = parseInt(document.getElementById('dc-manual-item').value);
+        const item = items.find(i => i.id === itemId);
+        const lots = lotsByItem[itemId] || [];
+        const lotSelect = document.getElementById('dc-manual-lot');
+        lotSelect.innerHTML = lots.map(l => {
+            const isFifo = fifoLotForItemMachine(itemId) && fifoLotForItemMachine(itemId).id === l.id && l.machineId === item.machine_id;
+            const mismatch = l.machineId !== item.machine_id;
+            const tag = mismatch ? ` — ${machineName(l.machineId)} (different machine)` : (isFifo ? ' (FIFO)' : '');
+            return `<option value="${l.id}">${l.lotCode} — ${liveRemaining[l.id]} left${tag}</option>`;
+        }).join('') || `<option value="">No stock available</option>`;
+    }
+
+    // Core shared logic for both scan and manual add. Returns nothing; shows
+    // its own alerts/warnings and re-renders on success.
+    async function addCartEntry(itemId, lotId, qtyRequested) {
+        const item = items.find(i => i.id === itemId);
+        if (!item) { alert('That coffee is not on this order.'); return; }
+
+        const requested = parseInt(item.quantity_requested) || 0;
+        const prepared = parseInt(item.quantity_prepared) || 0;
+        const remainingForLine = requested - prepared - alreadyInCartForItem(itemId);
+        if (remainingForLine <= 0) {
+            await showWarningModal(`This line (${coffeeLabel(item.coffee_type, item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id)}, ${item.bag_size_g}g) is already fully allocated.`, false);
+            return;
+        }
+
+        const lots = lotsByItem[itemId] || [];
+        const chosenLot = lots.find(l => l.id === lotId);
+        if (!chosenLot) { alert('That lot is not available for this coffee/size.'); return; }
+
+        const fifoLot = fifoLotForItemMachine(itemId);
+        const machineMismatch = chosenLot.machineId !== item.machine_id;
+        const fifoMismatch = !machineMismatch && fifoLot && fifoLot.id !== chosenLot.id;
+        if (machineMismatch || fifoMismatch) {
+            const msg = machineMismatch
+                ? `This lot (${chosenLot.lotCode}) was packed on ${machineName(chosenLot.machineId)}, not ${machineName(item.machine_id)} as requested.\n\nUse it anyway?`
+                : `An older lot is still in stock: ${fifoLot.lotCode} (packed ${fifoLot.packedDate}, ${liveRemaining[fifoLot.id]} left).\n\nThis is a newer lot (${chosenLot.lotCode}). Use the FIFO recommendation first, unless there's a good reason not to.\n\nProceed with this lot anyway?`;
+            const proceed = await showWarningModal(msg, true);
+            if (!proceed) return;
+        }
+
+        const cappedQty = Math.min(qtyRequested, remainingForLine);
+
+        // Spill oldest-first within the CHOSEN lot's own machine group if it
+        // runs short — same idea as the green-bean side (1B), just scoped to
+        // whichever machine the operator actually committed to here.
+        let toDraw = cappedQty;
+        const sameMachinePool = lots.filter(l => l.machineId === chosenLot.machineId).sort((a, b) => new Date(a.packedDate) - new Date(b.packedDate) || a.id - b.id);
+        const startIdx = sameMachinePool.findIndex(l => l.id === chosenLot.id);
+        for (let i = startIdx; i < sameMachinePool.length && toDraw > 0; i++) {
+            const l = sameMachinePool[i];
+            const avail = liveRemaining[l.id] || 0;
+            if (avail <= 0) continue;
+            const take = Math.min(avail, toDraw);
+            liveRemaining[l.id] = avail - take;
+            toDraw -= take;
+
+            const key = `${itemId}:${l.id}`;
+            const existing = cart.get(key);
+            if (existing) {
+                existing.qty += take;
             } else {
-                const rec = (recipes || []).find(r => r.id === coffeeId);
-                return rec && rec.name === cleanName && p.machine_id === item.machine_id;
+                cart.set(key, { orderItemId: itemId, lotId: l.id, lotCode: l.lotCode, machineId: l.machineId, machineName: machineName(l.machineId), sizeG: item.bag_size_g, qty: take });
             }
         }
-        return false;
+
+        renderSummary();
+        renderCart();
+    }
+
+    renderSummary();
+    renderCart();
+    document.getElementById('dc-manual-item').addEventListener('change', populateManualLotOptions);
+    populateManualLotOptions();
+
+    document.getElementById('dc-btn-manual-toggle').addEventListener('click', () => {
+        const form = document.getElementById('dc-manual-form');
+        const showing = form.style.display !== 'none';
+        form.style.display = showing ? 'none' : 'flex';
+        form.classList.toggle('hidden', showing);
     });
-    const szItems = item.machine_id ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
-    
-    let remainingDeduct = actualQty;
-    for (const p of szItems) {
-        if (remainingDeduct <= 0) break;
-        let avail = parseInt(p.quantity) || 0;
-        if (avail > 0) {
-            let take = Math.min(avail, remainingDeduct);
-            p.quantity = avail - take;
-            remainingDeduct -= take;
-            await saveData('packed_coffee', p);
+
+    document.getElementById('dc-btn-manual-add').addEventListener('click', async () => {
+        const itemId = parseInt(document.getElementById('dc-manual-item').value);
+        const lotId = parseInt(document.getElementById('dc-manual-lot').value);
+        const qty = parseInt(document.getElementById('dc-manual-qty').value) || 0;
+        if (!lotId || qty <= 0) return;
+        await addCartEntry(itemId, lotId, qty);
+        populateManualLotOptions();
+    });
+
+    document.getElementById('dc-cart-body').addEventListener('click', (e) => {
+        const btn = e.target.closest('.dc-cart-remove');
+        if (!btn) return;
+        const key = btn.getAttribute('data-key');
+        const row = cart.get(key);
+        if (row) { liveRemaining[row.lotId] = (liveRemaining[row.lotId] || 0) + row.qty; }
+        cart.delete(key);
+        renderSummary();
+        renderCart();
+        populateManualLotOptions();
+    });
+
+    document.getElementById('dc-cart-body').addEventListener('input', (e) => {
+        const inp = e.target.closest('.dc-cart-qty');
+        if (!inp) return;
+        const key = inp.getAttribute('data-key');
+        const row = cart.get(key);
+        if (!row) return;
+        const maxAvail = liveRemaining[row.lotId] + row.qty;
+        let newQty = parseInt(inp.value) || 0;
+        if (newQty < 1) newQty = 1;
+        if (newQty > maxAvail) newQty = maxAvail;
+        liveRemaining[row.lotId] = maxAvail - newQty;
+        row.qty = newQty;
+        inp.value = newQty;
+        renderSummary();
+    });
+
+    // V2 1G scan routing: a RMP:PackLot:{lot_code}:{sizeG}[:{multiplier}]
+    // barcode is resolved here while this modal is open (see task in
+    // js/roasting.js handleBarcodeScan for the 'PackLot' dispatch branch).
+    window.activeDispatchCheckoutHandler = async function (lotCode, sizeG, multiplier) {
+        const targetItem = items.find(item => {
+            const lots = lotsByItem[item.id] || [];
+            return parseInt(item.bag_size_g) === parseInt(sizeG) && lots.some(l => l.lotCode === lotCode);
+        });
+        if (!targetItem) {
+            await showWarningModal(`Scanned lot ${lotCode} (${sizeG}g) is not part of this order.`, false);
+            return;
         }
+        const lot = (lotsByItem[targetItem.id] || []).find(l => l.lotCode === lotCode);
+        if (!lot) return;
+        await addCartEntry(targetItem.id, lot.id, multiplier || 1);
+    };
+    const scanInput = document.getElementById('dc-scan-input');
+    if (scanInput) scanInput.focus();
+
+    document.getElementById('dc-btn-checkout').addEventListener('click', async () => {
+        await submitDispatchCheckout(order, items, cart, cust);
+    });
+
+    // Clear the active-scan hook whenever this modal closes by any route
+    // (Cancel, the shared × close button, or after a successful checkout).
+    const modalCloseBtn = document.getElementById('btn-close-modal');
+    if (modalCloseBtn) {
+        modalCloseBtn.addEventListener('click', () => { window.activeDispatchCheckoutHandler = null; }, { once: true });
     }
-    
-    // Update item: increment prepared, update status
-    const newPrepared = alreadyPrepared + actualQty;
-    item.quantity_prepared = newPrepared;
-    
-    if (newPrepared >= totalRequested) {
-        item.item_status = 'Ready for Handover';
-    } else {
-        item.item_status = 'Packing';
-    }
-    const { error: itemErr } = await saveData('request_order_items', item);
-    if (itemErr) {
-        alert("Failed to update item status: " + itemErr.message);
+}
+
+// V2 1G: persists the checkout modal's cart — supersedes the old single-line
+// "Ready" flow (markOrderItemReady), since fulfillment is now lot-level and
+// can touch multiple order lines from one screen. `items`/`cust` are the
+// snapshot captured when the modal opened; DB rows are re-fetched fresh here
+// since packed stock may have moved since then.
+async function submitDispatchCheckout(order, items, cart, cust) {
+    if (cart.size === 0) {
+        await showWarningModal('Add at least one lot to the cart before checking out.', false);
         return;
     }
 
-    loadPackingRequestsSection();
+    const [{ data: freshItems }, { data: freshLots }, { data: freshPacked }] = await Promise.all([
+        fetchData('request_order_items'),
+        fetchData('packed_coffee_lots'),
+        fetchData('packed_coffee')
+    ]);
+
+    // Sum cart qty per order line.
+    const qtyByItem = new Map();
+    cart.forEach(row => { qtyByItem.set(row.orderItemId, (qtyByItem.get(row.orderItemId) || 0) + row.qty); });
+
+    // Deduct packed_coffee_lots (the per-lot source of truth) and keep the
+    // parent packed_coffee row's flattened total in sync (not yet derived —
+    // see V2_ROADMAP.md 1G), then record the fulfillment for traceability.
+    for (const row of cart.values()) {
+        const lot = (freshLots || []).find(l => l.id === row.lotId);
+        if (!lot) continue;
+        const newRemaining = Math.max(0, (parseInt(lot.remaining_pcs) || 0) - row.qty);
+        await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemaining });
+
+        const packedRow = (freshPacked || []).find(p => p.id === lot.packed_coffee_id);
+        if (packedRow) {
+            packedRow.quantity = Math.max(0, (parseInt(packedRow.quantity) || 0) - row.qty);
+            await saveData('packed_coffee', packedRow);
+        }
+
+        await saveData('dispatch_lot_items', {
+            request_order_item_id: row.orderItemId,
+            packed_coffee_lot_id: row.lotId,
+            customer_id: cust ? cust.id : null,
+            qty: row.qty
+        });
+    }
+
+    // Credit each order line's quantity_prepared; full lines go straight to
+    // 'Ready for Handover', partial lines stay 'Packing' so the order remains
+    // an active card (existing allItemsReady logic in
+    // loadPackingRequestsSection keeps it open until every line catches up).
+    let stillShort = false;
+    for (const [itemId, checkoutQty] of qtyByItem) {
+        const item = (freshItems || []).find(i => i.id === itemId);
+        if (!item) continue;
+        const requested = parseInt(item.quantity_requested) || 0;
+        const newPrepared = (parseInt(item.quantity_prepared) || 0) + checkoutQty;
+        item.quantity_prepared = newPrepared;
+        item.item_status = newPrepared >= requested ? 'Ready for Handover' : 'Packing';
+        if (newPrepared < requested) stillShort = true;
+        await saveData('request_order_items', item);
+    }
+    // Lines this checkout didn't touch at all might still be short too.
+    items.forEach(item => {
+        if (!qtyByItem.has(item.id) && (parseInt(item.quantity_prepared) || 0) < (parseInt(item.quantity_requested) || 0)) {
+            stillShort = true;
+        }
+    });
+
+    window.activeDispatchCheckoutHandler = null;
+    const closeBtn = document.getElementById('btn-close-modal');
+    if (closeBtn) closeBtn.click();
+
+    await showWarningModal(
+        stillShort
+            ? 'Checkout saved. This order still has lines pending — it stays open for the remainder.'
+            : 'Checkout saved. All lines are fulfilled — ready to dispatch.',
+        false
+    );
+
+    const printNow = await showWarningModal('Print the waybill now?', true);
+    if (printNow) await printOrderDetail(order.id);
+
+    await loadPackingRequestsSection();
     scheduleDashboardRefresh();
 }
 
@@ -606,7 +859,20 @@ async function printOrderDetail(orderId) {
         const pending = parseInt(item.quantity_pending) || 0;
         totalBags += qty;
         totalWeightKg += weightKg;
-        
+
+        // V2 1G: partial fulfillment shows "prepared/requested" plus a
+        // shortfall marker — coffee name only, no lot code, per
+        // V2_ROADMAP.md 1G. A fully-prepared line reads as a plain qty with
+        // a checked "Completed" box, unchanged from before.
+        const prepared = parseInt(item.quantity_prepared) || 0;
+        const isFull = prepared >= qty;
+        const qtyCellHtml = isFull
+            ? `${qty}`
+            : `${prepared}/${qty} <span style="color:#b45309;">(short ${qty - prepared})</span>`;
+        const statusCellHtml = isFull
+            ? `<span style="display:inline-block; width:13px; height:13px; border:1.5px solid #555; background:#555; border-radius:2px; vertical-align:middle; margin-right:6px;"></span> Completed`
+            : `<span style="display:inline-block; width:13px; height:13px; border:1.5px solid #b45309; border-radius:2px; vertical-align:middle; margin-right:6px;"></span> Partial`;
+
         const sizeLabel = sizeG >= 1000 ? `${sizeG/1000}kg` : `${sizeG}g`;
         itemsTableRows += `
             <tr>
@@ -614,9 +880,9 @@ async function printOrderDetail(orderId) {
                 <td style="padding:8px 12px; border:1px solid #ddd; font-weight:600;">${coffeeName}</td>
                 <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;">${machName}</td>
                 <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;">${sizeLabel}</td>
-                <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;">${qty}</td>
+                <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;">${qtyCellHtml}</td>
                 <td style="padding:8px 12px; border:1px solid #ddd; text-align:center;"></td>
-                <td style="padding:8px 12px; border:1px solid #ddd; text-align:left;"><span style="display:inline-block; width:13px; height:13px; border:1.5px solid #555; border-radius:2px; vertical-align:middle; margin-right:6px;"></span> Completed</td>
+                <td style="padding:8px 12px; border:1px solid #ddd; text-align:left;">${statusCellHtml}</td>
             </tr>`;
     }
     
@@ -900,6 +1166,13 @@ function printLotBarcodeLabels(lot, requested, machines) {
     // instead of floating in whitespace.
     let labelsHtml = '';
     requested.forEach(r => {
+        // V2 1G: package barcode = RMP:PackLot:{lot_code}:{sizeG}; a carton
+        // (r.multiplier set) appends the multiplier so it's never byte-
+        // identical to a plain package barcode of the same size — the POS
+        // checkout scanner tells them apart on this alone.
+        const barcodeValue = r.multiplier
+            ? `RMP:PackLot:${lot.lot_code}:${r.gram}:${r.multiplier}`
+            : `RMP:PackLot:${lot.lot_code}:${r.gram}`;
         for (let i = 0; i < r.qty; i++) {
             let linesHtml = '';
             if (showCoffeeName) linesHtml += `<div class="lbl-coffee">${lot.coffee_name}</div>`;
@@ -908,7 +1181,7 @@ function printLotBarcodeLabels(lot, requested, machines) {
             if (showDates) linesHtml += `<div class="lbl-dates">${dateRangeStr}</div>`;
             labelsHtml += `
                 <div class="barcode-label-item">
-                    <svg class="lot-barcode-svg" data-value="${lot.lot_code}"></svg>
+                    <svg class="lot-barcode-svg" data-value="${barcodeValue}" data-display="${lot.lot_code}"></svg>
                     ${linesHtml}
                 </div>
             `;
@@ -961,7 +1234,7 @@ function printLotBarcodeLabels(lot, requested, machines) {
         ${labelsHtml}
         <script>
             document.querySelectorAll('.lot-barcode-svg').forEach(el => {
-                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.1, height: 46, displayValue: ${showCode}, fontSize: 9, margin: 2 });
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.1, height: 46, displayValue: ${showCode}, text: el.dataset.display, fontSize: 9, margin: 2 });
             });
             setTimeout(() => { window.print(); }, 500);
         <\/script>
@@ -999,12 +1272,29 @@ async function openPrintBarcodeModal(bulkId) {
         return;
     }
 
-    const sizesHtml = activeSizes.map(s => `
+    // V2 1G: each package barcode now encodes its size (RMP:PackLot:{lot_code}:
+    // {sizeG}), and any size with a configured carton_multiplier also gets a
+    // Carton label option encoding a multiplier (RMP:PackLot:{lot_code}:
+    // {sizeG}:{multiplier}) — a carton barcode is never byte-identical to a
+    // package barcode, so the POS checkout scanner can tell them apart and
+    // register the full carton count in one scan.
+    const sizesHtml = activeSizes.map(s => {
+        let html = `
         <div class="form-group flex-1-mb-0">
             <label class="form-label">${s.label}</label>
-            <input type="number" min="0" class="form-control print-barcode-qty-input" data-label="${s.label}" value="0" placeholder="0">
+            <input type="number" min="0" class="form-control print-barcode-qty-input" data-label="${s.label}" data-gram="${s.gram}" value="0" placeholder="0">
         </div>
-    `).join('');
+        `;
+        if (s.carton_multiplier) {
+            html += `
+        <div class="form-group flex-1-mb-0">
+            <label class="form-label">${s.label} carton (&times;${s.carton_multiplier})</label>
+            <input type="number" min="0" class="form-control print-barcode-qty-input" data-label="${s.label} Carton" data-gram="${s.gram}" data-multiplier="${s.carton_multiplier}" value="0" placeholder="0">
+        </div>
+            `;
+        }
+        return html;
+    }).join('');
 
     const html = `
         <form id="modal-print-barcode-form">
@@ -1030,7 +1320,12 @@ async function openPrintBarcodeModal(bulkId) {
     document.getElementById('modal-print-barcode-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const requested = Array.from(document.querySelectorAll('.print-barcode-qty-input'))
-            .map(inp => ({ label: inp.getAttribute('data-label'), qty: parseInt(inp.value) || 0 }))
+            .map(inp => ({
+                label: inp.getAttribute('data-label'),
+                gram: parseFloat(inp.getAttribute('data-gram')),
+                multiplier: inp.getAttribute('data-multiplier') ? parseFloat(inp.getAttribute('data-multiplier')) : null,
+                qty: parseInt(inp.value) || 0
+            }))
             .filter(r => r.qty > 0);
 
         if (requested.length === 0) {

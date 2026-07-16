@@ -1080,21 +1080,10 @@
                 <div id="tab-order-request" class="packing-tab-content hidden">
                     <div class="card">
                         <h3 class="card-title" data-i18n="pack_req_title">Preparing Sales Orders</h3>
-                        <div class="table-container">
-                            <table class="nested-table-rows">
-                                <thead>
-                                    <tr>
-                                        <th data-i18n="col_pack_req_date">Date</th>
-                                        <th data-i18n="col_pack_req_agent">Sales Agent</th>
-                                        <th data-i18n="col_pack_req_info" style="width: 55%;">Request Information (Items)</th>
-                                        <th style="width: 110px;">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="packing-requests-table-body">
-                                    <!-- Dynamic rows for preparing orders -->
-                                </tbody>
-                            </table>
+                        <div id="packing-requests-cards" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 12px;">
+                            <!-- Dynamic order-request cards -->
                         </div>
+                        <div id="packing-requests-empty" class="text-center-muted hidden" style="padding: 24px 0;">No preparing orders found.</div>
                     </div>
                 </div>
             </section>
@@ -2395,13 +2384,13 @@
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
-    <script src="js/auth.js?v=7"></script>
+    <script src="js/auth.js?v=8"></script>
     <script src="js/greenbean.js?v=10"></script>
-    <script src="js/roasting.js?v=8"></script>
-    <script src="js/packing.js?v=19"></script>
+    <script src="js/roasting.js?v=9"></script>
+    <script src="js/packing.js?v=20"></script>
     <script src="js/sales.js?v=8"></script>
-    <script src="js/settings.js?v=7"></script>
+    <script src="js/settings.js?v=8"></script>
     <script src="js/tracking.js?v=3"></script>
-    <script src="js/app.js?v=63"></script>
+    <script src="js/app.js?v=64"></script>
 </body>
 </html>
