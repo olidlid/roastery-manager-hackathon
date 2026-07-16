@@ -793,7 +793,12 @@ async function getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roa
     const today = new Date().toISOString().split('T')[0];
     const { data: lots } = await fetchData('production_lots');
     const existing = (lots || []).find(l => l.bulk_roasted_coffee_id === bulk.id && l.production_date === today);
-    if (existing) return existing;
+    if (existing) {
+        // Re-printing the same day's lot after more batches were logged —
+        // keep production_lot_batches current (see syncProductionLotBatches).
+        await syncProductionLotBatches(existing, bulk, roastBatches);
+        return existing;
+    }
 
     const matchingBatches = (roastBatches || [])
         .filter(b => b.coffee_type === bulk.coffee_type &&
@@ -824,7 +829,40 @@ async function getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roa
         console.error('Failed to create production lot:', error);
         return newLot;
     }
-    return saved || newLot;
+    const savedLot = saved || newLot;
+    await syncProductionLotBatches(savedLot, bulk, roastBatches);
+    return savedLot;
+}
+
+// V2 1·CHAIN precision: snapshots every roast_batches row of the same
+// coffee+machine roasted on this lot's OWN production_date into
+// production_lot_batches — replacing the single latest_roast_batch_id
+// approximation for Tracking purposes (js/tracking.js resolves through this
+// table now, not latest_roast_batch_id). Carryover from prior days is
+// deliberately not modeled, per V2_ROADMAP.md 1·CHAIN. Idempotent: skips
+// batches already linked, so re-printing the same day's lot never duplicates
+// rows (production_lot_batches also has a UNIQUE(production_lot_id,
+// roast_batch_id) constraint as a backstop).
+async function syncProductionLotBatches(lot, bulk, roastBatches) {
+    if (!lot || !lot.id) return;
+    const sameDayBatches = (roastBatches || []).filter(b =>
+        b.coffee_type === bulk.coffee_type &&
+        (bulk.coffee_type === 'Single' ? b.single_coffee_id === bulk.single_coffee_id : b.blend_recipe_id === bulk.blend_recipe_id) &&
+        b.machine_id === bulk.machine_id &&
+        b.roast_date === lot.production_date
+    );
+    if (sameDayBatches.length === 0) return;
+
+    const { data: existingLinks } = await fetchData('production_lot_batches');
+    const alreadyLinked = new Set(
+        (existingLinks || []).filter(l => l.production_lot_id === lot.id).map(l => l.roast_batch_id)
+    );
+
+    for (const b of sameDayBatches) {
+        if (alreadyLinked.has(b.id)) continue;
+        const { error } = await saveData('production_lot_batches', { production_lot_id: lot.id, roast_batch_id: b.id });
+        if (error) console.error('Failed to link production_lot_batches row:', error);
+    }
 }
 
 function printLotBarcodeLabels(lot, requested, machines) {
