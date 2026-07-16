@@ -1641,6 +1641,11 @@ async function openPackedLotsModal(coffeeName) {
                 }
             }
         }
+        // Match loadPackedCoffeeSection's grouping key exactly — it strips
+        // these suffixes off custom_coffee_name-sourced rows (e.g. bulk-pack
+        // entries are named "X (Single)"/"X (Blend)"), so coffeeName arrives
+        // here already stripped.
+        name = name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
         return { ...item, resolvedName: name };
     });
 
@@ -1727,9 +1732,15 @@ async function openEditPackedModal(coffeeName) {
                 }
             }
         }
+        // Match loadPackedCoffeeSection's grouping key (it strips these
+        // suffixes off custom_coffee_name rows) — without this, Edit on any
+        // bulk-packed coffee (custom_coffee_name ending "(Single)"/"(Blend)")
+        // always showed "never been packed" even with real stock (found
+        // 2026-07-16 while building the lot drill-down view alongside it).
+        name = name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
         return { ...item, resolvedName: name };
     });
-    
+
     const records = resolved.filter(r => r.resolvedName === coffeeName);
     
     let rowsHtml = '';
