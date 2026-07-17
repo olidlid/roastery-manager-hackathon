@@ -3268,33 +3268,36 @@ async function recordRoastBatchGreenLots(roastBatchId, draws) {
 
 async function handleBarcodeScan(barcode) {
     // Parse barcode: RMP:Single:5:2 or RMP:Blend:3:1 or RMP:Lot:{green_coffee_lot_id}:2
-    // (V2 1B, sack sticker printed by 1A) or RMP:PackLot:{lot_code}:{sizeG}[:{multiplier}]
-    // (V2 1G, packed lot sticker printed by Ready to Pack — the trailing
-    // multiplier segment only appears on carton labels, so PackLot is the
-    // one type allowed 5 parts instead of the usual 4).
+    // (V2 1B, sack sticker printed by 1A) or RMP:9{lotId:05d}{sizeG:04d}{mult:02d}
+    // (V2 1G, packed lot sticker printed by Ready to Pack). PackLot is fully
+    // numeric after a single "9" type digit — not colon-delimited text like
+    // the other three types — because CODE128 packs digit-pairs far denser
+    // than text (barcode-label-fix pass: the old `RMP:PackLot:{lot_code}:
+    // {sizeG}` text format produced bars too thin (~0.13mm) to scan
+    // reliably on a 50mm label; this numeric form gets modules to ~0.3mm).
+    // mult=00 means "no carton multiplier" (a plain package scan).
     const parts = barcode.split(':');
-    const isPackLot = parts.length >= 2 && parts[1] === 'PackLot';
-    const expectedLength = isPackLot ? (parts.length === 5 ? 5 : 4) : 4;
-    if (parts.length !== expectedLength || parts[0] !== 'RMP') {
-        if (isPackLot) {
-            await showWarningModal('Invalid barcode format: ' + barcode, false);
-        } else {
-            alert('Invalid barcode format: ' + barcode);
-        }
-        return;
-    }
+    const isPackLot = parts.length === 2 && parts[0] === 'RMP' && /^9\d{11}$/.test(parts[1]);
 
     if (isPackLot) {
         // V2 1G: only meaningful while a dispatch checkout modal is open —
         // it registers itself as the active handler (see
         // js/packing.js openDispatchCheckoutModal) so scans land in the
         // right cart instead of silently doing nothing.
-        const [, , lotCode, sizeGStr, multiplierStr] = parts;
+        const digits = parts[1];
+        const lotId = parseInt(digits.slice(1, 6), 10);
+        const sizeG = parseInt(digits.slice(6, 10), 10);
+        const multRaw = parseInt(digits.slice(10, 12), 10);
         if (typeof window.activeDispatchCheckoutHandler !== 'function') {
             await showWarningModal('Scan this inside an order\'s Checkout screen (Packing → Order Requests → Prepare) — no checkout is open right now.', false);
             return;
         }
-        await window.activeDispatchCheckoutHandler(lotCode, parseFloat(sizeGStr), multiplierStr ? parseFloat(multiplierStr) : null);
+        await window.activeDispatchCheckoutHandler(lotId, sizeG, multRaw > 0 ? multRaw : null);
+        return;
+    }
+
+    if (parts.length !== 4 || parts[0] !== 'RMP') {
+        alert('Invalid barcode format: ' + barcode);
         return;
     }
 

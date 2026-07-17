@@ -1059,19 +1059,20 @@ async function openDispatchCheckoutModal(orderId) {
         renderSummary();
     });
 
-    // V2 1G scan routing: a RMP:PackLot:{lot_code}:{sizeG}[:{multiplier}]
-    // barcode is resolved here while this modal is open (see task in
-    // js/roasting.js handleBarcodeScan for the 'PackLot' dispatch branch).
-    window.activeDispatchCheckoutHandler = async function (lotCode, sizeG, multiplier) {
+    // V2 barcode label fix: a RMP:9{lotId:05d}{sizeG:04d}{mult:02d} barcode
+    // is resolved here (by the packed_coffee_lots row's own numeric id, not
+    // its lot_code text) while this modal is open — see
+    // js/roasting.js handleBarcodeScan's PackLot dispatch branch.
+    window.activeDispatchCheckoutHandler = async function (lotId, sizeG, multiplier) {
         const targetItem = items.find(item => {
             const lots = lotsByItem[item.id] || [];
-            return parseInt(item.bag_size_g) === parseInt(sizeG) && lots.some(l => l.lotCode === lotCode);
+            return parseInt(item.bag_size_g) === parseInt(sizeG) && lots.some(l => l.id === lotId);
         });
         if (!targetItem) {
-            await showWarningModal(`Scanned lot ${lotCode} (${sizeG}g) is not part of this order.`, false);
+            await showWarningModal(`Scanned lot #${lotId} (${sizeG}g) is not part of this order.`, false);
             return;
         }
-        const lot = (lotsByItem[targetItem.id] || []).find(l => l.lotCode === lotCode);
+        const lot = (lotsByItem[targetItem.id] || []).find(l => l.id === lotId);
         if (!lot) return;
         await addCartEntry(targetItem.id, lot.id, multiplier || 1);
     };
@@ -1528,13 +1529,20 @@ function printLotBarcodeLabels(lot, requested, machines) {
     // instead of floating in whitespace.
     let labelsHtml = '';
     requested.forEach(r => {
-        // V2 1G: package barcode = RMP:PackLot:{lot_code}:{sizeG}; a carton
-        // (r.multiplier set) appends the multiplier so it's never byte-
-        // identical to a plain package barcode of the same size — the POS
-        // checkout scanner tells them apart on this alone.
-        const barcodeValue = r.multiplier
-            ? `RMP:PackLot:${lot.lot_code}:${r.gram}:${r.multiplier}`
-            : `RMP:PackLot:${lot.lot_code}:${r.gram}`;
+        if (!r.packedCoffeeLotId) return; // couldn't resolve/reserve a lot for this size — skip rather than print an unscannable label
+        // V2 barcode label fix: package barcode = RMP:9{packedCoffeeLotId:05d}
+        // {sizeG:04d}{multiplier:02d} — fully numeric after a single type
+        // digit so CODE128 can Code-Set-C compress it (the old text format
+        // `RMP:PackLot:{lot_code}:{sizeG}` produced bars far too thin to
+        // scan reliably on a 50mm label). mult=00 means "no carton
+        // multiplier" (a plain package scan) — never byte-identical to a
+        // carton barcode of the same size, so the POS checkout scanner
+        // still tells them apart.
+        const digits = '9'
+            + String(r.packedCoffeeLotId).padStart(5, '0')
+            + String(r.gram).padStart(4, '0')
+            + String(r.multiplier || 0).padStart(2, '0');
+        const barcodeValue = `RMP:${digits}`;
         for (let i = 0; i < r.qty; i++) {
             let linesHtml = '';
             if (showCoffeeName) linesHtml += `<div class="lbl-coffee">${lot.coffee_name}</div>`;
@@ -1543,7 +1551,7 @@ function printLotBarcodeLabels(lot, requested, machines) {
             if (showDates) linesHtml += `<div class="lbl-dates">${dateRangeStr}</div>`;
             labelsHtml += `
                 <div class="barcode-label-item">
-                    <svg class="lot-barcode-svg" data-value="${barcodeValue}" data-display="${lot.lot_code}"></svg>
+                    <svg class="lot-barcode-svg" data-value="${barcodeValue}" data-display="${r.lotCode || ''}"></svg>
                     ${linesHtml}
                 </div>
             `;
@@ -1555,54 +1563,67 @@ function printLotBarcodeLabels(lot, requested, machines) {
         alert('Could not open the print window — please allow pop-ups for this site and try again.');
         return;
     }
-    printWin.document.write(`
-        <html><head><title>Lot Barcode Labels</title>
+    printWin.document.write(buildFixedLabelDocument(labelsHtml, showCode));
+    printWin.document.close();
+}
+
+// V2 barcode label fix (packed coffee + green bean "Kecil"): the shared
+// single-barcode-per-sticker document — same @page/CSS/JsBarcode config for
+// both, so the two never drift out of sync the way packed/green did before.
+//
+// Root cause of "scans inconsistent, two printers print different sizes":
+// the barcode zone's HEIGHT is a fixed mm value (independent of which
+// optional text lines are toggled on — they're separate sibling elements,
+// never sharing the SVG's own box), so toggling label_layout fields on/off
+// never changes barcode size. All text sizing is in mm (not px) so it scales
+// with the SAME physical unit as the page across different printer DPIs,
+// instead of px being reinterpreted per-driver. Module width bumped from the
+// old 1.1 to 2.2 (JsBarcode units) — the old value produced sub-0.2mm bars
+// once scaled into the 8mm-tall zone, well under the ~0.33mm minimum most
+// thermal printers can reproduce without dot-gain merging adjacent bars.
+function buildFixedLabelDocument(labelsHtml, showCode) {
+    return `
+        <html><head><title>Barcode Labels</title>
         <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
         <style>
             @page { size: 50mm 25mm; margin: 1mm; }
             body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
             .barcode-label-item {
                 width: 100%;
-                height: 100vh;
                 box-sizing: border-box;
                 display: flex;
                 flex-direction: column;
                 align-items: center;
-                justify-content: center;
-                gap: 0.6mm;
                 text-align: center;
                 padding: 0 1mm;
                 page-break-after: always;
             }
             .barcode-label-item:last-child { page-break-after: auto; }
-            /* Stretch the barcode across the full sticker width so it fills
-               the label like the marked box, rather than sitting small and
-               centered. JsBarcode's SVG carries a viewBox, so width:100%
-               scales it (bars stay proportional → still scannable) instead of
-               clipping. min-width:0 is required because this SVG is a flex
-               item, whose default min-width:auto would otherwise pin it to its
-               intrinsic width and overflow the sticker. */
-            /* max-height (not width:100%/height:auto) — a shorter code would
-               otherwise stretch proportionally TALLER than a longer one to
-               fill the sticker's width, making the rendered height depend on
-               how many characters the code has. Capping height and letting
-               width shrink-to-fit keeps it predictable either way. */
-            .lot-barcode-svg { max-width: 100%; max-height: 8mm; width: auto; height: auto; display: block; margin: 0 auto; }
-            .lbl-coffee { font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-            .lbl-size { font-size: 10px; font-weight: 700; line-height: 1; }
-            .lbl-machine { font-size: 9px; font-weight: 600; line-height: 1; color: #333; }
-            .lbl-dates { font-size: 12px; font-weight: 700; line-height: 1; }
+            /* Barcode zone is a FIXED mm box, set once here — it never
+               grows/shrinks based on which optional text lines print below
+               it (those are separate sibling divs, not part of this box).
+               Both width and height are explicit (not width:auto preserving
+               JsBarcode's native aspect ratio) — preserveAspectRatio="none"
+               (set on the SVG right after JsBarcode renders it, see below)
+               makes it stretch to fill this exact box every time, always
+               using the label's full available width for maximum module
+               thickness regardless of how many digits the payload has. */
+            .lot-barcode-svg { width: 44mm; height: 12mm; display: block; margin: 0.4mm auto 0; }
+            .lbl-coffee { font-size: 2.3mm; font-weight: 700; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 0.4mm; }
+            .lbl-size { font-size: 2.1mm; font-weight: 700; line-height: 1.3; margin-top: 0.3mm; }
+            .lbl-machine { font-size: 1.7mm; font-weight: 600; line-height: 1.3; color: #333; margin-top: 0.2mm; }
+            .lbl-dates { font-size: 2mm; font-weight: 700; line-height: 1.3; margin-top: 0.3mm; }
         </style></head><body>
         ${labelsHtml}
         <script>
             document.querySelectorAll('.lot-barcode-svg').forEach(el => {
-                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.1, height: 46, displayValue: ${showCode}, text: el.dataset.display, fontSize: 9, margin: 2 });
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 2.2, height: 60, displayValue: ${showCode}, text: el.dataset.display, fontSize: 22, margin: 4 });
+                el.setAttribute('preserveAspectRatio', 'none');
             });
             setTimeout(() => { window.print(); }, 500);
         <\/script>
         </body></html>
-    `);
-    printWin.document.close();
+    `;
 }
 
 // Print Barcode modal — one form, all active packaging sizes at once, per
@@ -1696,6 +1717,20 @@ async function openPrintBarcodeModal(bulkId) {
         }
 
         const lot = await getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roastBatches);
+
+        // V2 barcode label fix: each requested size needs its OWN
+        // packed_coffee_lots identity for the barcode to encode — resolve
+        // (or reserve, qty 0) one per size, keyed the same way Pack keys
+        // its own lots (packed_coffee + this production lot), so whichever
+        // of Print/Pack happens first, the other converges on the same row.
+        for (const r of requested) {
+            const packedRow = await getOrCreatePackedCoffeeRow(bulk, r.gram);
+            if (!packedRow) continue;
+            const packedLot = await getOrCreatePackedCoffeeLot(packedRow.id, 0, lot ? lot.id : null);
+            r.packedCoffeeLotId = packedLot ? packedLot.id : null;
+            r.lotCode = packedLot ? packedLot.lot_code : null;
+        }
+
         printLotBarcodeLabels(lot, requested, machines);
         document.getElementById('btn-close-modal').click();
     });
@@ -1804,7 +1839,6 @@ async function openPackBulkModal(bulkId) {
                 await saveData('bulk_roasted_coffee', freshBulk);
             }
 
-            const { data: packedList } = await fetchData('packed_coffee');
             const packingDate = new Date().toISOString().split('T')[0];
 
             // V2 1G-1 (packed_coffee_lots foundation): resolve/create today's
@@ -1815,31 +1849,12 @@ async function openPackBulkModal(bulkId) {
             const productionLot = await getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roastBatches);
 
             for (const add of additions) {
-                const existing = (packedList || []).find(p =>
-                    !p.roast_batch_id &&
-                    p.custom_coffee_name === bulk.coffee_name &&
-                    parseInt(p.bag_size_g) === parseInt(add.gram) &&
-                    parseInt(p.machine_id) === parseInt(bulk.machine_id)
-                );
-                let packedCoffeeId = null;
-                if (existing) {
-                    existing.quantity = parseInt(existing.quantity) + add.qty;
-                    await saveData('packed_coffee', existing);
-                    packedCoffeeId = existing.id;
-                } else {
-                    const { data: savedPacked } = await saveData('packed_coffee', {
-                        roast_batch_id: null,
-                        machine_id: bulk.machine_id,
-                        custom_coffee_name: bulk.coffee_name,
-                        bag_size_g: add.gram,
-                        quantity: add.qty,
-                        selling_price: 12.00
-                    });
-                    packedCoffeeId = savedPacked ? savedPacked.id : null;
-                }
-                if (packedCoffeeId) {
-                    await createPackedCoffeeLot(packedCoffeeId, add.qty, productionLot ? productionLot.id : null);
-                }
+                const packedRow = await getOrCreatePackedCoffeeRow(bulk, add.gram);
+                if (!packedRow) continue;
+                packedRow.quantity = (parseInt(packedRow.quantity) || 0) + add.qty;
+                await saveData('packed_coffee', packedRow);
+
+                await getOrCreatePackedCoffeeLot(packedRow.id, add.qty, productionLot ? productionLot.id : null);
                 await saveData('packing_records', {
                     date: packingDate,
                     pack_date: packingDate,
@@ -1865,24 +1880,84 @@ async function openPackBulkModal(bulkId) {
     });
 }
 
-// V2 1G-1 (packed_coffee_lots foundation): one row per pack action —
-// packed_coffee itself stays a merged running total (unchanged for now,
-// still what every existing view/deduction reads), this is purely additive
-// so it can't regress anything already working. lot_code just needs to be
-// globally unique; it isn't user-facing (only production_lots.lot_code is
-// printed on stickers), so a timestamp suffix is enough. productionLotId is
-// null for custom/manual packing entries that have no source bulk lot.
-async function createPackedCoffeeLot(packedCoffeeId, qty, productionLotId, roastBatchId = null) {
-    const { error } = await saveData('packed_coffee_lots', {
+// V2 barcode label fix: Print Barcode and Pack are deliberately kept as two
+// separate steps (Print may happen before the bags are actually filled),
+// but a barcode printed ahead of packing has to resolve to the SAME
+// packed_coffee_lots row that Pack later adds real quantity to — otherwise
+// dispatch-checkout scanning never matches what's actually stuck on the bag.
+// Fix: key the lot by (packed_coffee_id, production_lot_id) instead of by
+// "which action created it first". Whichever of Print/Pack runs first
+// creates the row; the other just adds to it. Custom/manual packing (no
+// source bulk lot, productionLotId null) keeps the old one-row-per-action
+// behavior, since there's no shared production lot to converge multiple
+// actions onto.
+//
+// lot_code used to be `PKL-{id}-${Date.now()}` — a 13-digit millisecond
+// timestamp made the printed barcode payload 37+ characters, far too dense
+// to scan reliably on a 50mm label. Shortened to the same
+// `{code}-{YYMMDD}-{seq}` shape already used for green coffee lots. It's
+// still only ever shown as human-readable text under the barcode — the
+// barcode itself now encodes this row's numeric id (see printLotBarcodeLabels).
+async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId) {
+    const { data: existingLots } = await fetchData('packed_coffee_lots');
+
+    if (productionLotId) {
+        const existing = (existingLots || []).find(l => l.packed_coffee_id === packedCoffeeId && l.production_lot_id === productionLotId);
+        if (existing) {
+            const newQtyPcs = (parseInt(existing.quantity_pcs) || 0) + qty;
+            const newRemaining = (parseInt(existing.remaining_pcs) || 0) + qty;
+            await saveData('packed_coffee_lots', { id: existing.id, quantity_pcs: newQtyPcs, remaining_pcs: newRemaining });
+            return { ...existing, quantity_pcs: newQtyPcs, remaining_pcs: newRemaining };
+        }
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const dateCompact = todayStr.slice(2).replace(/-/g, ''); // YYMMDD
+    const todaysCount = (existingLots || []).filter(l => l.packed_date === todayStr).length;
+    let seq = todaysCount + 1;
+    let lotCode = `PKL${packedCoffeeId}-${dateCompact}-${String(seq).padStart(2, '0')}`;
+    while ((existingLots || []).some(l => l.lot_code === lotCode)) {
+        seq++;
+        lotCode = `PKL${packedCoffeeId}-${dateCompact}-${String(seq).padStart(2, '0')}`;
+    }
+
+    const { data: newLot, error } = await saveData('packed_coffee_lots', {
         packed_coffee_id: packedCoffeeId,
-        roast_batch_id: roastBatchId,
-        lot_code: `PKL-${packedCoffeeId}-${Date.now()}`,
+        roast_batch_id: null,
+        lot_code: lotCode,
         quantity_pcs: qty,
         remaining_pcs: qty,
-        packed_date: new Date().toISOString().split('T')[0],
+        packed_date: todayStr,
         production_lot_id: productionLotId
     });
-    if (error) console.error('Failed to create packed_coffee_lots row:', error);
+    if (error) { console.error('Failed to create packed_coffee_lots row:', error); return null; }
+    return newLot;
+}
+
+// Shared by openPackBulkModal and openPrintBarcodeModal so either can run
+// first without creating two separate packed_coffee rows for the same
+// bulk+size — quantity starts at 0 either way; callers add to it themselves
+// (Pack adds the real count; Print Barcode never touches quantity, it's
+// just reserving/reusing the row's identity for the barcode).
+async function getOrCreatePackedCoffeeRow(bulk, gram) {
+    const { data: packedList } = await fetchData('packed_coffee');
+    const existing = (packedList || []).find(p =>
+        !p.roast_batch_id &&
+        p.custom_coffee_name === bulk.coffee_name &&
+        parseInt(p.bag_size_g) === parseInt(gram) &&
+        parseInt(p.machine_id) === parseInt(bulk.machine_id)
+    );
+    if (existing) return existing;
+    const { data: savedPacked, error } = await saveData('packed_coffee', {
+        roast_batch_id: null,
+        machine_id: bulk.machine_id,
+        custom_coffee_name: bulk.coffee_name,
+        bag_size_g: gram,
+        quantity: 0,
+        selling_price: 12.00
+    });
+    if (error) { console.error('Failed to create packed_coffee row:', error); return null; }
+    return savedPacked;
 }
 
 // Adjust Packed Coffee Stock level manually
@@ -2274,7 +2349,7 @@ async function loadPackedCoffeeSection() {
 
 // V2 1G-1: read-only drill-down of a coffee's packed stock by individual
 // lot (machine + size + packed date + remaining pcs) — the first visible
-// proof that packed_coffee_lots (populated by createPackedCoffeeLot on
+// proof that packed_coffee_lots (populated by getOrCreatePackedCoffeeLot on
 // every pack action) is actually tracking real per-lot stock, ahead of the
 // bigger FIFO-dispatch rework that will make it the source of truth.
 async function openPackedLotsModal(coffeeName) {
@@ -2644,7 +2719,7 @@ async function openCustomPackingModal() {
             }
             // V2 1G-1: no source bulk/production lot for a manual entry — link left null.
             if (packedCoffeeId) {
-                await createPackedCoffeeLot(packedCoffeeId, item.qty, null);
+                await getOrCreatePackedCoffeeLot(packedCoffeeId, item.qty, null);
             }
         }
 

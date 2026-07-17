@@ -363,11 +363,20 @@ async function openIntakeModal(editId = null) {
                 </div>
             </div>
             ${editId ? '' : `
-            <div class="form-group">
-                <label class="form-label">Lot Stickers to Print</label>
-                <input type="number" step="1" min="0" id="m-int-sticker-count" class="form-control" value="0" placeholder="How many sacks?">
-                <div style="font-size:0.78rem; color:var(--text-muted); margin-top:4px;">One barcode per machine is printed on each sticker — stick one on every sack. Leave 0 to skip printing now.</div>
+            <div class="form-row">
+                <div class="form-group flex-1">
+                    <label class="form-label">Lot Stickers to Print</label>
+                    <input type="number" step="1" min="0" id="m-int-sticker-count" class="form-control" value="0" placeholder="How many sacks?">
+                </div>
+                <div class="form-group flex-1">
+                    <label class="form-label">Sticker Size</label>
+                    <select id="m-int-sticker-size" class="form-control">
+                        <option value="besar">Besar — 5×15cm (all machines on one sticker)</option>
+                        <option value="kecil">Kecil — 5×2.5cm (one sticker per machine)</option>
+                    </select>
+                </div>
             </div>
+            <div style="font-size:0.78rem; color:var(--text-muted); margin-top:-4px; margin-bottom:12px;">One barcode per machine — stick whichever machine's sticker (Besar) or scan whichever sticker (Kecil) matches where that sack actually gets roasted. Leave count at 0 to skip printing now.</div>
             `}
 
             <div class="modal-footer-actions">
@@ -390,6 +399,7 @@ async function openIntakeModal(editId = null) {
     const waterActivityInput = document.getElementById('m-int-water-activity');
     const densityInput = document.getElementById('m-int-density');
     const stickerCountInput = document.getElementById('m-int-sticker-count');
+    const stickerSizeInput = document.getElementById('m-int-sticker-size');
 
     // Selecting an existing coffee locks identity to its row.id (no more
     // matching by typed name+code text) and refreshes the other fields from
@@ -429,6 +439,7 @@ async function openIntakeModal(editId = null) {
         const waterActivityRaw = waterActivityInput.value ? parseFloat(waterActivityInput.value) : null;
         const densityRaw = densityInput.value ? parseFloat(densityInput.value) : null;
         const stickerCount = stickerCountInput ? (parseInt(stickerCountInput.value) || 0) : 0;
+        const stickerSize = stickerSizeInput ? stickerSizeInput.value : 'besar';
 
         if (!coffeeSelectVal) return; // native `required` blocks this, but guard anyway
 
@@ -520,7 +531,11 @@ async function openIntakeModal(editId = null) {
                 // of this intake can find and adjust the same lot.
                 await saveData('green_coffee_intake', { id: savedIntake.id, green_coffee_lot_id: newLot.id });
                 if (stickerCount > 0) {
-                    await printGreenLotStickers(newLot, { code, name: targetName }, stickerCount);
+                    if (stickerSize === 'kecil') {
+                        await printGreenLotStickersKecil(newLot, { code, name: targetName }, stickerCount);
+                    } else {
+                        await printGreenLotStickersBesar(newLot, { code, name: targetName }, stickerCount);
+                    }
                 }
             }
         } else if (intakeItem && intakeItem.green_coffee_lot_id) {
@@ -598,13 +613,18 @@ async function adjustGreenCoffeeLotQuantity(lotId, deltaKg) {
     if (error) console.error('Failed to adjust green_coffee_lots row after intake edit:', error);
 }
 
-// V2 1A: prints `stickerCount` copies of the lot's sticker — one per sack —
-// each carrying the human-readable info (coffee code, arrival date, coffee
-// name) plus ONE BARCODE PER MACHINE, so whichever machine ends up roasting
-// that sack, the matching barcode on the sticker is the one to scan. Barcode
-// payload format `RMP:Lot:{green_coffee_lots.id}:{machineId}` is parsed by
-// the scan handler built in 1B.
-async function printGreenLotStickers(lot, coffee, stickerCount) {
+// V2 barcode label fix: green bean sacks always need ONE BARCODE PER
+// MACHINE per sack (whichever machine ends up roasting it, the matching
+// barcode is the one to scan — payload `RMP:Lot:{green_coffee_lots.id}:
+// {machineId}`, parsed by 1B's scan handler). Two physical sticker sizes:
+// "Besar" (5x15cm) fits every machine's barcode on ONE tall sticker per
+// sack; "Kecil" (5x2.5cm, same stock as packed-coffee labels) is too small
+// for that, so it prints one small sticker PER MACHINE per sack instead —
+// same fixed-size single-barcode style as packed coffee (buildFixedLabelDocument,
+// js/packing.js), so the two never drift apart again.
+
+// Besar — one 50x150mm sticker per sack, every machine's barcode stacked on it.
+async function printGreenLotStickersBesar(lot, coffee, stickerCount) {
     const { data: machines } = await fetchData('machines');
     if (!machines || machines.length === 0) {
         alert('No machines configured. Please add machines in Settings first.');
@@ -613,21 +633,18 @@ async function printGreenLotStickers(lot, coffee, stickerCount) {
 
     let labelsHtml = '';
     for (let i = 0; i < stickerCount; i++) {
-        let barcodesHtml = '';
-        machines.forEach(m => {
-            barcodesHtml += `
-                <div style="display:inline-block; text-align:center; margin: 2px 6px;">
-                    <svg class="green-lot-barcode-svg" data-value="RMP:Lot:${lot.id}:${m.id}"></svg>
-                    <div style="font-size:9px;">${m.name}</div>
-                </div>
-            `;
-        });
+        const rowsHtml = machines.map(m => `
+            <div class="green-machine-row">
+                <svg class="green-lot-barcode-svg" data-value="RMP:Lot:${lot.id}:${m.id}"></svg>
+                <div class="green-machine-name">${m.name}</div>
+            </div>
+        `).join('');
         labelsHtml += `
-            <div class="green-lot-sticker" style="display:inline-block; text-align:center; padding:10px; margin:6px; border:1px dashed #999; page-break-inside: avoid;">
-                <div style="font-weight:700; font-size:13px;">${coffee.code || coffee.name}</div>
-                <div style="font-size:12px;">${coffee.name}</div>
-                <div style="font-size:11px; color:#555;">${lot.arrival_date}</div>
-                <div style="margin-top:6px;">${barcodesHtml}</div>
+            <div class="green-lot-sticker">
+                <div class="green-header-code">${coffee.code || coffee.name}</div>
+                <div class="green-header-name">${coffee.name}</div>
+                <div class="green-header-date">${lot.arrival_date}</div>
+                ${rowsHtml}
             </div>
         `;
     }
@@ -638,21 +655,66 @@ async function printGreenLotStickers(lot, coffee, stickerCount) {
         return;
     }
     printWin.document.write(`
-        <html><head><title>Green Lot Stickers</title>
+        <html><head><title>Green Lot Stickers — Besar</title>
         <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
         <style>
-            body { font-family: Arial, sans-serif; margin: 0; padding: 10px; }
-            @media print { body { margin: 0; } }
+            @page { size: 50mm 150mm; margin: 2mm; }
+            body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+            .green-lot-sticker { width: 100%; box-sizing: border-box; text-align: center; page-break-after: always; }
+            .green-lot-sticker:last-child { page-break-after: auto; }
+            .green-header-code { font-size: 3.4mm; font-weight: 700; }
+            .green-header-name { font-size: 2.6mm; margin-top: 0.5mm; }
+            .green-header-date { font-size: 2.2mm; color: #555; margin-top: 0.5mm; margin-bottom: 2mm; }
+            /* Same fixed-mm-height barcode zone as the small/packed labels —
+               each machine row gets consistent, reliably-scannable bars
+               regardless of how many machines are configured. */
+            .green-machine-row { margin-bottom: 2.5mm; }
+            .green-lot-barcode-svg { max-width: 92%; height: 13mm; width: auto; display: block; margin: 0 auto; }
+            .green-machine-name { font-size: 2.6mm; font-weight: 700; margin-top: 0.6mm; }
         </style></head><body>
         ${labelsHtml}
         <script>
             document.querySelectorAll('.green-lot-barcode-svg').forEach(el => {
-                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 1.3, height: 35, displayValue: false, margin: 2 });
+                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 2.4, height: 60, displayValue: false, margin: 4 });
             });
             setTimeout(() => { window.print(); }, 500);
         <\/script>
         </body></html>
     `);
+    printWin.document.close();
+}
+
+// Kecil — one 50x25mm sticker PER MACHINE per sack (same physical size and
+// visual style as the packed-coffee label — buildFixedLabelDocument lives
+// in js/packing.js, loaded after this file but only called at click-time,
+// well after every script has loaded).
+async function printGreenLotStickersKecil(lot, coffee, stickerCount) {
+    const { data: machines } = await fetchData('machines');
+    if (!machines || machines.length === 0) {
+        alert('No machines configured. Please add machines in Settings first.');
+        return;
+    }
+
+    let labelsHtml = '';
+    for (let i = 0; i < stickerCount; i++) {
+        machines.forEach(m => {
+            labelsHtml += `
+                <div class="barcode-label-item">
+                    <svg class="lot-barcode-svg" data-value="RMP:Lot:${lot.id}:${m.id}" data-display="${coffee.code || coffee.name}"></svg>
+                    <div class="lbl-coffee">${coffee.name}</div>
+                    <div class="lbl-size">${m.name}</div>
+                    <div class="lbl-dates">${lot.arrival_date}</div>
+                </div>
+            `;
+        });
+    }
+
+    const printWin = window.open('', '_blank', 'width=900,height=700');
+    if (!printWin) {
+        alert('Could not open the print window — please allow pop-ups for this site and try again.');
+        return;
+    }
+    printWin.document.write(buildFixedLabelDocument(labelsHtml, true));
     printWin.document.close();
 }
 

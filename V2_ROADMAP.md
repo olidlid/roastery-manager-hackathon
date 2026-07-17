@@ -161,10 +161,12 @@ Implementation decisions (no further input needed) + small items to settle at bu
 - **Post-blend explode rounding:** `percentage × target` is rounded; any rounding remainder folds into the last component.
 - **Minor / at build:** carton pack-count config location (Settings → packaging sizes); editing/deleting a green intake whose lot is already partly consumed; permission for creating custom/recipe post-blends (reuse existing blend permissions).
 
-#### 1H. Decide later
-- [ ] Whether `production_lots` and `packed_coffee_lots` should eventually merge/relate (both represent "a lot of packed goods", built for different purposes — traceability vs FIFO) or stay separate.
+#### 1H. `production_lots` vs `packed_coffee_lots` (resolved 2026-07-17) — stay separate
+- [x] **Decision: stay separate, not merged.** The relationship is genuinely one-to-many, not one-to-one: one `production_lots` row (a day's bulk roasted output) can be packed across several `packed_coffee_lots` rows (different sizes, different packing sessions, different days) — linked via the existing nullable `packed_coffee_lots.production_lot_id` FK. Merging would either duplicate the production-lot data across every packed row or force both concepts to one granularity, hurting whichever side lost precision.
+- [x] Confirmed in practice via 1I (Post-Blend): custom post-blend (1I-a) reads straight from `packed_coffee_lots` with zero need to touch `production_lots` (its sources are existing packed/bulk stock, not a fresh roast); keeping them separate kept that branch simple.
+- [x] The "easy full-chain traceability" motivation for merging is already achieved without merging — the Tracking resolver recursively walks `packed_coffee_lots.production_lot_id → production_lots → roast batches/green lots` (and the 1I nested post-blend chain) without needing one unified table.
 
-**Done so far:** ✅ barcode/lot-code generation + print + traceability lookup (`production_lots`, Ready to Pack tab, Tracking page) — 2026-07-12.
+**Done so far:** ✅ barcode/lot-code generation + print + traceability lookup (`production_lots`, Ready to Pack tab, Tracking page) — 2026-07-12. ✅ Decision resolved 2026-07-17 — no schema change needed.
 **Dependency:** none blocking — can start independently of Phase 2.
 
 ### Phase 2 — AI: Forecasting + Reports Insights
