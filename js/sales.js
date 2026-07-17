@@ -247,7 +247,10 @@ async function viewCustomerHistory(customerId) {
         return r ? `${r.name} (Blend)` : 'Blend Recipe';
     }
 
-    const custOrders = (orders || []).filter(o => o.customer_id === customerId);
+    // V2 1J: row-level filter — a sales_request_view_own-only role sees just
+    // its own orders in this customer's history too (see filterOwnOrders in
+    // js/auth.js; scope = every place orders appear, per the roadmap).
+    const custOrders = filterOwnOrders(orders).filter(o => o.customer_id === customerId);
 
     let historyHtml = '';
     if (custOrders.length === 0) {
@@ -433,12 +436,16 @@ async function loadSalesDispatchRequestsTable() {
     if (!tbody) return;
     tbody.innerHTML = '';
 
-    if (!orders || orders.length === 0) {
+    // V2 1J: row-level filter — a sales_request_view_own-only role sees just
+    // its own orders (see filterOwnOrders in js/auth.js).
+    const visibleOrders = filterOwnOrders(orders);
+
+    if (!visibleOrders || visibleOrders.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">${window.t ? window.t("msg_no_orders") : "No orders found."}</td></tr>`;
         return;
     }
 
-    let sortedOrders = [...orders]
+    let sortedOrders = [...visibleOrders]
         .sort((a, b) => new Date(b.order_date) - new Date(a.order_date) || b.id - a.id);
 
     // Search across order number, sales agent, customer, and item coffee names

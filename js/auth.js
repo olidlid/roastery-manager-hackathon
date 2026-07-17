@@ -136,7 +136,7 @@ const SECTION_PERMISSIONS = {
     'sec-roasting': 'roasting_view',
     'sec-packing': 'packing_view',
     'sec-customers': ['customer_view'],
-    'sec-handover': ['sales_request_view', 'dispatch_approval_view'],
+    'sec-handover': ['sales_request_view', 'sales_request_view_own', 'dispatch_approval_view'],
     'sec-reports': 'reports_view',
     // 'dashboard' is included so the section stays reachable for every role
     // (every default/custom role has it) even with none of the settings_*
@@ -208,6 +208,24 @@ function hasPermission(key) {
     const role = roles.find(r => r.name === roleName);
     if (!role) return true; // if role not found, default allow (for backward compat)
     return roleHasPermission(role, key);
+}
+
+// V2 1J: the first permission in this codebase that filters DATA, not just
+// UI visibility. A role with the full sales_request_view sees every order;
+// a role with only sales_request_view_own sees just the ones IT created;
+// neither key → none. "Own" = name match on order.sales_name, which is
+// filled from currentUser.name at order-creation time (see the hidden
+// #m-req-sales field in js/sales.js) — accepted fragility: two users
+// sharing a name would see each other's orders, and renaming a user
+// detaches their past orders. Applied everywhere orders are listed: Sales
+// Dispatch Request, Sales/Customer Reports, Customer Order History.
+function filterOwnOrders(orders) {
+    if (hasPermission('sales_request_view')) return orders || [];
+    if (hasPermission('sales_request_view_own')) {
+        const myName = currentUser ? currentUser.name : null;
+        return (orders || []).filter(o => o.sales_name === myName);
+    }
+    return [];
 }
 
 function getFirstAllowedSection() {

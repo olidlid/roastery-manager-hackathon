@@ -147,7 +147,7 @@ const MOCK_DB = {
                 blend_view: true, blend_add: true, blend_edit: true, blend_delete: true,
                 production_potential_view: true,
                 packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true, packing_dispatch_checkout: true,
-                sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
+                sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
                 reports_view: true, reports_stockopname_view: true,
@@ -168,7 +168,7 @@ const MOCK_DB = {
                 blend_view: true, blend_add: true, blend_edit: true, blend_delete: true,
                 production_potential_view: true,
                 packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true, packing_dispatch_checkout: true,
-                sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
+                sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
                 reports_view: true, reports_stockopname_view: true,
@@ -189,7 +189,7 @@ const MOCK_DB = {
                 blend_view: true, blend_add: true, blend_edit: true, blend_delete: true,
                 production_potential_view: true,
                 packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true, packing_dispatch_checkout: true,
-                sales_request_view: true, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
+                sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: true, reports_stockopname_view: true,
@@ -210,7 +210,7 @@ const MOCK_DB = {
                 blend_view: true, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: true,
                 packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false, packing_dispatch_checkout: false,
-                sales_request_view: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
+                sales_request_view: false, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: false, reports_stockopname_view: false,
@@ -231,7 +231,7 @@ const MOCK_DB = {
                 blend_view: false, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: false,
                 packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true, packing_dispatch_checkout: true,
-                sales_request_view: true, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
+                sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
                 reports_view: false, reports_stockopname_view: false,
@@ -252,7 +252,7 @@ const MOCK_DB = {
                 blend_view: false, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: false,
                 packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false, packing_dispatch_checkout: false,
-                sales_request_view: true, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
+                sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: false,
                 reports_view: true, reports_stockopname_view: true,
@@ -2725,8 +2725,12 @@ async function loadSalesReport(startDate, endDate) {
         fetchData('machines')
     ]);
 
+    // V2 1J: row-level filter — a sales_request_view_own-only role sees just
+    // its own orders in this report (see filterOwnOrders in js/auth.js).
+    const ownVisibleOrders = filterOwnOrders(orders);
+
     // Filter orders that are dispatched within date range
-    const filteredOrders = (orders || []).filter(o => {
+    const filteredOrders = ownVisibleOrders.filter(o => {
         if (o.status !== 'Dispatched' && o.status !== 'Completed') return false;
         const d = o.order_date || o.created_at?.split('T')[0];
         if (!d) return true;
@@ -2923,12 +2927,16 @@ async function loadCustomerReport(startDate, endDate) {
         return true;
     };
 
+    // V2 1J: row-level filter — a sales_request_view_own-only role sees just
+    // its own orders in this report (see filterOwnOrders in js/auth.js).
+    const ownVisibleOrders = filterOwnOrders(orders);
+
     // Only count orders that actually shipped — mirrors Sales Dispatch report's
     // definition of "volume" (Pending/Cancelled orders never left the warehouse).
-    const filteredOrders = (orders || []).filter(o => (o.status === 'Dispatched' || o.status === 'Completed') && inDateRange(o));
+    const filteredOrders = ownVisibleOrders.filter(o => (o.status === 'Dispatched' || o.status === 'Completed') && inDateRange(o));
 
     // All orders in range regardless of status — used for the status-breakdown table below.
-    const allOrdersInRange = (orders || []).filter(inDateRange);
+    const allOrdersInRange = ownVisibleOrders.filter(inDateRange);
 
     // stats[customerId] = { orders: Set<orderId>, bags, kg }
     const stats = {};

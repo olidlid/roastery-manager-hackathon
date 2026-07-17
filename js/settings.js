@@ -363,6 +363,7 @@ const PERMISSION_GROUPS = [
     ]},
     { label: '🚚 Sales — Dispatch Request', keys: [
         { key: 'sales_request_view', label: 'View' },
+        { key: 'sales_request_view_own', label: 'View (Own Orders Only)' },
         { key: 'sales_request_create', label: 'Create Order' },
         { key: 'sales_request_edit', label: 'Edit Order' },
         { key: 'sales_request_delete', label: 'Delete Order' },
