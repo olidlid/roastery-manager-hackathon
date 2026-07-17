@@ -115,6 +115,8 @@ window.translations = {
         
         // Blend Recipes (Tab 3)
         recipes_title: "Coffee Blend Recipes",
+        recipes_filter_pre: "Pre-Blend",
+        recipes_filter_post: "Post-Blend",
         btn_add_recipe: "Add Blend Recipe",
         col_recipe_name: "Recipe Name",
         col_machine: "Target Machine",
@@ -173,6 +175,7 @@ window.translations = {
         ready_to_pack_hint: "Bulk roasted coffee available for printing labels and packing.",
         ready_to_pack_empty: "No bulk roasted coffee available for packing right now.",
         btn_manual_add_stock: "Add Manual Packed Stock",
+        btn_create_post_blend: "Create Post-Blend",
         btn_print_barcode: "Print Barcode",
         btn_pack: "Pack",
         msg_warn_exceed: "⚠️ Warning: Total planned packaging ({totalNeeded} kg) exceeds available bulk stock ({avail} kg). Execution is still permitted.",
@@ -626,6 +629,8 @@ window.translations = {
         
         // Blend Recipes (Tab 3)
         recipes_title: "وصفات خلطات القهوة",
+        recipes_filter_pre: "خلطة قبل التحميص",
+        recipes_filter_post: "خلطة بعد التحميص",
         btn_add_recipe: "إضافة وصفة خلطة",
         col_recipe_name: "اسم الوصفة",
         col_machine: "الآلة المستهدفة",
@@ -684,6 +689,7 @@ window.translations = {
         ready_to_pack_hint: "القهوة المحمصة السائبة المتاحة لطباعة الملصقات والتعبئة.",
         ready_to_pack_empty: "لا توجد قهوة محمصة سائبة متاحة للتعبئة الآن.",
         btn_manual_add_stock: "إضافة مخزون معبأ يدويًا",
+        btn_create_post_blend: "إنشاء خلطة بعد التحميص",
         btn_print_barcode: "طباعة الباركود",
         btn_pack: "تعبئة",
         msg_warn_exceed: "⚠️ تحذير: إجمالي التعبئة المخطط لها ({totalNeeded} كجم) يتجاوز مخزون القهوة السائبة المتاح ({avail} كجم). لا يزال يُسمح بالتنفيذ.",

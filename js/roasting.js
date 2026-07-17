@@ -527,9 +527,23 @@ async function openLowComponentModal(recipeId) {
 }
 
 // --- TAB 3: Blend Recipes ---
+// V2 1I-b: Pre-Blend (green coffee blended before roasting, the original
+// recipe kind) vs Post-Blend (already-roasted singles auto-exploded into a
+// per-origin roasting plan then reassembled — see openRoastPlanModal). Same
+// blend_recipes/blend_ingredients data model, just a is_post_blend flag.
+let _recipeFilterType = 'pre';
+
+function filterRecipes(type) {
+    _recipeFilterType = type;
+    document.querySelectorAll('.recipe-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-filter') === type);
+    });
+    loadBlendRecipes();
+}
+
 async function loadBlendRecipes() {
     const [
-        { data: recipes },
+        { data: allRecipes },
         { data: ingredients },
         { data: greenbeans },
         { data: machines }
@@ -540,11 +554,14 @@ async function loadBlendRecipes() {
         fetchData('machines')
     ]);
 
+    const recipes = (allRecipes || []).filter(r => !!r.is_post_blend === (_recipeFilterType === 'post'));
+
     const tbody = document.getElementById('recipe-table-body');
     tbody.innerHTML = '';
 
     if (recipes.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-center-muted">No custom blend recipes configured.</td></tr>`;
+        const emptyMsg = _recipeFilterType === 'post' ? 'No post-blend recipes configured.' : 'No custom blend recipes configured.';
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center-muted">${emptyMsg}</td></tr>`;
         return;
     }
 
@@ -734,6 +751,13 @@ async function openRecipeModal(id = null) {
                 </div>
             </div>
 
+            <div class="form-group" style="margin-top: 4px;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:500;">
+                    <input type="checkbox" id="m-rec-post-blend" ${(id ? recipe.is_post_blend : _recipeFilterType === 'post') ? 'checked' : ''}>
+                    Post-Blend (mix already-roasted singles, instead of roasting the greens together)
+                </label>
+            </div>
+
             <div class="form-group" style="margin-top: 10px;">
                 <label class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
                     <span>Recipe Components (Greenbean Mix)</span>
@@ -862,6 +886,7 @@ async function openRecipeModal(id = null) {
             name: document.getElementById('m-rec-name').value,
             machine_id: null,
             batch_size_g: 0,
+            is_post_blend: document.getElementById('m-rec-post-blend').checked,
             description: document.getElementById('m-rec-desc').value
         };
 
@@ -907,7 +932,9 @@ async function openRecipeModal(id = null) {
         }
 
         modalContainer.classList.add('hidden');
-        loadBlendRecipes();
+        // Keep the saved recipe visible even if it just switched Pre/Post
+        // (e.g. checked "Post-Blend" while the Pre-Blend sub-tab was active).
+        filterRecipes(recipeRecord.is_post_blend ? 'post' : 'pre');
     });
 }
 
@@ -951,9 +978,27 @@ async function loadRoastingPlans() {
         return;
     }
 
-    const sortedPlans = [...plans].sort((a, b) => new Date(b.plan_date) - new Date(a.plan_date) || b.id - a.id);
+    // V2 1I-b: incomplete plans always sit above complete ones (newest first
+    // within each group) — so a plan doesn't get buried under a completed
+    // one just because the completed one happens to be more recent. Only
+    // top-level plans are sorted this way; a post-blend parent's sub-plans
+    // render immediately under it regardless of their own dates.
+    const topLevelPlans = (plans || []).filter(p => !p.parent_plan_id);
+    const sortedPlans = [...topLevelPlans].sort((a, b) => {
+        const aDone = a.status === 'Completed' ? 1 : 0;
+        const bDone = b.status === 'Completed' ? 1 : 0;
+        if (aDone !== bDone) return aDone - bDone;
+        return new Date(b.plan_date) - new Date(a.plan_date) || b.id - a.id;
+    });
 
-    sortedPlans.forEach(plan => {
+    const statusBadgeStyle = (status) =>
+        status === 'Completed' ? 'background: rgba(16,185,129,0.15); color: var(--success);' :
+        status === 'Stopped' ? 'background: rgba(107,114,128,0.15); color: var(--text-muted);' :
+        status === 'In Progress' ? 'background: rgba(245,158,11,0.15); color: var(--warning);' :
+        status === 'On Process' ? 'background: rgba(59,130,246,0.15); color: #3b82f6;' :
+        'background: rgba(255,255,255,0.05); color: var(--text-muted);';
+
+    function buildPlanRow(plan, { isSubPlan = false, blendBadgeName = null } = {}) {
         let coffeeName = '';
         if (plan.coffee_type === 'Single') {
             const gb = greenbeans.find(g => g.id === plan.single_coffee_id);
@@ -972,21 +1017,29 @@ async function loadRoastingPlans() {
         // up raw in the Fulfilled column.
         const targetKg = parseFloat(parseFloat(plan.target_roasted_kg || 0).toFixed(2));
         const fulfilledKg = parseFloat(parseFloat(plan.fulfilled_roasted_kg || 0).toFixed(2));
-        if (fulfilledKg >= targetKg && targetKg > 0) {
+        if (fulfilledKg >= targetKg && targetKg > 0 && plan.status !== 'Stopped') {
             if (plan.status !== 'Completed') {
                 plan.status = 'Completed';
                 saveData('roasting_plans', plan);
                 syncPlanStatusToOrderItem(plan);
+                if (isSubPlan) tryAssemblePostBlend(plan.parent_plan_id);
             }
         }
 
         const pct = targetKg > 0 ? (fulfilledKg / targetKg) * 100 : 0;
         const displayPct = Math.min(100, pct);
 
+        const badgesHtml = blendBadgeName
+            ? `<span style="font-size:0.62rem; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; color:var(--primary); background:var(--primary-glow); border-radius:4px; padding:1px 6px; margin-right:6px; vertical-align:middle;">Post-Blend</span>${isSubPlan ? `<span style="font-size:0.7rem; color:var(--text-muted);">${blendBadgeName} —</span> ` : ''}`
+            : '';
+
+        const canStop = isSubPlan && plan.status !== 'Completed' && plan.status !== 'Stopped';
+
         const tr = document.createElement('tr');
+        if (isSubPlan) tr.style.background = 'rgba(255,255,255,0.015)';
         tr.innerHTML = `
-            <td>${plan.plan_date}${plan.order_ref ? `<br/><span style="font-size:0.68rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:1px 6px; border-radius:4px; display:inline-block; margin-top:2px;">${plan.order_ref}</span>` : ''}</td>
-            <td><strong>${coffeeName}</strong></td>
+            <td>${isSubPlan ? '<span style="color:var(--text-muted); padding-left:16px;">↳</span> ' : ''}${plan.plan_date}${plan.order_ref ? `<br/><span style="font-size:0.68rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:1px 6px; border-radius:4px; display:inline-block; margin-top:2px;">${plan.order_ref}</span>` : ''}</td>
+            <td>${badgesHtml}<strong>${coffeeName}</strong></td>
             <td>${machineName}</td>
             <td>${targetKg} kg</td>
             <td>${fulfilledKg} kg</td>
@@ -998,18 +1051,46 @@ async function loadRoastingPlans() {
                     <span style="font-size:0.75rem; font-weight:bold; width:35px; text-align:right;">${displayPct.toFixed(0)}%</span>
                 </div>
             </td>
-            <td><span style="font-size:0.75rem; padding: 2px 8px; border-radius: 9999px; font-weight:700; ${
-                plan.status === 'Completed' ? 'background: rgba(16,185,129,0.15); color: var(--success);' :
-                plan.status === 'In Progress' ? 'background: rgba(245,158,11,0.15); color: var(--warning);' :
-                plan.status === 'On Process' ? 'background: rgba(59,130,246,0.15); color: #3b82f6;' :
-                'background: rgba(255,255,255,0.05); color: var(--text-muted);'
-            }">${plan.status}</span></td>
+            <td><span style="font-size:0.75rem; padding: 2px 8px; border-radius: 9999px; font-weight:700; ${statusBadgeStyle(plan.status)}">${plan.status}</span></td>
             <td>
-                ${hasPermission('roasting_plan_edit') ? `<button class="btn btn-secondary btn-sm btn-edit-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>` : ''}
-                ${hasPermission('roasting_plan_delete') ? `<button class="btn btn-danger btn-sm btn-delete-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
+                <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                    ${canStop ? `<button class="btn btn-secondary btn-sm btn-stop-subplan" data-id="${plan.id}" title="Stop this component">Stop</button>` : ''}
+                    ${!isSubPlan && hasPermission('roasting_plan_edit') ? `<button class="btn btn-secondary btn-sm btn-edit-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>` : ''}
+                    ${!isSubPlan && hasPermission('roasting_plan_delete') ? `<button class="btn btn-danger btn-sm btn-delete-plan" data-id="${plan.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
+                </div>
             </td>
         `;
+        return tr;
+    }
+
+    sortedPlans.forEach(plan => {
+        const isPostBlendParent = plan.coffee_type === 'Blend' && !!plan.blend_recipe_id &&
+            (plans || []).some(p => p.parent_plan_id === plan.id);
+        const recipeForBadge = isPostBlendParent ? recipes.find(r => r.id === plan.blend_recipe_id) : null;
+
+        const tr = buildPlanRow(plan, { isSubPlan: false, blendBadgeName: isPostBlendParent ? (recipeForBadge ? recipeForBadge.name : 'Post-Blend') : null });
+
+        if (isPostBlendParent && plan.status !== 'Completed') {
+            const actionsCell = tr.querySelector('td:last-child > div');
+            if (actionsCell) {
+                const finalizeBtn = document.createElement('button');
+                finalizeBtn.className = 'btn btn-secondary btn-sm btn-finalize-postblend';
+                finalizeBtn.setAttribute('data-id', plan.id);
+                finalizeBtn.title = 'Finalize now, even if some components are still short';
+                finalizeBtn.textContent = 'Finalize Now';
+                actionsCell.prepend(finalizeBtn);
+            }
+        }
         tbody.appendChild(tr);
+
+        if (isPostBlendParent) {
+            const children = (plans || [])
+                .filter(p => p.parent_plan_id === plan.id)
+                .sort((a, b) => a.id - b.id);
+            children.forEach(child => {
+                tbody.appendChild(buildPlanRow(child, { isSubPlan: true, blendBadgeName: recipeForBadge ? recipeForBadge.name : 'Post-Blend' }));
+            });
+        }
     });
 
     document.querySelectorAll('.btn-edit-plan').forEach(btn => {
@@ -1017,6 +1098,12 @@ async function loadRoastingPlans() {
     });
     document.querySelectorAll('.btn-delete-plan').forEach(btn => {
         btn.addEventListener('click', () => deletePlan(parseInt(btn.getAttribute('data-id'))));
+    });
+    document.querySelectorAll('.btn-stop-subplan').forEach(btn => {
+        btn.addEventListener('click', () => stopPostBlendComponent(parseInt(btn.getAttribute('data-id'))));
+    });
+    document.querySelectorAll('.btn-finalize-postblend').forEach(btn => {
+        btn.addEventListener('click', () => finalizePostBlendNow(parseInt(btn.getAttribute('data-id'))));
     });
     applyFiltersForTable(document.querySelector('#tab-roast-plans table'));
 }
@@ -1217,6 +1304,11 @@ document.getElementById('btn-add-plan').addEventListener('click', () => {
 if (document.getElementById('btn-custom-packing')) {
     document.getElementById('btn-custom-packing').addEventListener('click', () => {
         openCustomPackingModal();
+    });
+}
+if (document.getElementById('btn-create-post-blend')) {
+    document.getElementById('btn-create-post-blend').addEventListener('click', () => {
+        openCustomPostBlendModal();
     });
 }
 
@@ -1508,6 +1600,50 @@ async function openRoastPlanModal(editId = null) {
         });
     }
 
+    // V2 1I-b: when a row's selected coffee is a post-blend recipe, render a
+    // per-component machine picker below it — each blend_ingredients row
+    // becomes its own single-origin sub-plan on submit (see the explode
+    // block further down), and each needs its own machine assignment
+    // (roadmap decision: "user assigns a machine per component").
+    function renderPostBlendComponents(row) {
+        const panel = row.querySelector('.post-blend-components');
+        const select = row.querySelector('.plan-coffee-select');
+        const targetInput = row.querySelector('.plan-target-weight');
+        if (!panel) return;
+
+        const selectVal = select.value;
+        const [type, idStr] = (selectVal || '').split('-');
+        const recipeId = parseInt(idStr);
+        const recipe = type === 'Blend' ? (recipes || []).find(r => r.id === recipeId) : null;
+
+        if (!recipe || !recipe.is_post_blend) {
+            panel.innerHTML = '';
+            panel.classList.add('hidden');
+            return;
+        }
+
+        const recipeIngs = (ingredients || []).filter(ing => ing.blend_recipe_id === recipeId);
+        const targetKg = parseFloat(targetInput.value) || 0;
+
+        panel.classList.remove('hidden');
+        panel.innerHTML = `
+            <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--primary); margin-bottom: 6px;">Post-Blend — assign a machine per component</div>
+            ${recipeIngs.map(ing => {
+                const gb = greenbeans.find(g => g.id === ing.green_coffee_id);
+                const compTarget = (targetKg * parseFloat(ing.percentage) / 100).toFixed(2);
+                return `
+                    <div style="display:flex; align-items:center; gap:10px; padding:4px 0;">
+                        <div style="flex:1; font-size:0.8rem;">${gb ? gb.name : 'Unknown'} <span style="color:var(--text-muted);">(${ing.percentage}% · ${compTarget}kg)</span></div>
+                        <select class="form-control post-blend-comp-machine" data-green-coffee-id="${ing.green_coffee_id}" data-percentage="${ing.percentage}" style="max-width:180px; height:32px; font-size:0.8rem;" required>
+                            <option value="" disabled selected>-- Machine --</option>
+                            ${machOpts}
+                        </select>
+                    </div>
+                `;
+            }).join('') || '<div style="font-size:0.8rem; color:var(--text-muted);">This recipe has no components configured.</div>'}
+        `;
+    }
+
     // Helper: bind row events
     function bindRowEvents(row) {
         const select = row.querySelector('.plan-coffee-select');
@@ -1516,10 +1652,12 @@ async function openRoastPlanModal(editId = null) {
 
         select.addEventListener('change', () => {
             updateAllRowsStockDisplays();
+            renderPostBlendComponents(row);
         });
 
         targetInput.addEventListener('input', () => {
             updateAllRowsStockDisplays();
+            renderPostBlendComponents(row);
         });
 
 
@@ -1540,40 +1678,43 @@ async function openRoastPlanModal(editId = null) {
     function addCoffeeRow(selectedVal = '', targetVal = '') {
         const row = document.createElement('div');
         row.className = 'coffee-plan-row';
-        row.style = 'display: flex; gap: 12px; align-items: flex-end; margin-bottom: 20px;';
+        row.style = 'display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;';
 
         row.innerHTML = `
-            <div class="form-group" style="flex: 2; margin-bottom: 0;">
-                <label class="form-label">Select Coffee</label>
-                <select class="form-control plan-coffee-select" required>
-                    <option value="" disabled ${selectedVal ? '' : 'selected'}>-- Select Coffee --</option>
-                    <optgroup label="Single Origin">
-                        ${gbOpts}
-                    </optgroup>
-                    <optgroup label="Blend Recipes">
-                        ${recOpts}
-                    </optgroup>
-                </select>
-            </div>
-            <div class="form-group flex-1-mb-0" >
-                <label class="form-label">Available Stock (kg)</label>
-                <input type="text" class="form-control plan-avail-stock" value="0.0" readonly>
-            </div>
-            <div class="form-group flex-1-mb-0" >
-                <label class="form-label">Potential Prod (kg)</label>
-                <input type="text" class="form-control plan-potential-prod" value="0.0" readonly>
-            </div>
-            <div class="form-group" style="flex: 1.2; margin-bottom: 0; position: relative;">
-                <label class="form-label">Target Weight (kg)</label>
-                <input type="number" step="0.1" class="form-control plan-target-weight" value="${targetVal}" placeholder="e.g. 10.0" required>
-                <div class="plan-target-warn" style="display:none; position: absolute; bottom: -28px; left: 0; background: #e11d48; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; z-index: 10; white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);">
-                    ⚠️ Exceeds Stock!
-                    <div style="position: absolute; top: -4px; left: 10px; width: 8px; height: 8px; background: #e11d48; transform: rotate(45deg);"></div>
+            <div style="display: flex; gap: 12px; align-items: flex-end;">
+                <div class="form-group" style="flex: 2; margin-bottom: 0;">
+                    <label class="form-label">Select Coffee</label>
+                    <select class="form-control plan-coffee-select" required>
+                        <option value="" disabled ${selectedVal ? '' : 'selected'}>-- Select Coffee --</option>
+                        <optgroup label="Single Origin">
+                            ${gbOpts}
+                        </optgroup>
+                        <optgroup label="Blend Recipes">
+                            ${recOpts}
+                        </optgroup>
+                    </select>
                 </div>
+                <div class="form-group flex-1-mb-0" >
+                    <label class="form-label">Available Stock (kg)</label>
+                    <input type="text" class="form-control plan-avail-stock" value="0.0" readonly>
+                </div>
+                <div class="form-group flex-1-mb-0" >
+                    <label class="form-label">Potential Prod (kg)</label>
+                    <input type="text" class="form-control plan-potential-prod" value="0.0" readonly>
+                </div>
+                <div class="form-group" style="flex: 1.2; margin-bottom: 0; position: relative;">
+                    <label class="form-label">Target Weight (kg)</label>
+                    <input type="number" step="0.1" class="form-control plan-target-weight" value="${targetVal}" placeholder="e.g. 10.0" required>
+                    <div class="plan-target-warn" style="display:none; position: absolute; bottom: -28px; left: 0; background: #e11d48; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; z-index: 10; white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);">
+                        ⚠️ Exceeds Stock!
+                        <div style="position: absolute; top: -4px; left: 10px; width: 8px; height: 8px; background: #e11d48; transform: rotate(45deg);"></div>
+                    </div>
+                </div>
+                ${editId ? '' : `
+                <button type="button" class="btn btn-danger btn-remove-coffee-row" style="margin-bottom:0; padding: 10px 14px; height: 38px;">&times;</button>
+                `}
             </div>
-            ${editId ? '' : `
-            <button type="button" class="btn btn-danger btn-remove-coffee-row" style="margin-bottom:0; padding: 10px 14px; height: 38px;">&times;</button>
-            `}
+            <div class="post-blend-components hidden" style="background: var(--bg-app); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;"></div>
         `;
 
         plansList.appendChild(row);
@@ -1581,6 +1722,7 @@ async function openRoastPlanModal(editId = null) {
 
         if (selectedVal) {
             row.querySelector('.plan-coffee-select').value = selectedVal;
+            renderPostBlendComponents(row);
         }
     }
 
@@ -1694,6 +1836,51 @@ async function openRoastPlanModal(editId = null) {
                 const targetWeight = parseFloat(r.querySelector('.plan-target-weight').value);
                 const [type, idStr] = selectVal.split('-');
                 const id = parseInt(idStr);
+                const recipe = type === 'Blend' ? (recipes || []).find(rec => rec.id === id) : null;
+
+                if (recipe && recipe.is_post_blend) {
+                    // V2 1I-b: explode into one parent (bookkeeping only, never
+                    // itself roasted) + one single-origin sub-plan per
+                    // blend_ingredients component, each sized
+                    // target * percentage and carrying its own machine.
+                    const { data: parent, error: parentErr } = await saveData('roasting_plans', {
+                        day: new Date(planDate).toLocaleDateString('en-US', { weekday: 'long' }),
+                        plan_date: planDate,
+                        machine_id: null,
+                        coffee_type: 'Blend',
+                        single_coffee_id: null,
+                        blend_recipe_id: id,
+                        target_roasted_kg: targetWeight,
+                        fulfilled_roasted_kg: 0.0,
+                        status: 'Pending',
+                        is_post_blend_component: false
+                    });
+                    if (parentErr || !parent) {
+                        await showWarningModal('Failed to create the post-blend plan. Please try again.', false);
+                        continue;
+                    }
+
+                    const compMachineSelects = r.querySelectorAll('.post-blend-comp-machine');
+                    for (const compSel of compMachineSelects) {
+                        const gbId = parseInt(compSel.getAttribute('data-green-coffee-id'));
+                        const pct = parseFloat(compSel.getAttribute('data-percentage')) || 0;
+                        const compMachineId = parseInt(compSel.value) || null;
+                        await saveData('roasting_plans', {
+                            day: new Date(planDate).toLocaleDateString('en-US', { weekday: 'long' }),
+                            plan_date: planDate,
+                            machine_id: compMachineId,
+                            coffee_type: 'Single',
+                            single_coffee_id: gbId,
+                            blend_recipe_id: null,
+                            target_roasted_kg: targetWeight * pct / 100,
+                            fulfilled_roasted_kg: 0.0,
+                            status: 'Pending',
+                            parent_plan_id: parent.id,
+                            is_post_blend_component: true
+                        });
+                    }
+                    continue;
+                }
 
                 const record = {
                     day: new Date(planDate).toLocaleDateString('en-US', { weekday: 'long' }),
@@ -1800,6 +1987,131 @@ async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, 
         };
         await saveData('bulk_roasted_coffee', newBulk);
     }
+}
+
+// V2 1I-b: after a post-blend sub-plan changes status, check whether ALL of
+// its siblings (same parent_plan_id) are now terminal (Completed or
+// Stopped). Does nothing while any sibling is still open — the blend only
+// assembles once every component has either hit its target or been
+// deliberately stopped short (see finalizePostBlendPlan for the scale-down
+// math).
+async function tryAssemblePostBlend(parentPlanId) {
+    if (!parentPlanId) return;
+    const { data: allPlans } = await fetchData('roasting_plans');
+    const parent = (allPlans || []).find(p => p.id === parentPlanId);
+    if (!parent || parent.status === 'Completed') return;
+
+    const siblings = (allPlans || []).filter(p => p.parent_plan_id === parentPlanId);
+    if (siblings.length === 0) return;
+
+    const allTerminal = siblings.every(s => s.status === 'Completed' || s.status === 'Stopped');
+    if (!allTerminal) return;
+
+    await finalizePostBlendPlan(parentPlanId);
+}
+
+// V2 1I-b: assembles the post-blend bulk_roasted_coffee row from a parent
+// plan's terminal sub-plans. Happy path (every sibling met its own target)
+// assembles at the full recipe ratio (scale=1). Under-yield (any sibling
+// Stopped short) scales the WHOLE blend down by s = min(fulfilled/target)
+// across siblings — the confirmed roadmap decision — so the mix ratio is
+// preserved even though the total shrinks. Each component's shortfall
+// beyond its scaled share (fulfilled - s*target) spills into its own
+// normal single-origin bulk_roasted_coffee card instead of being wasted —
+// same idea as recipe over-yield.
+async function finalizePostBlendPlan(parentPlanId) {
+    const [{ data: allPlans }, { data: recipes }, { data: greenbeans }] = await Promise.all([
+        fetchData('roasting_plans'),
+        fetchData('blend_recipes'),
+        fetchData('green_coffee')
+    ]);
+    const parent = (allPlans || []).find(p => p.id === parentPlanId);
+    if (!parent || parent.status === 'Completed') return;
+    const siblings = (allPlans || []).filter(p => p.parent_plan_id === parentPlanId);
+    if (siblings.length === 0) return;
+
+    const scale = Math.min(1, ...siblings.map(s => {
+        const target = parseFloat(s.target_roasted_kg) || 0;
+        const fulfilled = parseFloat(s.fulfilled_roasted_kg) || 0;
+        return target > 0 ? fulfilled / target : 1;
+    }));
+
+    const recipe = (recipes || []).find(r => r.id === parent.blend_recipe_id);
+    const blendName = recipe ? recipe.name : 'Post-Blend';
+
+    let assembledKg = 0;
+    for (const s of siblings) {
+        const target = parseFloat(s.target_roasted_kg) || 0;
+        const fulfilled = parseFloat(s.fulfilled_roasted_kg) || 0;
+        const contribute = Math.min(fulfilled, target * scale);
+        const leftover = Math.max(0, fulfilled - contribute);
+        assembledKg += contribute;
+
+        if (leftover > 0.005) {
+            const gb = (greenbeans || []).find(g => g.id === s.single_coffee_id);
+            await addWeightToBulkRoastedCoffee('Single', s.single_coffee_id, null, s.machine_id, gb ? gb.name : 'Roasted Coffee', leftover);
+        }
+    }
+
+    if (assembledKg > 0.005) {
+        const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const { data: bulkList } = await fetchData('bulk_roasted_coffee');
+        let code = `PB-${dateStr}`;
+        let suffix = 2;
+        while ((bulkList || []).some(b => b.custom_blend_code === code)) code = `PB-${dateStr}-${suffix++}`;
+
+        await saveData('bulk_roasted_coffee', {
+            coffee_name: blendName,
+            coffee_type: 'Blend',
+            blend_recipe_id: parent.blend_recipe_id,
+            is_post_blend: true,
+            custom_blend_name: blendName,
+            custom_blend_code: code,
+            bulk_available: assembledKg,
+            machine_id: null,
+            source_plan_id: parent.id
+        });
+    }
+
+    parent.status = 'Completed';
+    parent.fulfilled_roasted_kg = assembledKg;
+    await saveData('roasting_plans', parent);
+    await syncPlanStatusToOrderItem(parent);
+}
+
+// V2 1I-b: manual "Stop" on one open sub-plan — marks it terminal short of
+// target so tryAssemblePostBlend can proceed once every sibling is terminal,
+// without waiting for a calendar day-end (this app has no scheduled/cron
+// jobs — see the under-yield trigger discussion in V2_ROADMAP.md).
+async function stopPostBlendComponent(subPlanId) {
+    const proceed = await showWarningModal('Stop roasting this component for now? The blend will assemble at a smaller scale once every other component is also done or stopped.', true);
+    if (!proceed) return;
+
+    const { data: allPlans } = await fetchData('roasting_plans');
+    const subPlan = (allPlans || []).find(p => p.id === subPlanId);
+    if (!subPlan) return;
+
+    subPlan.status = 'Stopped';
+    await saveData('roasting_plans', subPlan);
+    await tryAssemblePostBlend(subPlan.parent_plan_id);
+    await loadRoastingPlans();
+}
+
+// V2 1I-b: manual "Finalize now" on the PARENT plan — lets the team assemble
+// early even if some sub-plans are still open (each open sibling gets force-
+// stopped first so finalizePostBlendPlan's terminal-check passes).
+async function finalizePostBlendNow(parentPlanId) {
+    const proceed = await showWarningModal('Finalize this blend now? Any component not yet at target will be stopped and the blend assembled at a smaller scale.', true);
+    if (!proceed) return;
+
+    const { data: allPlans } = await fetchData('roasting_plans');
+    const siblings = (allPlans || []).filter(p => p.parent_plan_id === parentPlanId && p.status !== 'Completed' && p.status !== 'Stopped');
+    for (const s of siblings) {
+        s.status = 'Stopped';
+        await saveData('roasting_plans', s);
+    }
+    await finalizePostBlendPlan(parentPlanId);
+    await loadRoastingPlans();
 }
 
 async function approveTestBatch(id) {
@@ -2578,28 +2890,36 @@ async function openRoastBatchModal(plan = null, editId = null) {
         );
 
         if (matchingPlans.length > 0) {
-            // Fill the earliest plan_date first; when multiple plans share the
-            // same date (common — see roasting plan list), fall back to id
-            // ascending, since id is a serial that reflects creation order and
-            // plan_date alone doesn't disambiguate which was created first.
-            matchingPlans.sort((a, b) => (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id));
+            // V2 1I-b: an open post-blend sub-plan for this exact coffee+
+            // machine always fills first — accepted limitation per the
+            // roadmap (a normal single plan sharing the same coffee+machine
+            // while the sub-plan is open gets filled second, even if older).
+            // Within the same priority tier, earliest plan_date first, then
+            // id ascending (plan_date alone doesn't disambiguate same-day plans).
+            matchingPlans.sort((a, b) => {
+                const aSub = a.is_post_blend_component ? 0 : 1;
+                const bSub = b.is_post_blend_component ? 0 : 1;
+                if (aSub !== bSub) return aSub - bSub;
+                return (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id);
+            });
 
             let remainingOutput = outputKg;
 
             for (let i = 0; i < matchingPlans.length; i++) {
                 if (remainingOutput <= 0) break;
-                
+
                 const p = matchingPlans[i];
                 const target = parseFloat(p.target_roasted_kg || 0);
                 const currentFulfilled = parseFloat(p.fulfilled_roasted_kg || 0);
                 const capacity = Math.max(0, target - currentFulfilled);
-                
+
                 if (remainingOutput <= capacity) {
                     p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
                     p.status = (p.fulfilled_roasted_kg >= target) ? 'Completed' : 'On Process';
                     remainingOutput = 0;
                     await saveData('roasting_plans', p);
                     await syncPlanStatusToOrderItem(p);
+                    if (p.is_post_blend_component && p.status === 'Completed') await tryAssemblePostBlend(p.parent_plan_id);
                 } else {
                     // Exceeds this plan's capacity
                     if (i === matchingPlans.length - 1) {
@@ -2609,6 +2929,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
                         remainingOutput = 0;
                         await saveData('roasting_plans', p);
                         await syncPlanStatusToOrderItem(p);
+                        if (p.is_post_blend_component) await tryAssemblePostBlend(p.parent_plan_id);
                     } else {
                         // Fill this plan to target and continue to next
                         p.fulfilled_roasted_kg = target;
@@ -2616,6 +2937,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
                         remainingOutput -= capacity;
                         await saveData('roasting_plans', p);
                         await syncPlanStatusToOrderItem(p);
+                        if (p.is_post_blend_component) await tryAssemblePostBlend(p.parent_plan_id);
                     }
                 }
             }
@@ -3319,9 +3641,15 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
         );
 
         if (matchingPlans.length > 0) {
-            // Same tiebreak as openRoastBatchModal: earliest plan_date first,
-            // then id ascending for same-date plans (id reflects creation order).
-            matchingPlans.sort((a, b) => (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id));
+            // Same tiebreak as openRoastBatchModal (including the V2 1I-b
+            // "open sub-plan fills first" priority): sub-plans before normal
+            // plans, then earliest plan_date, then id ascending.
+            matchingPlans.sort((a, b) => {
+                const aSub = a.is_post_blend_component ? 0 : 1;
+                const bSub = b.is_post_blend_component ? 0 : 1;
+                if (aSub !== bSub) return aSub - bSub;
+                return (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id);
+            });
             let remainingOutput = outputKg;
 
             for (let i = 0; i < matchingPlans.length; i++) {
@@ -3337,18 +3665,21 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
                     remainingOutput = 0;
                     await saveData('roasting_plans', p);
                     await syncPlanStatusToOrderItem(p);
+                    if (p.is_post_blend_component && p.status === 'Completed') await tryAssemblePostBlend(p.parent_plan_id);
                 } else if (i === matchingPlans.length - 1) {
                     p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
                     p.status = 'Completed';
                     remainingOutput = 0;
                     await saveData('roasting_plans', p);
                     await syncPlanStatusToOrderItem(p);
+                    if (p.is_post_blend_component) await tryAssemblePostBlend(p.parent_plan_id);
                 } else {
                     p.fulfilled_roasted_kg = target;
                     p.status = 'Completed';
                     remainingOutput -= capacity;
                     await saveData('roasting_plans', p);
                     await syncPlanStatusToOrderItem(p);
+                    if (p.is_post_blend_component) await tryAssemblePostBlend(p.parent_plan_id);
                 }
             }
         }

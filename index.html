@@ -852,9 +852,13 @@
                     <!-- TAB 3: Blend Recipes -->
                     <div id="tab-blend-recipes" class="tab-content hidden">
                         <div class="card">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
                                 <h3 class="card-title" style="margin-bottom: 0;" data-i18n="recipes_title">Coffee Blend Recipes</h3>
-                                <div style="display: flex; gap: 8px; align-items: center;">
+                                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                    <div style="display: flex; gap: 4px;">
+                                        <button class="btn btn-secondary btn-sm recipe-filter-btn active" data-filter="pre" onclick="filterRecipes('pre')" data-i18n="recipes_filter_pre">Pre-Blend</button>
+                                        <button class="btn btn-secondary btn-sm recipe-filter-btn" data-filter="post" onclick="filterRecipes('post')" data-i18n="recipes_filter_post">Post-Blend</button>
+                                    </div>
                                     <button id="btn-export-blend-recipes" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                                         Export Excel
@@ -1065,10 +1069,16 @@
                                 <h3 class="card-title" style="font-size: 1.5rem; margin-bottom: 4px; font-weight: 700;" data-i18n="ready_to_pack_title">Ready to Pack</h3>
                                 <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="ready_to_pack_hint">Bulk roasted coffee available for printing labels and packing.</p>
                             </div>
-                            <button type="button" id="btn-custom-packing" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                <span data-i18n="btn_manual_add_stock">Add Manual Packed Stock</span>
-                            </button>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button type="button" id="btn-create-post-blend" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+                                    <span data-i18n="btn_create_post_blend">Create Post-Blend</span>
+                                </button>
+                                <button type="button" id="btn-custom-packing" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    <span data-i18n="btn_manual_add_stock">Add Manual Packed Stock</span>
+                                </button>
+                            </div>
                         </div>
                         <div id="ready-to-pack-cards" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;">
                             <!-- Dynamic bulk-roasted-coffee cards -->
@@ -1756,6 +1766,7 @@
                             <div id="tracking-result-density" style="font-weight: 600;">-</div>
                         </div>
                     </div>
+                    <div id="tracking-result-composition" class="hidden"></div>
                 </div>
             </section>
 
@@ -2383,18 +2394,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=10"></script>
+    <script src="js/translations.js?v=12"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
     <script src="js/auth.js?v=8"></script>
     <script src="js/greenbean.js?v=10"></script>
-    <script src="js/roasting.js?v=9"></script>
-    <script src="js/packing.js?v=20"></script>
+    <script src="js/roasting.js?v=11"></script>
+    <script src="js/packing.js?v=23"></script>
     <script src="js/sales.js?v=9"></script>
     <script src="js/settings.js?v=8"></script>
-    <script src="js/tracking.js?v=3"></script>
-    <script src="js/app.js?v=64"></script>
+    <script src="js/tracking.js?v=6"></script>
+    <script src="js/app.js?v=65"></script>
 </body>
 </html>

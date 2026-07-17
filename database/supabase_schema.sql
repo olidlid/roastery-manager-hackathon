@@ -268,7 +268,8 @@ CREATE TABLE IF NOT EXISTS public.bulk_roasted_coffee (
     bulk_available NUMERIC DEFAULT 0,
     is_post_blend BOOLEAN DEFAULT FALSE,  -- V2 1I: true for both custom (1I-a) and recipe-assembled (1I-b) post-blends
     custom_blend_name TEXT,               -- V2 1I-a: user-typed name for a custom post-blend
-    custom_blend_code TEXT                -- V2 1I-a: date-based identity code for a custom post-blend
+    custom_blend_code TEXT,               -- V2 1I-a/1I-b: date-based identity code for a post-blend
+    source_plan_id INTEGER REFERENCES public.roasting_plans(id) ON DELETE SET NULL  -- V2 1I-b: links a recipe-assembled post-blend back to its parent roasting_plans row, so composition is derived from that parent's sub-plans (parent_plan_id) instead of a components table
 );
 
 -- 12. Waste inventory (failed test batches etc.)
