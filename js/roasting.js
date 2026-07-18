@@ -602,15 +602,8 @@ async function loadCustomBlendSection() {
 // recipe kind) vs Post-Blend (already-roasted singles auto-exploded into a
 // per-origin roasting plan then reassembled — see openRoastPlanModal). Same
 // blend_recipes/blend_ingredients data model, just a is_post_blend flag.
-let _recipeFilterType = 'pre';
-
-function filterRecipes(type) {
-    _recipeFilterType = type;
-    document.querySelectorAll('.recipe-filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-filter') === type);
-    });
-    loadBlendRecipes();
-}
+// All recipes are shown together in one table, distinguished by a Type badge
+// (the Pre-Blend/Post-Blend toggle buttons were removed per user request).
 
 async function loadBlendRecipes() {
     const [
@@ -625,14 +618,13 @@ async function loadBlendRecipes() {
         fetchData('machines')
     ]);
 
-    const recipes = (allRecipes || []).filter(r => !!r.is_post_blend === (_recipeFilterType === 'post'));
+    const recipes = allRecipes || [];
 
     const tbody = document.getElementById('recipe-table-body');
     tbody.innerHTML = '';
 
     if (recipes.length === 0) {
-        const emptyMsg = _recipeFilterType === 'post' ? 'No post-blend recipes configured.' : 'No custom blend recipes configured.';
-        tbody.innerHTML = `<tr><td colspan="6" class="text-center-muted">${emptyMsg}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">${window.t('msg_no_recipes')}</td></tr>`;
         return;
     }
 
@@ -653,6 +645,7 @@ async function loadBlendRecipes() {
             <td class="va-middle"><code>${recipe.code}</code></td>
             <td class="va-middle"><strong>${recipe.name}</strong></td>
             <td class="va-middle"><div style="display: flex; flex-direction: column;">${ingTexts || '<span style="color: var(--text-muted)">No Ingredients</span>'}</div></td>
+            <td class="va-middle"><span class="badge ${recipe.is_post_blend ? 'badge-post-blend' : 'badge-pre-blend'}">${recipe.is_post_blend ? window.t('recipes_filter_post') : window.t('recipes_filter_pre')}</span></td>
             <td class="va-middle">
                 <button class="btn btn-secondary btn-sm btn-edit-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
                 <button class="btn btn-danger btn-sm btn-delete-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
@@ -824,7 +817,7 @@ async function openRecipeModal(id = null) {
 
             <div class="form-group" style="margin-top: 4px;">
                 <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:500;">
-                    <input type="checkbox" id="m-rec-post-blend" ${(id ? recipe.is_post_blend : _recipeFilterType === 'post') ? 'checked' : ''}>
+                    <input type="checkbox" id="m-rec-post-blend" ${(id && recipe.is_post_blend) ? 'checked' : ''}>
                     Post-Blend (mix already-roasted singles, instead of roasting the greens together)
                 </label>
             </div>
@@ -1003,9 +996,7 @@ async function openRecipeModal(id = null) {
         }
 
         modalContainer.classList.add('hidden');
-        // Keep the saved recipe visible even if it just switched Pre/Post
-        // (e.g. checked "Post-Blend" while the Pre-Blend sub-tab was active).
-        filterRecipes(recipeRecord.is_post_blend ? 'post' : 'pre');
+        loadBlendRecipes();
     });
 }
 

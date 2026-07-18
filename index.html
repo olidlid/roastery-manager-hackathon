@@ -856,10 +856,6 @@
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
                                 <h3 class="card-title" style="margin-bottom: 0;" data-i18n="recipes_title">Coffee Blend Recipes</h3>
                                 <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                                    <div style="display: flex; gap: 4px;">
-                                        <button class="btn btn-secondary btn-sm recipe-filter-btn active" data-filter="pre" onclick="filterRecipes('pre')" data-i18n="recipes_filter_pre">Pre-Blend</button>
-                                        <button class="btn btn-secondary btn-sm recipe-filter-btn" data-filter="post" onclick="filterRecipes('post')" data-i18n="recipes_filter_post">Post-Blend</button>
-                                    </div>
                                     <button id="btn-export-blend-recipes" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                                         Export Excel
@@ -882,6 +878,7 @@
                                             <th class="filterable-th" data-col="2">
                                                 <div class="th-content"><span data-i18n="col_ingredients">Ingredients</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
                                             </th>
+                                            <th style="width: 110px;" data-i18n="col_recipe_type">Type</th>
                                             <th style="width: 100px;" data-i18n="col_action">Actions</th>
                                         </tr>
                                     </thead>
@@ -2425,14 +2422,14 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=13"></script>
+    <script src="js/translations.js?v=14"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
     <script src="js/auth.js?v=9"></script>
     <script src="js/greenbean.js?v=11"></script>
-    <script src="js/roasting.js?v=14"></script>
+    <script src="js/roasting.js?v=15"></script>
     <script src="js/packing.js?v=27"></script>
     <script src="js/sales.js?v=10"></script>
     <script src="js/settings.js?v=9"></script>

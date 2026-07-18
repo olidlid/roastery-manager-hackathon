@@ -130,6 +130,7 @@ window.translations = {
         col_machine: "Target Machine",
         col_batch_size: "Batch Size (g)",
         col_ingredients: "Ingredients & Percentages",
+        col_recipe_type: "Type",
         msg_no_recipes: "No custom blend recipes configured.",
         
         // Roasting Production
@@ -652,6 +653,7 @@ window.translations = {
         col_machine: "الآلة المستهدفة",
         col_batch_size: "حجم الدفعة (غ)",
         col_ingredients: "المكونات والنسب المئوية",
+        col_recipe_type: "النوع",
         msg_no_recipes: "لم يتم تكوين أي وصفات خلطة مخصصة.",
         
         // Roasting Production

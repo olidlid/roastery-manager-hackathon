@@ -1353,6 +1353,26 @@ tbody tr:hover {
     color: #a78bfa !important; /* bright glowing purple for dark mode */
 }
 
+.badge-pre-blend {
+    background: rgba(21, 128, 61, 0.12) !important;
+    color: #15803d !important; /* high contrast green for light mode */
+}
+
+[data-theme="dark"] .badge-pre-blend {
+    background: rgba(74, 222, 128, 0.15) !important;
+    color: #4ade80 !important; /* bright glowing green for dark mode */
+}
+
+.badge-post-blend {
+    background: rgba(180, 83, 9, 0.12) !important;
+    color: #b45309 !important; /* high contrast amber for light mode */
+}
+
+[data-theme="dark"] .badge-post-blend {
+    background: rgba(251, 191, 36, 0.15) !important;
+    color: #fbbf24 !important; /* bright glowing amber for dark mode */
+}
+
 /* ==========================================================================
    TABLE COLUMN FILTERS (MULTI-SELECT DROPDOWN)
    ========================================================================== */
