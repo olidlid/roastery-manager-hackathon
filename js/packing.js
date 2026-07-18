@@ -208,6 +208,20 @@ async function openCustomBlendModal() {
         return m ? m.name : 'Unknown Machine';
     }
 
+    // Native <select><option> ignores HTML, so <b>/<strong> can't bold part
+    // of an option's text — map letters/digits to their Unicode "Mathematical
+    // Bold" code points instead so the coffee name still reads bold in the
+    // source-pool dropdown.
+    function toBoldUnicode(str) {
+        return String(str).replace(/[A-Za-z0-9]/g, ch => {
+            const code = ch.charCodeAt(0);
+            if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D400 + (code - 65));
+            if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D41A + (code - 97));
+            if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7CE + (code - 48));
+            return ch;
+        });
+    }
+
     // packed_coffee doesn't reliably carry single_coffee_id for rows created
     // outside the roast-log flow (e.g. getOrCreatePackedCoffeeRow) — same
     // name-matching convention used elsewhere (packing.js resolvePackedIdentity).
@@ -227,7 +241,7 @@ async function openCustomBlendModal() {
         .filter(b => b.coffee_type === 'Single' && parseFloat(b.bulk_available) > 0.005 && !b.is_post_blend)
         .map(b => ({
             key: `bulk:${b.id}`, kind: 'bulk', refId: b.id, greenCoffeeId: b.single_coffee_id,
-            label: `${(greenbeans || []).find(g => g.id === b.single_coffee_id)?.name || b.coffee_name} — Bulk (${machineName(b.machine_id)})`,
+            label: `${toBoldUnicode((greenbeans || []).find(g => g.id === b.single_coffee_id)?.name || b.coffee_name)} — Bulk (${machineName(b.machine_id)})`,
             availableKg: parseFloat(b.bulk_available) || 0
         }));
 
@@ -244,7 +258,7 @@ async function openCustomBlendModal() {
             const bagSizeG = parseFloat(p.bag_size_g) || 0;
             return {
                 key: `packed:${p.id}`, kind: 'packed', refId: p.id, greenCoffeeId: gcId, bagSizeG,
-                label: `${gb ? gb.name : (p.custom_coffee_name || 'Roasted Coffee')} — Packed ${p.bag_size_g || '-'}g (${machineName(p.machine_id)})`,
+                label: `${toBoldUnicode(gb ? gb.name : (p.custom_coffee_name || 'Roasted Coffee'))} — Packed ${p.bag_size_g || '-'}g (${machineName(p.machine_id)})`,
                 availableKg: availPcs * (bagSizeG / 1000),
                 lots: lotsForThis.map(l => ({ id: l.id, lotCode: l.lot_code, packedDate: l.packed_date, remainingPcs: parseInt(l.remaining_pcs) || 0 }))
             };
