@@ -336,6 +336,11 @@ if (btnAddOutbound) {
     btnAddOutbound.style.display = hasPermission('greenbean_outbound_add') ? '' : 'none';
 }
 
+const btnPrintCodeList = document.getElementById('btn-print-code-list');
+if (btnPrintCodeList) {
+    btnPrintCodeList.addEventListener('click', () => printCodeList());
+}
+
 // RBAC: hide Arrival tab if no permission
 const arrivalTabBtn = document.querySelector('#sec-greenbean .tab-btn[data-tab="tab-add-gb-history"]');
 if (arrivalTabBtn) arrivalTabBtn.style.display = hasPermission('greenbean_arrival_view') ? '' : 'none';
@@ -1041,6 +1046,9 @@ async function loadTabSpecificData(tabId) {
             break;
         case 'tab-gb-outbound':
             await loadOutboundHistory();
+            break;
+        case 'tab-code-list':
+            await loadCodeListSection();
             break;
     }
     enforceGranularPermissions();

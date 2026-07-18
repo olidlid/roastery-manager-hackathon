@@ -1146,3 +1146,101 @@ async function adjustGreenbeanStock(type, id, targetRoastedKg, sign = 1) {
         }
     }
 }
+
+// --- TAB: Code List ---
+// Flat audit list of every code+coffee-name pair from green_coffee and
+// blend_recipes, sorted by code. Deliberately not deduped/grouped — if a
+// code is reused by more than one coffee, every one of them shows up as its
+// own row (adjacent, since the list is code-sorted), which is the point:
+// surfacing accidental code collisions between green beans/recipes.
+let _codeListRows = [];
+
+async function loadCodeListSection() {
+    const tbody = document.getElementById('code-list-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const [{ data: greenbeans }, { data: recipes }] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
+    ]);
+
+    _codeListRows = [
+        ...(greenbeans || []).filter(g => g.code).map(g => ({ code: g.code, name: g.name || '-' })),
+        ...(recipes || []).filter(r => r.code).map(r => ({ code: r.code, name: r.name || '-' }))
+    ].sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+
+    if (_codeListRows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="2" class="text-center-muted">${window.t ? window.t('msg_no_codes') : 'No codes found.'}</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = _codeListRows.map(r => `
+        <tr>
+            <td class="va-middle"><code>${r.code}</code></td>
+            <td class="va-middle"><strong>${r.name}</strong></td>
+        </tr>
+    `).join('');
+}
+
+function printCodeList() {
+    const cs = companySettings || {};
+    const tCode = window.t ? (window.t('col_code') || 'Code') : 'Code';
+    const tName = window.t ? (window.t('col_name') || 'Coffee Name') : 'Coffee Name';
+    const tTitle = window.t ? (window.t('code_list_title') || 'Coffee Code List') : 'Coffee Code List';
+
+    const rowsHtml = _codeListRows.map(r => `
+        <tr><td>${r.code}</td><td>${r.name}</td></tr>
+    `).join('') || `<tr><td colspan="2" style="text-align:center; color:#999;">No codes found.</td></tr>`;
+
+    const printContent = `<!DOCTYPE html>
+<html>
+<head>
+    <title>${tTitle}</title>
+    <style>
+        @page { size: A4; margin: 14mm; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; font-size: 12px; }
+        .page { max-width: 210mm; margin: 0 auto; padding: 6px; }
+        .letterhead { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 3px solid #2d5016; margin-bottom: 14px; }
+        .lh-left { display: flex; align-items: center; gap: 12px; }
+        .lh-logo { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; border: 1px solid #e5e5e5; }
+        .lh-name { font-size: 18px; font-weight: 800; color: #2d5016; line-height: 1.2; }
+        .lh-contact { font-size: 10px; color: #777; margin-top: 2px; }
+        .lh-right { text-align: right; }
+        .doc-title { font-size: 17px; font-weight: 800; color: #2d5016; text-transform: uppercase; letter-spacing: 0.5px; }
+        table { width: 100%; border-collapse: collapse; }
+        thead th { background: #2d5016; color: #fff; padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; text-align: left; border: 1px solid #2d5016; }
+        tbody td { padding: 6px 10px; border: 1px solid #cfcfcf; font-size: 12px; }
+        @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="letterhead">
+            <div class="lh-left">
+                ${cs.show_logo_in_print && cs.logo_base64 ? '<img class="lh-logo" src="' + cs.logo_base64 + '" alt="Logo">' : ''}
+                <div>
+                    <div class="lh-name">${cs.company_name || 'Coffee Roastery'}</div>
+                    <div class="lh-contact">${cs.address ? cs.address : ''}</div>
+                </div>
+            </div>
+            <div class="lh-right">
+                <div class="doc-title">${tTitle}</div>
+            </div>
+        </div>
+        <table>
+            <thead>
+                <tr><th>${tCode}</th><th>${tName}</th></tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+        </table>
+    </div>
+    <script>window.onload = function() { window.print(); }<\/script>
+</body>
+</html>`;
+
+    const w = window.open('', '_blank');
+    w.document.write(printContent);
+    w.document.close();
+}

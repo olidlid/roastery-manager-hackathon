@@ -507,6 +507,7 @@
                         <button class="tab-btn active" data-tab="tab-green-inventory" data-i18n="tab_inventory">Greenbean Inventory</button>
                         <button class="tab-btn" data-tab="tab-add-gb-history" data-i18n="tab_add_gb_history">Greenbean Arrival</button>
                         <button class="tab-btn" data-tab="tab-gb-outbound" data-i18n="tab_gb_outbound">Greenbean Outbound</button>
+                        <button class="tab-btn" data-tab="tab-code-list" data-i18n="tab_code_list">Code List</button>
                     </div>
 
                     <!-- TAB 1: Greenbean Inventory -->
@@ -641,6 +642,33 @@
                                     </thead>
                                     <tbody id="outbound-history-table-body">
                                         <!-- Dynamically loaded outbound shipments -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB: Code List — flat audit list of every code+coffee-name
+                         pair from green_coffee and blend_recipes, sorted by code. -->
+                    <div id="tab-code-list" class="tab-content hidden">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="code_list_title">Coffee Code List</h3>
+                                <button id="btn-print-code-list" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                                    <span data-i18n="btn_print">Print</span>
+                                </button>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_code">Code</th>
+                                            <th data-i18n="col_name">Coffee Name</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="code-list-table-body">
+                                        <!-- Dynamically loaded code list -->
                                     </tbody>
                                 </table>
                             </div>
@@ -2422,18 +2450,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=14"></script>
+    <script src="js/translations.js?v=15"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
     <script src="js/auth.js?v=9"></script>
-    <script src="js/greenbean.js?v=11"></script>
+    <script src="js/greenbean.js?v=12"></script>
     <script src="js/roasting.js?v=15"></script>
     <script src="js/packing.js?v=28"></script>
     <script src="js/sales.js?v=10"></script>
     <script src="js/settings.js?v=9"></script>
     <script src="js/tracking.js?v=6"></script>
-    <script src="js/app.js?v=67"></script>
+    <script src="js/app.js?v=68"></script>
 </body>
 </html>
