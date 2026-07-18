@@ -873,6 +873,7 @@ function enforceGranularPermissions() {
     const TAB_PERMISSIONS = {
         'tab-roast-logs': 'roasting_batch_view',
         'tab-blend-recipes': 'blend_view',
+        'tab-custom-blend': 'blend_view',
         'tab-recipe-potential': 'production_potential_view',
         // Greenbean tabs
         'tab-add-gb-history': 'greenbean_arrival_view',
@@ -969,10 +970,10 @@ function enforceGranularPermissions() {
     // --- PACKING BUTTONS ---
     const btnCustomPacking = document.getElementById('btn-custom-packing');
     if (btnCustomPacking) btnCustomPacking.style.display = hasPermission('packing_manual_add') ? '' : 'none';
-    // V2 1I-a: reuses the existing blend_add permission per roadmap decision
-    // (no dedicated post-blend permission key).
-    const btnCreatePostBlend = document.getElementById('btn-create-post-blend');
-    if (btnCreatePostBlend) btnCreatePostBlend.style.display = hasPermission('blend_add') ? '' : 'none';
+    // V2 Custom Blend: reuses the existing blend_add permission per roadmap
+    // decision (no dedicated post-blend permission key).
+    const btnAddCustomBlend = document.getElementById('btn-add-custom-blend');
+    if (btnAddCustomBlend) btnAddCustomBlend.style.display = hasPermission('blend_add') ? '' : 'none';
     // Ready to Pack cards: Print Barcode / Pack buttons
     document.querySelectorAll('.btn-print-lot-barcode').forEach(btn => {
         btn.style.display = hasPermission('packing_print_barcode') ? '' : 'none';

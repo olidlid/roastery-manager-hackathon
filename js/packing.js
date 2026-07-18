@@ -180,223 +180,345 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     });
 }
 
-// V2 1I-a: Custom Post-Blend — mixes existing bulk (kg) and packed (bags)
+// V2 Custom Blend: mixes existing single-origin bulk (kg) and packed (bags)
 // stock into a brand-new bulk_roasted_coffee row (is_post_blend=true), so it
 // then flows through the normal Ready to Pack -> production_lot -> packing
-// path like any other bulk item. Each source is recorded in
-// post_blend_components for the Tracking resolver to walk later.
-async function openCustomPostBlendModal() {
+// path like any other bulk item. Deliberately NOT saved as a reusable
+// recipe (blend_recipes/blend_ingredients) — composition is typed fresh
+// every time; history lives in the dedicated "Custom Blend" tab
+// (loadCustomBlendSection, js/roasting.js), reading these same rows plus
+// post_blend_components (unchanged table from 1I-a).
+async function openCustomBlendModal() {
     const [
         { data: bulkList },
         { data: packedList },
-        { data: packedLots }
+        { data: packedLots },
+        { data: machines },
+        { data: greenbeans }
     ] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
         fetchData('packed_coffee'),
-        fetchData('packed_coffee_lots')
+        fetchData('packed_coffee_lots'),
+        fetchData('machines'),
+        fetchData('green_coffee')
     ]);
 
-    // Only offer bulk rows with real stock; excludes other post-blends so a
-    // custom blend can't (yet) be built out of another custom blend.
-    const availableBulk = (bulkList || []).filter(b => parseFloat(b.bulk_available) > 0.005 && !b.is_post_blend);
-
-    // FIFO-sortable packed lots (oldest packed_date first), same identity
-    // concept as the dispatch checkout modal — one lot per coffee+size+machine.
-    const availablePackedLots = (packedLots || [])
-        .filter(l => (parseInt(l.remaining_pcs) || 0) > 0)
-        .map(l => {
-            const packed = (packedList || []).find(p => p.id === l.packed_coffee_id);
-            return packed ? { ...l, packed } : null;
-        })
-        .filter(Boolean)
-        .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id);
-
-    function fifoLotIdFor(packedCoffeeId) {
-        const match = availablePackedLots.find(l => l.packed_coffee_id === packedCoffeeId);
-        return match ? match.id : null;
+    function machineName(id) {
+        const m = (machines || []).find(x => x.id === id);
+        return m ? m.name : 'Unknown Machine';
     }
 
-    const todayCode = 'PB-' + new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    // packed_coffee doesn't reliably carry single_coffee_id for rows created
+    // outside the roast-log flow (e.g. getOrCreatePackedCoffeeRow) — same
+    // name-matching convention used elsewhere (packing.js resolvePackedIdentity).
+    function resolvePackedGreenCoffeeId(p) {
+        if (p.single_coffee_id) return p.single_coffee_id;
+        const cleanName = (p.custom_coffee_name || '').replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+        const gb = (greenbeans || []).find(g => g.name === cleanName);
+        return gb ? gb.id : null;
+    }
+
+    // Every available SOURCE POOL, single-origin only (a custom blend's
+    // ingredients are green-coffee origins, same as a recipe's) — one entry
+    // per bulk item, one per packed item+size, each tagged with its
+    // underlying green coffee so picks for the same ingredient can be
+    // grouped/filtered by it.
+    const bulkOptions = (bulkList || [])
+        .filter(b => b.coffee_type === 'Single' && parseFloat(b.bulk_available) > 0.005 && !b.is_post_blend)
+        .map(b => ({
+            key: `bulk:${b.id}`, kind: 'bulk', refId: b.id, greenCoffeeId: b.single_coffee_id,
+            label: `${(greenbeans || []).find(g => g.id === b.single_coffee_id)?.name || b.coffee_name} — Bulk (${machineName(b.machine_id)})`,
+            availableKg: parseFloat(b.bulk_available) || 0
+        }));
+
+    const packedOptions = (packedList || [])
+        .filter(p => (parseInt(p.quantity) || 0) > 0)
+        .map(p => {
+            const gcId = resolvePackedGreenCoffeeId(p);
+            if (!gcId) return null;
+            const gb = (greenbeans || []).find(g => g.id === gcId);
+            const lotsForThis = (packedLots || [])
+                .filter(l => l.packed_coffee_id === p.id && (parseInt(l.remaining_pcs) || 0) > 0)
+                .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id);
+            const availPcs = lotsForThis.reduce((s, l) => s + (parseInt(l.remaining_pcs) || 0), 0);
+            const bagSizeG = parseFloat(p.bag_size_g) || 0;
+            return {
+                key: `packed:${p.id}`, kind: 'packed', refId: p.id, greenCoffeeId: gcId, bagSizeG,
+                label: `${gb ? gb.name : (p.custom_coffee_name || 'Roasted Coffee')} — Packed ${p.bag_size_g || '-'}g (${machineName(p.machine_id)})`,
+                availableKg: availPcs * (bagSizeG / 1000),
+                lots: lotsForThis.map(l => ({ id: l.id, lotCode: l.lot_code, packedDate: l.packed_date, remainingPcs: parseInt(l.remaining_pcs) || 0 }))
+            };
+        })
+        .filter(Boolean);
+
+    const allOptions = [...bulkOptions, ...packedOptions];
+
+    if (allOptions.length === 0) {
+        await showWarningModal('No single-origin bulk or packed stock available to build a custom blend from yet.', false);
+        return;
+    }
+
+    function optionByKey(key) { return allOptions.find(o => o.key === key); }
+    function optionsHtml(greenCoffeeId, selectedKey) {
+        const list = greenCoffeeId ? allOptions.filter(o => o.greenCoffeeId === greenCoffeeId) : allOptions;
+        const rows = list.map(o => {
+            const lotsNote = o.kind === 'packed' ? ` (${o.lots.length} lot${o.lots.length === 1 ? '' : 's'})` : '';
+            return `<option value="${o.key}" ${o.key === selectedKey ? 'selected' : ''}>${o.label} — ${o.availableKg.toFixed(2)}kg avail.${lotsNote}</option>`;
+        }).join('');
+        return `<option value="">— pick a source —</option>${rows}`;
+    }
+
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
     const html = `
         <div class="form-row">
             <div class="form-group flex-1">
                 <label class="form-label">Blend Name</label>
-                <input type="text" id="pb-name" class="form-control" placeholder="e.g. Weekend House Blend">
+                <input type="text" id="cb-name" class="form-control" placeholder="e.g. Weekend House Blend">
             </div>
-            <div class="form-group" style="max-width:180px;">
-                <label class="form-label">Blend Code (preview)</label>
-                <input type="text" id="pb-code-preview" class="form-control" value="${todayCode}" disabled style="color:var(--text-muted);">
+            <div class="form-group flex-1">
+                <label class="form-label">Coffee Code <span style="color:var(--danger-color, #dc2626); font-weight:700;">*</span></label>
+                <input type="text" id="cb-coffee-code" class="form-control" placeholder="e.g. CB1" required>
             </div>
         </div>
-        <label class="form-label" style="margin-top:12px; display:block;">Sources</label>
-        <div id="pb-source-rows"></div>
-        <button type="button" id="pb-add-source" class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px;">+ Add source</button>
+        <div class="form-row">
+            <div class="form-group flex-1">
+                <label class="form-label">Bulk Code (auto)</label>
+                <input type="text" id="cb-bulk-code-preview" class="form-control" value="CB-${dateStr}" disabled style="color:var(--text-muted);">
+            </div>
+            <div class="form-group" style="max-width:180px;">
+                <label class="form-label">Target Weight (kg)</label>
+                <input type="number" min="0" step="0.01" id="cb-target" class="form-control" placeholder="e.g. 10">
+            </div>
+        </div>
 
-        <table class="data-table" style="width:100%; margin-top:16px;">
-            <thead><tr><th>Component</th><th style="text-align:right;">Amount</th><th style="text-align:right;">Share</th></tr></thead>
-            <tbody id="pb-composition-body"><tr><td colspan="3" class="table-empty-state">No sources added yet</td></tr></tbody>
-        </table>
+        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:12px;">
+            <label class="form-label" style="margin-bottom:0;">Composition</label>
+            <span id="cb-pct-sum" style="font-weight:700; font-family:monospace;">Sum: 0.0%</span>
+        </div>
+        <div id="cb-ingredients"></div>
+        <button type="button" id="cb-add-ingredient" class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px;">+ Add Ingredient</button>
+
+        <div id="cb-shortfall-banner" class="hidden" style="background:rgba(220,38,38,0.1); border:1px solid #dc2626; color:#dc2626; padding:8px 12px; border-radius:6px; font-size:0.8rem; margin-top:12px;"></div>
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:12px; border-top:1px solid var(--border-color);">
-            <div style="color:var(--text-muted); font-size:0.85rem;">Total blend size <strong id="pb-total-kg" style="color:var(--text-primary); font-family:monospace;">0.00 kg</strong></div>
-            <button type="button" id="pb-submit" class="btn btn-primary">Create Blend</button>
+            <div style="color:var(--text-muted); font-size:0.85rem;">Total blend size <strong id="cb-total-kg" style="color:var(--text-primary); font-family:monospace;">0.00 kg</strong></div>
+            <button type="button" id="cb-submit" class="btn btn-primary">Create Blend</button>
         </div>
     `;
 
-    openModal('Create Custom Post-Blend', html, '700px');
+    openModal('Add Custom Blend', html, '760px');
 
-    // Map-keyed dynamic rows, same pattern as the dispatch checkout cart.
-    const rows = new Map(); // rowId -> { kind: 'bulk'|'packed', refId, amount }
-    let rowSeq = 0;
+    // ingredients: Map(ingId -> { greenCoffeeId, percentage, picks: [{pickId, optionKey, lotId, amount}], requiredKg, filledKg })
+    const ingredients = new Map();
+    let ingSeq = 0;
+    let pickSeq = 0;
 
-    function bulkLabel(id) {
-        const b = availableBulk.find(x => x.id === id);
-        return b ? b.coffee_name : 'Unknown';
-    }
-    function packedLabel(lotId) {
-        const l = availablePackedLots.find(x => x.id === lotId);
-        if (!l) return 'Unknown';
-        return `${l.packed.custom_coffee_name || 'Roasted Coffee'} (${l.packed.bag_size_g || '-'}g, lot ${l.lot_code})`;
-    }
-    function packedBagSizeG(lotId) {
-        const l = availablePackedLots.find(x => x.id === lotId);
-        return l ? (parseFloat(l.packed.bag_size_g) || 0) : 0;
-    }
-    function rowKg(row) {
-        if (row.kind === 'bulk') return row.amount || 0;
-        return (row.amount || 0) * (packedBagSizeG(row.refId) / 1000);
+    function pickAvailableKg(pick) {
+        const opt = optionByKey(pick.optionKey);
+        if (!opt) return 0;
+        if (opt.kind === 'bulk') return opt.availableKg;
+        const lot = opt.lots.find(l => l.id === pick.lotId);
+        if (!lot) return 0;
+        return lot.remainingPcs * (opt.bagSizeG / 1000);
     }
 
-    function renderComposition() {
-        const body = document.getElementById('pb-composition-body');
-        const totalEl = document.getElementById('pb-total-kg');
-        if (!body || !totalEl) return;
-        const valid = [...rows.values()].filter(r => r.refId && r.amount > 0);
-        const totalKg = valid.reduce((s, r) => s + rowKg(r), 0);
-        totalEl.textContent = totalKg.toFixed(2) + ' kg';
-        if (valid.length === 0) {
-            body.innerHTML = '<tr><td colspan="3" class="table-empty-state">No sources added yet</td></tr>';
-            return;
-        }
-        body.innerHTML = valid.map(r => {
-            const kg = rowKg(r);
-            const pct = totalKg > 0 ? (kg / totalKg * 100) : 0;
-            const label = r.kind === 'bulk' ? bulkLabel(r.refId) : packedLabel(r.refId);
-            const amountText = r.kind === 'bulk' ? `${r.amount.toFixed(2)} kg` : `${r.amount} bags (${kg.toFixed(2)} kg)`;
-            return `<tr><td>${label}</td><td style="text-align:right; font-family:monospace;">${amountText}</td><td style="text-align:right; font-family:monospace;">${pct.toFixed(1)}%</td></tr>`;
-        }).join('');
+    function recalcAll() {
+        const targetKg = parseFloat(document.getElementById('cb-target')?.value) || 0;
+        ingredients.forEach(ing => {
+            const requiredKg = targetKg * (ing.percentage / 100);
+            let remaining = requiredKg;
+            ing.picks.forEach(pick => {
+                if (!pick.optionKey) { pick.amount = 0; return; }
+                const avail = pickAvailableKg(pick);
+                const take = Math.max(0, Math.min(remaining, avail));
+                pick.amount = take;
+                remaining -= take;
+            });
+            ing.requiredKg = requiredKg;
+            ing.filledKg = ing.picks.reduce((s, p) => s + (p.amount || 0), 0);
+        });
+        renderAll();
     }
 
-    function renderSourceRows() {
-        const container = document.getElementById('pb-source-rows');
+    function renderIngredients() {
+        const container = document.getElementById('cb-ingredients');
         if (!container) return;
         container.innerHTML = '';
-        rows.forEach((row, rowId) => {
-            const wrap = document.createElement('div');
-            wrap.className = 'form-row';
-            wrap.style.cssText = 'display:flex; align-items:flex-end; gap:8px; margin-bottom:8px; flex-wrap:wrap;';
-            const refOptions = row.kind === 'bulk'
-                ? (availableBulk.map(b => `<option value="${b.id}" ${row.refId === b.id ? 'selected' : ''}>${b.coffee_name} — ${parseFloat(b.bulk_available).toFixed(2)} kg avail.</option>`).join('') || '<option value="">No bulk stock available</option>')
-                : (availablePackedLots.map(l => `<option value="${l.id}" ${row.refId === l.id ? 'selected' : ''}>${l.packed.custom_coffee_name || 'Roasted Coffee'} — ${l.packed.bag_size_g || '-'}g — lot ${l.lot_code} (${l.remaining_pcs} left)</option>`).join('') || '<option value="">No packed stock available</option>');
 
-            wrap.innerHTML = `
-                <div class="form-group" style="max-width:110px;">
-                    <label class="form-label">Type</label>
-                    <select class="form-control pb-row-kind" data-row="${rowId}">
-                        <option value="bulk" ${row.kind === 'bulk' ? 'selected' : ''}>Bulk (kg)</option>
-                        <option value="packed" ${row.kind === 'packed' ? 'selected' : ''}>Packed (bags)</option>
-                    </select>
-                </div>
-                <div class="form-group flex-1">
-                    <label class="form-label">Source</label>
-                    <select class="form-control pb-row-ref" data-row="${rowId}">${refOptions}</select>
-                </div>
-                <div class="form-group" style="max-width:130px;">
-                    <label class="form-label">${row.kind === 'bulk' ? 'Amount (kg)' : 'Amount (bags)'}</label>
-                    <input type="number" min="0" step="0.01" class="form-control pb-row-amount" data-row="${rowId}" value="${row.amount || ''}">
-                </div>
-                <button type="button" class="btn btn-danger btn-sm pb-row-remove" data-row="${rowId}" style="height:38px;">×</button>
-            `;
-            container.appendChild(wrap);
+        ingredients.forEach((ing, ingId) => {
+            ing.picks.forEach((pick, pickIdx) => {
+                const opt = optionByKey(pick.optionKey);
+                const wrap = document.createElement('div');
+                wrap.style.cssText = 'display:flex; align-items:flex-end; gap:8px; margin-bottom:6px; flex-wrap:wrap;';
+
+                let lotHtml = '<option value="">— single pool —</option>';
+                if (opt && opt.kind === 'packed') {
+                    lotHtml = opt.lots.map(l => `<option value="${l.id}" ${pick.lotId === l.id ? 'selected' : ''}>${l.lotCode} — ${l.remainingPcs} left</option>`).join('') || '<option value="">No lots</option>';
+                }
+
+                wrap.innerHTML = `
+                    <div class="form-group" style="max-width:230px; margin-bottom:0;">
+                        <label class="form-label">${pickIdx === 0 ? 'Coffee (source pool)' : '↳ another lot'}</label>
+                        <select class="form-control cb-opt-select" data-ing="${ingId}" data-pick="${pick.pickId}">${optionsHtml(pickIdx === 0 ? null : ing.greenCoffeeId, pick.optionKey)}</select>
+                    </div>
+                    <div class="form-group" style="max-width:80px; margin-bottom:0;">
+                        <label class="form-label">%</label>
+                        <input type="number" min="0" max="100" step="0.1" class="form-control cb-pct-input" data-ing="${ingId}" value="${pickIdx === 0 ? (ing.percentage || '') : ''}" ${pickIdx !== 0 ? 'disabled' : ''}>
+                    </div>
+                    <div class="form-group flex-1" style="min-width:150px; margin-bottom:0;">
+                        <label class="form-label">Source Lot</label>
+                        <select class="form-control cb-lot-select" data-ing="${ingId}" data-pick="${pick.pickId}" ${!opt || opt.kind !== 'packed' ? 'disabled' : ''}>${lotHtml}</select>
+                    </div>
+                    <div class="form-group" style="max-width:100px; margin-bottom:0;">
+                        <label class="form-label">Amount</label>
+                        <input type="text" class="form-control" value="${(pick.amount || 0).toFixed(2)} kg" disabled style="color:var(--text-muted); font-family:monospace;">
+                    </div>
+                    <button type="button" class="btn btn-danger btn-sm cb-remove-pick" data-ing="${ingId}" data-pick="${pick.pickId}" style="height:38px;">${ing.picks.length > 1 ? '×' : '🗑'}</button>
+                `;
+                container.appendChild(wrap);
+            });
+
+            const short = ing.filledKg < ing.requiredKg - 0.001;
+            const needLine = document.createElement('div');
+            needLine.style.cssText = `font-size:0.75rem; margin:-2px 0 10px; color:${short ? '#dc2626' : 'var(--success)'};`;
+            needLine.textContent = `${ing.filledKg.toFixed(2)} / ${ing.requiredKg.toFixed(2)} kg${short ? ' — ' + (ing.requiredKg - ing.filledKg).toFixed(2) + ' kg short' : ' ✓'}`;
+            container.appendChild(needLine);
+
+            const addLotBtn = document.createElement('button');
+            addLotBtn.type = 'button';
+            addLotBtn.className = 'btn btn-secondary btn-sm';
+            addLotBtn.style.cssText = 'width:100%; margin-bottom:14px;';
+            addLotBtn.textContent = '+ Add another lot for this ingredient';
+            addLotBtn.disabled = !ing.greenCoffeeId;
+            addLotBtn.addEventListener('click', () => {
+                ing.picks.push({ pickId: ++pickSeq, optionKey: '', lotId: null, amount: 0 });
+                recalcAll();
+            });
+            container.appendChild(addLotBtn);
         });
 
-        container.querySelectorAll('.pb-row-kind').forEach(sel => {
+        container.querySelectorAll('.cb-opt-select').forEach(sel => {
             sel.addEventListener('change', () => {
-                const rowId = parseInt(sel.getAttribute('data-row'));
-                const row = rows.get(rowId);
-                row.kind = sel.value;
-                row.refId = null;
-                renderSourceRows();
+                const ingId = parseInt(sel.getAttribute('data-ing'));
+                const pickId = parseInt(sel.getAttribute('data-pick'));
+                const ing = ingredients.get(ingId);
+                const pick = ing.picks.find(p => p.pickId === pickId);
+                pick.optionKey = sel.value;
+                pick.lotId = null;
+                const opt = optionByKey(sel.value);
+                if (opt) {
+                    if (!ing.greenCoffeeId) ing.greenCoffeeId = opt.greenCoffeeId;
+                    if (opt.kind === 'packed' && opt.lots[0]) pick.lotId = opt.lots[0].id;
+                }
+                recalcAll();
             });
         });
-        container.querySelectorAll('.pb-row-ref').forEach(sel => {
+        container.querySelectorAll('.cb-lot-select').forEach(sel => {
             sel.addEventListener('change', () => {
-                const rowId = parseInt(sel.getAttribute('data-row'));
-                const row = rows.get(rowId);
-                row.refId = sel.value ? parseInt(sel.value) : null;
-                renderComposition();
+                const ingId = parseInt(sel.getAttribute('data-ing'));
+                const pickId = parseInt(sel.getAttribute('data-pick'));
+                const pick = ingredients.get(ingId).picks.find(p => p.pickId === pickId);
+                pick.lotId = sel.value ? parseInt(sel.value) : null;
+                recalcAll();
             });
         });
-        container.querySelectorAll('.pb-row-amount').forEach(inp => {
+        container.querySelectorAll('.cb-pct-input').forEach(inp => {
             inp.addEventListener('input', () => {
-                const rowId = parseInt(inp.getAttribute('data-row'));
-                const row = rows.get(rowId);
-                row.amount = parseFloat(inp.value) || 0;
-                renderComposition();
+                const ingId = parseInt(inp.getAttribute('data-ing'));
+                ingredients.get(ingId).percentage = parseFloat(inp.value) || 0;
+                recalcAll();
             });
         });
-        container.querySelectorAll('.pb-row-remove').forEach(btn => {
+        container.querySelectorAll('.cb-remove-pick').forEach(btn => {
             btn.addEventListener('click', () => {
-                rows.delete(parseInt(btn.getAttribute('data-row')));
-                renderSourceRows();
-                renderComposition();
+                const ingId = parseInt(btn.getAttribute('data-ing'));
+                const pickId = parseInt(btn.getAttribute('data-pick'));
+                const ing = ingredients.get(ingId);
+                if (ing.picks.length > 1) {
+                    ing.picks = ing.picks.filter(p => p.pickId !== pickId);
+                } else {
+                    ingredients.delete(ingId);
+                }
+                recalcAll();
+            });
+        });
+    }
+
+    function renderSummary() {
+        const sumEl = document.getElementById('cb-pct-sum');
+        const totalEl = document.getElementById('cb-total-kg');
+        const banner = document.getElementById('cb-shortfall-banner');
+        const submitBtn = document.getElementById('cb-submit');
+        const targetKg = parseFloat(document.getElementById('cb-target')?.value) || 0;
+
+        const pctSum = [...ingredients.values()].reduce((s, ing) => s + (ing.percentage || 0), 0);
+        if (sumEl) {
+            sumEl.textContent = `Sum: ${pctSum.toFixed(1)}%`;
+            sumEl.style.color = Math.abs(pctSum - 100) < 0.1 ? 'var(--success)' : 'var(--warning)';
+        }
+        if (totalEl) totalEl.textContent = targetKg.toFixed(2) + ' kg';
+
+        const shortIngs = [...ingredients.values()].filter(ing => ing.filledKg < ing.requiredKg - 0.001);
+        if (shortIngs.length > 0 && targetKg > 0) {
+            const worstRatio = Math.min(...shortIngs.map(ing => ing.requiredKg > 0 ? ing.filledKg / ing.requiredKg : 1));
+            const suggestedMax = targetKg * worstRatio;
+            banner.classList.remove('hidden');
+            banner.innerHTML = `<b>${shortIngs.length} ingredient${shortIngs.length > 1 ? 's are' : ' is'} short</b> of what this target needs. Try a target weight of <b>${suggestedMax.toFixed(2)} kg</b> or less (the largest blend the currently-picked stock can fill), add another lot, or top up stock. "Create Blend" stays disabled until every ingredient is fully covered.`;
+            if (submitBtn) submitBtn.disabled = true;
+        } else {
+            banner.classList.add('hidden');
+            if (submitBtn) submitBtn.disabled = (ingredients.size === 0 || Math.abs(pctSum - 100) > 0.1 || targetKg <= 0);
+        }
+    }
+
+    function renderAll() {
+        renderIngredients();
+        renderSummary();
+    }
+
+    document.getElementById('cb-add-ingredient').addEventListener('click', () => {
+        ingredients.set(++ingSeq, { greenCoffeeId: null, percentage: 0, picks: [{ pickId: ++pickSeq, optionKey: '', lotId: null, amount: 0 }], requiredKg: 0, filledKg: 0 });
+        recalcAll();
+    });
+    document.getElementById('cb-target').addEventListener('input', recalcAll);
+
+    renderAll();
+
+    document.getElementById('cb-submit').addEventListener('click', async () => {
+        const name = (document.getElementById('cb-name').value || '').trim();
+        const coffeeCode = (document.getElementById('cb-coffee-code').value || '').trim();
+        const targetKg = parseFloat(document.getElementById('cb-target').value) || 0;
+
+        if (!name) { await showWarningModal('Please enter a blend name.', false); return; }
+        if (!coffeeCode) { await showWarningModal('Coffee Code is required.', false); return; }
+        if (targetKg <= 0) { await showWarningModal('Enter a target weight.', false); return; }
+        if (ingredients.size === 0) { await showWarningModal('Add at least one ingredient.', false); return; }
+
+        const pctSum = [...ingredients.values()].reduce((s, ing) => s + (ing.percentage || 0), 0);
+        if (Math.abs(pctSum - 100) > 0.1) { await showWarningModal(`Percentages must sum to 100% (currently ${pctSum.toFixed(1)}%).`, false); return; }
+
+        const stillShort = [...ingredients.values()].some(ing => ing.filledKg < ing.requiredKg - 0.001);
+        if (stillShort) { await showWarningModal('Some ingredients are still short of stock — add another lot or lower the target weight.', false); return; }
+
+        const sourceRows = [];
+        ingredients.forEach(ing => {
+            ing.picks.forEach(pick => {
+                if (!pick.optionKey || pick.amount <= 0) return;
+                const opt = optionByKey(pick.optionKey);
+                if (!opt) return;
+                sourceRows.push({ kind: opt.kind, refId: opt.refId, lotId: pick.lotId, amountKg: pick.amount });
             });
         });
 
-        renderComposition();
-    }
-
-    function addSourceRow() {
-        rows.set(++rowSeq, { kind: 'bulk', refId: null, amount: 0 });
-        renderSourceRows();
-    }
-
-    document.getElementById('pb-add-source').addEventListener('click', addSourceRow);
-    addSourceRow();
-
-    document.getElementById('pb-submit').addEventListener('click', async () => {
-        const name = (document.getElementById('pb-name').value || '').trim();
-        if (!name) { await showWarningModal('Please enter a blend name.', false); return; }
-
-        const valid = [...rows.values()].filter(r => r.refId && r.amount > 0);
-        if (valid.length === 0) { await showWarningModal('Add at least one source.', false); return; }
-
-        // FIFO check for packed sources: warn (Proceed/Cancel) if a picked
-        // lot isn't the oldest available lot for that coffee+size — same
-        // pattern as the dispatch checkout modal's mismatch warning.
-        for (const r of valid) {
-            if (r.kind !== 'packed') continue;
-            const lot = availablePackedLots.find(l => l.id === r.refId);
-            if (!lot) continue;
-            const fifoLotId = fifoLotIdFor(lot.packed_coffee_id);
-            if (fifoLotId && fifoLotId !== lot.id) {
-                const fifoLot = availablePackedLots.find(l => l.id === fifoLotId);
-                const proceed = await showWarningModal(
-                    `An older lot is still in stock: ${fifoLot.lot_code} (packed ${fifoLot.packed_date}).\n\nThis is a newer lot (${lot.lot_code}). Use it anyway?`,
-                    true
-                );
-                if (!proceed) return;
-            }
-        }
-
-        await submitCustomPostBlend(name, valid);
+        await submitCustomBlend({ name, coffeeCode, targetKg, sourceRows });
     });
 }
 
-async function submitCustomPostBlend(name, sourceRows) {
-    // Re-fetch fresh right before mutating, same idiom as openPackBulkModal's
-    // bulk_available decrement, to avoid acting on a stale snapshot.
+async function submitCustomBlend({ name, coffeeCode, targetKg, sourceRows }) {
+    // Re-fetch fresh right before mutating, same idiom used elsewhere (e.g.
+    // openPackBulkModal's bulk_available decrement), to avoid acting on a
+    // stale snapshot.
     const [
         { data: freshBulkList },
         { data: freshPackedLots },
@@ -415,28 +537,29 @@ async function submitCustomPostBlend(name, sourceRows) {
             const fresh = (freshBulkList || []).find(b => b.id === row.refId);
             if (!fresh) continue;
             const avail = parseFloat(fresh.bulk_available) || 0;
-            const kg = Math.min(row.amount, avail); // capped — never draws more than exists
+            const kg = Math.min(row.amountKg, avail); // capped — never draws more than exists
             if (kg <= 0) continue;
             fresh.bulk_available = Math.max(0, avail - kg);
             await saveData('bulk_roasted_coffee', fresh);
             totalKg += kg;
             componentsToInsert.push({ source_type: 'Bulk', source_bulk_id: row.refId, source_packed_lot_id: null, kg });
         } else {
-            const lot = (freshPackedLots || []).find(l => l.id === row.refId);
+            const lot = (freshPackedLots || []).find(l => l.id === row.lotId);
             if (!lot) continue;
             const packedRow = (freshPacked || []).find(p => p.id === lot.packed_coffee_id);
             const bagSizeG = packedRow ? (parseFloat(packedRow.bag_size_g) || 0) : 0;
             const availPcs = parseInt(lot.remaining_pcs) || 0;
-            const bags = Math.min(row.amount, availPcs); // capped
-            if (bags <= 0) continue;
-            const kg = bags * (bagSizeG / 1000);
-            await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: Math.max(0, availPcs - bags) });
+            const availKg = availPcs * (bagSizeG / 1000);
+            const kg = Math.min(row.amountKg, availKg); // capped
+            if (kg <= 0) continue;
+            const bagsUsed = bagSizeG > 0 ? Math.round(kg / (bagSizeG / 1000)) : 0;
+            await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: Math.max(0, availPcs - bagsUsed) });
             if (packedRow) {
-                packedRow.quantity = Math.max(0, (parseInt(packedRow.quantity) || 0) - bags);
+                packedRow.quantity = Math.max(0, (parseInt(packedRow.quantity) || 0) - bagsUsed);
                 await saveData('packed_coffee', packedRow);
             }
             totalKg += kg;
-            componentsToInsert.push({ source_type: 'Packed', source_bulk_id: null, source_packed_lot_id: row.refId, kg });
+            componentsToInsert.push({ source_type: 'Packed', source_bulk_id: null, source_packed_lot_id: row.lotId, kg });
         }
     }
 
@@ -445,14 +568,17 @@ async function submitCustomPostBlend(name, sourceRows) {
         return;
     }
 
-    // Date-based blend code, collision-safe (same retry idea as the green
+    // Date-based bulk/lot code, collision-safe (same retry idea as the green
     // coffee lot codes in 1A — append a numeric suffix if today's base code
-    // is already taken by an earlier blend made the same day).
+    // is already taken by an earlier blend made the same day). CB- prefix
+    // (Custom Blend) keeps it visually distinct from 1I-b's PB- (recipe-
+    // assembled post-blend) codes, even though both share the same
+    // custom_blend_code column/uniqueness check.
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    let code = `PB-${dateStr}`;
+    let code = `CB-${dateStr}`;
     let suffix = 2;
     while ((freshBulkList || []).some(b => b.custom_blend_code === code)) {
-        code = `PB-${dateStr}-${suffix++}`;
+        code = `CB-${dateStr}-${suffix++}`;
     }
 
     const { data: newBulk, error } = await saveData('bulk_roasted_coffee', {
@@ -461,6 +587,7 @@ async function submitCustomPostBlend(name, sourceRows) {
         is_post_blend: true,
         custom_blend_name: name,
         custom_blend_code: code,
+        custom_coffee_code: coffeeCode,
         bulk_available: totalKg,
         machine_id: null,
         single_coffee_id: null,
@@ -480,7 +607,8 @@ async function submitCustomPostBlend(name, sourceRows) {
     if (closeBtn) closeBtn.click();
 
     await showWarningModal(`Blend "${name}" created — ${totalKg.toFixed(2)} kg, code ${code}.`, false);
-    await loadPackingSection();
+    await loadCustomBlendSection();
+    scheduleDashboardRefresh();
 }
 
 async function loadPackingRecordsTable() {

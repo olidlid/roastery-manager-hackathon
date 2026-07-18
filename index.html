@@ -182,7 +182,7 @@
             </form>
 
             <!-- Version -->
-            <p style="text-align: center; font-size: 0.7rem; color: var(--text-muted); margin-top: 20px; margin-bottom: 0;">v2.0.0</p>
+            <p style="text-align: center; font-size: 0.7rem; color: var(--text-muted); margin-top: 20px; margin-bottom: 0;">v2.2.0</p>
         </div>
     </div>
 
@@ -709,6 +709,7 @@
                         <button class="tab-btn active" data-tab="tab-roast-plans"><span data-i18n="tab_roast_plans">Plans</span><span id="badge-tab-roast-plans" class="tab-notif-badge hidden"></span></button>
                         <button class="tab-btn" data-tab="tab-roast-logs" data-i18n="tab_roast_logs">Batch Logs</button>
                         <button class="tab-btn" data-tab="tab-blend-recipes" data-i18n="tab_recipes">Blend Recipes</button>
+                        <button class="tab-btn" data-tab="tab-custom-blend" data-i18n="tab_custom_blend">Custom Blend</button>
                         <button class="tab-btn" data-tab="tab-recipe-potential" data-i18n="tab_potential">Production Potential</button>
                         <button class="tab-btn" data-tab="tab-daily-achievement">Daily Achievement</button>
                     </div>
@@ -886,6 +887,40 @@
                                     </thead>
                                     <tbody id="recipe-table-body">
                                         <!-- Dynamically loaded blend recipes -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB: Custom Blend — ad-hoc mixes of existing bulk/packed stock into
+                         a new bulk item, driven by a manually-typed composition (not a saved
+                         blend_recipes row — this is deliberately NOT a reusable recipe). -->
+                    <div id="tab-custom-blend" class="tab-content hidden">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <div>
+                                    <h3 class="card-title" style="margin-bottom: 4px;" data-i18n="custom_blend_title">Custom Blend History</h3>
+                                    <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="custom_blend_hint">Ad-hoc blends mixed from existing stock — not saved as a reusable recipe.</p>
+                                </div>
+                                <button type="button" id="btn-add-custom-blend" class="btn btn-primary btn-sm" data-i18n="btn_add_custom_blend">
+                                    <i class="lucide-plus"></i> Add Custom Blend
+                                </button>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_date">Date</th>
+                                            <th data-i18n="col_blend_code">Blend Code</th>
+                                            <th data-i18n="col_coffee_code">Coffee Code</th>
+                                            <th data-i18n="col_blend_name">Blend Name</th>
+                                            <th data-i18n="col_composition">Composition</th>
+                                            <th data-i18n="col_total">Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="custom-blend-table-body">
+                                        <!-- Dynamically loaded custom blend history -->
                                     </tbody>
                                 </table>
                             </div>
@@ -1070,10 +1105,6 @@
                                 <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="ready_to_pack_hint">Bulk roasted coffee available for printing labels and packing.</p>
                             </div>
                             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                                <button type="button" id="btn-create-post-blend" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
-                                    <span data-i18n="btn_create_post_blend">Create Post-Blend</span>
-                                </button>
                                 <button type="button" id="btn-custom-packing" class="btn btn-secondary btn-sm" style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                     <span data-i18n="btn_manual_add_stock">Add Manual Packed Stock</span>
@@ -2394,18 +2425,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=12"></script>
+    <script src="js/translations.js?v=13"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
     <script src="js/auth.js?v=9"></script>
     <script src="js/greenbean.js?v=11"></script>
-    <script src="js/roasting.js?v=12"></script>
-    <script src="js/packing.js?v=26"></script>
+    <script src="js/roasting.js?v=14"></script>
+    <script src="js/packing.js?v=27"></script>
     <script src="js/sales.js?v=10"></script>
     <script src="js/settings.js?v=9"></script>
     <script src="js/tracking.js?v=6"></script>
-    <script src="js/app.js?v=66"></script>
+    <script src="js/app.js?v=67"></script>
 </body>
 </html>

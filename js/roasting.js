@@ -19,6 +19,9 @@ async function loadRoastingTabSpecificData(tabId) {
         case 'tab-blend-recipes':
             await loadBlendRecipes();
             break;
+        case 'tab-custom-blend':
+            await loadCustomBlendSection();
+            break;
         case 'tab-recipe-potential':
             await loadRecipeProductionPotential();
             break;
@@ -524,6 +527,74 @@ async function openLowComponentModal(recipeId) {
     `;
 
     openModal(modalTitle, html, '450px');
+}
+
+// --- TAB: Custom Blend history ---
+// The history is just the existing bulk_roasted_coffee + post_blend_components
+// data (from the Custom Blend flow in js/packing.js openCustomBlendModal),
+// surfaced in its own tab instead of a brand-new schema. Filtered to exclude
+// 1I-b's recipe-assembled blends (those carry source_plan_id) — Custom Blend
+// rows never have one, since they're populated via post_blend_components
+// instead of a parent roasting plan.
+async function loadCustomBlendSection() {
+    const tbody = document.getElementById('custom-blend-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const [
+        { data: bulkList },
+        { data: components },
+        { data: packedLots },
+        { data: packedList }
+    ] = await Promise.all([
+        fetchData('bulk_roasted_coffee'),
+        fetchData('post_blend_components'),
+        fetchData('packed_coffee_lots'),
+        fetchData('packed_coffee')
+    ]);
+
+    const customBlends = (bulkList || [])
+        .filter(b => b.is_post_blend && !b.source_plan_id)
+        .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+    if (customBlends.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center-muted">No custom blends created yet.</td></tr>';
+        return;
+    }
+
+    customBlends.forEach(bulk => {
+        const comps = (components || []).filter(c => c.blend_bulk_id === bulk.id);
+        const totalKg = comps.reduce((s, c) => s + (parseFloat(c.kg) || 0), 0);
+        const kgByLabel = new Map();
+        comps.forEach(c => {
+            let label = 'Unknown';
+            if (c.source_type === 'Bulk') {
+                const src = (bulkList || []).find(b => b.id === c.source_bulk_id);
+                label = src ? src.coffee_name : 'Unknown';
+            } else {
+                const lot = (packedLots || []).find(l => l.id === c.source_packed_lot_id);
+                const packed = lot ? (packedList || []).find(p => p.id === lot.packed_coffee_id) : null;
+                label = packed ? (packed.custom_coffee_name || 'Roasted Coffee') : 'Unknown';
+            }
+            kgByLabel.set(label, (kgByLabel.get(label) || 0) + (parseFloat(c.kg) || 0));
+        });
+        const compSummary = Array.from(kgByLabel.entries()).map(([label, kg]) => {
+            const pct = totalKg > 0 ? (kg / totalKg * 100) : 0;
+            return `${label} ${pct.toFixed(0)}%`;
+        }).join(' · ');
+
+        const dateStr = (bulk.created_at || '').split('T')[0] || '-';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${dateStr}</td>
+            <td><code>${bulk.custom_blend_code || '-'}</code></td>
+            <td><code>${bulk.custom_coffee_code || '-'}</code></td>
+            <td><strong>${bulk.custom_blend_name || bulk.coffee_name}</strong></td>
+            <td style="font-size:0.8rem; color:var(--text-muted);">${compSummary || '-'}</td>
+            <td>${totalKg.toFixed(2)} kg</td>
+        `;
+        tbody.appendChild(tr);
+    });
 }
 
 // --- TAB 3: Blend Recipes ---
@@ -1306,9 +1377,9 @@ if (document.getElementById('btn-custom-packing')) {
         openCustomPackingModal();
     });
 }
-if (document.getElementById('btn-create-post-blend')) {
-    document.getElementById('btn-create-post-blend').addEventListener('click', () => {
-        openCustomPostBlendModal();
+if (document.getElementById('btn-add-custom-blend')) {
+    document.getElementById('btn-add-custom-blend').addEventListener('click', () => {
+        openCustomBlendModal();
     });
 }
 
