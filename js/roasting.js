@@ -3190,11 +3190,31 @@ async function printStickerLabel(id) {
     }
 
     document.getElementById('btn-execute-label-print').addEventListener('click', () => {
+        // Same printer-driver rotation workaround as buildFixedLabelDocument
+        // (packing.js) — see that function's comment for the geometry. The
+        // preview above always stays landscape; only the actual print
+        // window's @page/.sticker-item CSS change when the toggle is on.
+        const rotate = companySettings.label_rotate_90 === true;
+        const printStickerCss = rotate
+            ? `@page { size: 25mm 50mm; margin: 1mm; }
+               body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+               .sticker-item {
+                   width: 48mm; height: 23mm; box-sizing: border-box;
+                   display: flex; flex-direction: column; align-items: center; justify-content: center;
+                   gap: 0.6mm; text-align: center; padding: 0 1mm;
+                   position: relative; left: 23mm; top: 0;
+                   transform: rotate(90deg); transform-origin: top left;
+               }
+               .sticker-svg { max-width: 100%; max-height: 11mm; width: auto; height: auto; display: block; margin: 0 auto; }
+               .lbl-line { font-size: 11px; font-weight: 700; line-height: 1; }
+               .lbl-line-bold { font-size: 13px; }`
+            : `${stickerStyleBase} .sticker-item { height: 100vh; }`;
+
         const printWin = window.open('', '', 'width=400,height=300');
         printWin.document.write(`
             <html><head><title>Print Label</title>
             <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
-            <style>${stickerStyleBase} .sticker-item { height: 100vh; }</style></head>
+            <style>${printStickerCss}</style></head>
             <body>
                 <div class="sticker-item">
                     <svg id="print-barcode" class="sticker-svg"></svg>

@@ -91,6 +91,13 @@ let companySettings = {
         roasting: { coffee_name: true, machine: true, coffee_code: true },
         packed: { code: true, coffee_name: true, dates: true, machine: true },
     },
+    // Some thermal printer drivers force their own fixed (portrait) media
+    // orientation regardless of the page's own declared size, so the correct
+    // landscape 50x25mm label preview still comes out rotated on paper. This
+    // is a per-printer quirk, not a bug in every setup, so it's an opt-in
+    // toggle rather than always-on — see buildFixedLabelDocument (packing.js)
+    // and printStickerLabel (roasting.js) for where it's applied.
+    label_rotate_90: false,
 };
 
 // Seed initial offline mock databases (used if not connected to Supabase)
@@ -428,6 +435,9 @@ function applyCompanySettings() {
         document.getElementById('sett-packed-label-show-coffee-name').checked = packedLayout.coffee_name !== false;
         document.getElementById('sett-packed-label-show-dates').checked = packedLayout.dates !== false;
         document.getElementById('sett-packed-label-show-machine').checked = packedLayout.machine !== false;
+    }
+    if (document.getElementById('sett-label-rotate-90')) {
+        document.getElementById('sett-label-rotate-90').checked = companySettings.label_rotate_90 === true;
     }
 }
 

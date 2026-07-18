@@ -1723,14 +1723,40 @@ function printLotBarcodeLabels(lot, requested, machines) {
 // old 1.1 to 2.2 (JsBarcode units) — the old value produced sub-0.2mm bars
 // once scaled into the 8mm-tall zone, well under the ~0.33mm minimum most
 // thermal printers can reproduce without dot-gain merging adjacent bars.
+// `rotate` (companySettings.label_rotate_90) is a per-printer workaround: some
+// thermal drivers force their own fixed PORTRAIT media regardless of this
+// page's declared landscape @page size, so a correctly-landscape preview
+// still prints rotated on paper. When on, @page is declared as the printer's
+// forced portrait shape (25x50mm) and .barcode-label-item — still a normal
+// block-flow element so page-break-after keeps working — is drawn at its
+// original landscape size (48x23mm) then rotated 90° and shifted by its own
+// width via `left`, which (relative positioning only offsets the paint, it
+// doesn't remove the element from flow) lands it exactly filling the portrait
+// page's content box. See index.html Settings > Production > Label Layout >
+// Print Orientation for the toggle.
 function buildFixedLabelDocument(labelsHtml, showCode) {
-    return `
-        <html><head><title>Barcode Labels</title>
-        <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
-        <style>
-            @page { size: 50mm 25mm; margin: 1mm; }
-            body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
-            .barcode-label-item {
+    const rotate = companySettings.label_rotate_90 === true;
+    const pageCss = rotate
+        ? `@page { size: 25mm 50mm; margin: 1mm; }`
+        : `@page { size: 50mm 25mm; margin: 1mm; }`;
+    const itemCss = rotate
+        ? `.barcode-label-item {
+                width: 48mm;
+                height: 23mm;
+                box-sizing: border-box;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                padding: 0 1mm;
+                page-break-after: always;
+                position: relative;
+                left: 23mm;
+                top: 0;
+                transform: rotate(90deg);
+                transform-origin: top left;
+           }`
+        : `.barcode-label-item {
                 width: 100%;
                 box-sizing: border-box;
                 display: flex;
@@ -1739,7 +1765,14 @@ function buildFixedLabelDocument(labelsHtml, showCode) {
                 text-align: center;
                 padding: 0 1mm;
                 page-break-after: always;
-            }
+           }`;
+    return `
+        <html><head><title>Barcode Labels</title>
+        <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
+        <style>
+            ${pageCss}
+            body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+            ${itemCss}
             .barcode-label-item:last-child { page-break-after: auto; }
             /* Barcode zone is a FIXED mm box, set once here — it never
                grows/shrinks based on which optional text lines print below

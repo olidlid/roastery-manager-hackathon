@@ -816,6 +816,28 @@ document.getElementById('settings-packed-label-form').addEventListener('submit',
     });
 });
 
+// Printer-driver workaround (see index.html comment above the checkbox) —
+// a single flag applied to every fixed 50x25mm label print (roasting batch
+// log, packed coffee, green bean "Kecil"), not per-sticker-type, since it's
+// the same physical printer/driver causing it either way.
+document.getElementById('settings-label-rotate-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    companySettings.label_rotate_90 = document.getElementById('sett-label-rotate-90').checked;
+
+    if (isMockMode) {
+        localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
+    } else {
+        const { error } = await upsertData('company_settings', { id: 1, label_rotate_90: companySettings.label_rotate_90 });
+        if (error) {
+            alert("Failed to save label settings: " + error.message);
+            return;
+        }
+    }
+
+    applyCompanySettings();
+    alert(window.t("alert_settings_saved"));
+});
+
 // Logo base64 converter
 document.getElementById('sett-logo-upload').addEventListener('change', (e) => {
     const file = e.target.files[0];

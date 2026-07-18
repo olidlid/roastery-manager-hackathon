@@ -2187,6 +2187,25 @@
                                             </div>
                                         </form>
 
+                                        <div style="border-top: 1px solid var(--border);"></div>
+
+                                        <!-- Sub-section: printer orientation workaround. Some thermal
+                                             printer drivers force their own fixed (portrait) media
+                                             regardless of this app's declared @page size, so the correct
+                                             landscape 50x25mm preview still prints rotated on paper. This
+                                             rotates the label content 90° so it comes out reading correctly
+                                             on those printers — leave off if labels already print fine. -->
+                                        <form id="settings-label-rotate-form">
+                                            <label class="form-label" style="font-weight: 700;" data-i18n="lbl_label_orientation">Print Orientation</label>
+                                            <p style="margin: 2px 0 8px; font-size:0.75rem; color:var(--text-muted);" data-i18n="lbl_label_rotate_hint">Only enable this if your printer prints these 50×25mm labels rotated (portrait instead of landscape).</p>
+                                            <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
+                                                <input type="checkbox" id="sett-label-rotate-90"> <span data-i18n="lbl_label_rotate_chk">Rotate label 90° for printing</span>
+                                            </label>
+                                            <div style="display: flex; justify-content: flex-end; margin-top: 15px;">
+                                                <button type="submit" class="btn btn-primary btn-sm" data-i18n="btn_save_label">Save Label Settings</button>
+                                            </div>
+                                        </form>
+
                                     </div>
                                 </div>
                             </div>
@@ -2450,18 +2469,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=15"></script>
+    <script src="js/translations.js?v=16"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
     <script src="js/auth.js?v=9"></script>
     <script src="js/greenbean.js?v=12"></script>
-    <script src="js/roasting.js?v=15"></script>
-    <script src="js/packing.js?v=28"></script>
+    <script src="js/roasting.js?v=16"></script>
+    <script src="js/packing.js?v=29"></script>
     <script src="js/sales.js?v=10"></script>
-    <script src="js/settings.js?v=9"></script>
+    <script src="js/settings.js?v=10"></script>
     <script src="js/tracking.js?v=6"></script>
-    <script src="js/app.js?v=68"></script>
+    <script src="js/app.js?v=69"></script>
 </body>
 </html>
