@@ -736,14 +736,16 @@ async function loadPackingRequestsSection() {
         { data: greenbeans },
         { data: recipes },
         { data: machines },
-        { data: customers }
+        { data: customers },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
         fetchData('machines'),
-        fetchData('customers')
+        fetchData('customers'),
+        fetchData('code_definitions')
     ]);
     
     const container = document.getElementById('packing-requests-cards');
@@ -785,7 +787,10 @@ async function loadPackingRequestsSection() {
             const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
 
             let coffeeName = '';
-            if (type === 'Single') {
+            if (item.coffee_code) {
+                const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+                coffeeName = def ? `${def.name} (Single)` : `Code ${item.coffee_code}`;
+            } else if (type === 'Single') {
                 const gb = (greenbeans || []).find(g => g.id === coffeeId);
                 coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
             } else {
@@ -883,7 +888,8 @@ async function openDispatchCheckoutModal(orderId) {
         { data: greenbeans },
         { data: recipes },
         { data: customers },
-        { data: roastBatches }
+        { data: roastBatches },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
@@ -893,7 +899,8 @@ async function openDispatchCheckoutModal(orderId) {
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
         fetchData('customers'),
-        fetchData('roast_batches')
+        fetchData('roast_batches'),
+        fetchData('code_definitions')
     ]);
 
     const order = (orders || []).find(o => o.id === orderId);
@@ -919,25 +926,38 @@ async function openDispatchCheckoutModal(orderId) {
         return null;
     }
 
-    function coffeeLabel(type, coffeeId) {
-        if (type === 'Single') {
-            const gb = (greenbeans || []).find(g => g.id === coffeeId);
+    function coffeeLabel(item) {
+        if (item.coffee_code) {
+            const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+            return def ? `${def.name} (Single)` : `Code ${item.coffee_code}`;
+        }
+        if (item.coffee_type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === item.single_coffee_id);
             return gb ? `${gb.name} (Single)` : 'Single Origin';
         }
-        const r = (recipes || []).find(rec => rec.id === coffeeId);
+        const r = (recipes || []).find(rec => rec.id === item.blend_recipe_id);
         return r ? `${r.name} (Blend)` : 'Blend Recipe';
     }
 
     // For every order line, find ALL packed_coffee_lots for that coffee+size
     // (across every machine, so a machine-mismatch pick is still visible —
     // just flagged, per the "warn instead of block" decision), oldest first.
+    // A coffee_code (trade-name) item widens this further: it can draw from
+    // ANY origin sharing the code, not one exact single_coffee_id — deciding
+    // which origin fulfills a "Fantastica" order is exactly what this modal
+    // is for, FIFO-recommended via the existing tag/override UX below.
     const lotsByItem = {};
     items.forEach(item => {
         const itemCoffeeId = item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
+        const codeGroupIds = item.coffee_code
+            ? (greenbeans || []).filter(g => g.code === item.coffee_code).map(g => g.id)
+            : null;
         const matchingPacked = (packedGoods || []).filter(p => {
             if (parseInt(p.bag_size_g) !== parseInt(item.bag_size_g)) return false;
             const idn = resolvePackedIdentity(p);
-            return idn && idn.type === item.coffee_type && idn.coffeeId === itemCoffeeId;
+            if (!idn) return false;
+            if (codeGroupIds) return idn.type === 'Single' && codeGroupIds.includes(idn.coffeeId);
+            return idn.type === item.coffee_type && idn.coffeeId === itemCoffeeId;
         });
         const packedIds = new Set(matchingPacked.map(p => p.id));
         const machineByPackedId = new Map(matchingPacked.map(p => [p.id, p.machine_id]));
@@ -967,6 +987,9 @@ async function openDispatchCheckoutModal(orderId) {
     const machineName = (id) => { const m = (machines || []).find(mm => mm.id === id); return m ? m.name : 'Unknown'; };
     const fifoLotForItemMachine = (itemId) => {
         const item = items.find(i => i.id === itemId);
+        // A trade-name item isn't tied to one machine — the oldest lot from
+        // ANY origin/machine sharing the code is the FIFO recommendation.
+        if (item.coffee_code) return (lotsByItem[itemId] || [])[0] || null;
         return (lotsByItem[itemId] || []).find(l => l.machineId === item.machine_id) || null;
     };
     const alreadyInCartForItem = (itemId) => {
@@ -976,7 +999,7 @@ async function openDispatchCheckoutModal(orderId) {
     };
 
     const itemOptionsHtml = items.map(item => {
-        const label = `${coffeeLabel(item.coffee_type, item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id)} — ${item.bag_size_g}g, ${machineName(item.machine_id)}`;
+        const label = `${coffeeLabel(item)} — ${item.bag_size_g}g, ${machineName(item.machine_id)}`;
         return `<option value="${item.id}">${label}</option>`;
     }).join('');
 
@@ -1038,7 +1061,7 @@ async function openDispatchCheckoutModal(orderId) {
             const remaining = Math.max(0, requested - fulfilled);
             return `
                 <tr>
-                    <td>${coffeeLabel(item.coffee_type, item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id)}</td>
+                    <td>${coffeeLabel(item)}</td>
                     <td class="text-secondary-xs">${item.bag_size_g}g, ${machineName(item.machine_id)}</td>
                     <td class="text-right">${requested}</td>
                     <td class="text-right">${fulfilled}</td>
@@ -1085,9 +1108,17 @@ async function openDispatchCheckoutModal(orderId) {
         const itemId = parseInt(document.getElementById('dc-manual-item').value);
         const item = items.find(i => i.id === itemId);
         const lots = lotsByItem[itemId] || [];
+        const fifo = fifoLotForItemMachine(itemId);
         const lotSelect = document.getElementById('dc-manual-lot');
         lotSelect.innerHTML = lots.map(l => {
-            const isFifo = fifoLotForItemMachine(itemId) && fifoLotForItemMachine(itemId).id === l.id && l.machineId === item.machine_id;
+            if (item.coffee_code) {
+                // Any origin/machine sharing the code is a valid pick — no
+                // "different machine" mismatch concept here, just FIFO.
+                const isFifo = fifo && fifo.id === l.id;
+                const tag = isFifo ? ' (FIFO)' : ` — ${machineName(l.machineId)}`;
+                return `<option value="${l.id}">${l.lotCode} — ${liveRemaining[l.id]} left${tag}</option>`;
+            }
+            const isFifo = fifo && fifo.id === l.id && l.machineId === item.machine_id;
             const mismatch = l.machineId !== item.machine_id;
             const tag = mismatch ? ` — ${machineName(l.machineId)} (different machine)` : (isFifo ? ' (FIFO)' : '');
             return `<option value="${l.id}">${l.lotCode} — ${liveRemaining[l.id]} left${tag}</option>`;
@@ -1104,7 +1135,7 @@ async function openDispatchCheckoutModal(orderId) {
         const prepared = parseInt(item.quantity_prepared) || 0;
         const remainingForLine = requested - prepared - alreadyInCartForItem(itemId);
         if (remainingForLine <= 0) {
-            await showWarningModal(`This line (${coffeeLabel(item.coffee_type, item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id)}, ${item.bag_size_g}g) is already fully allocated.`, false);
+            await showWarningModal(`This line (${coffeeLabel(item)}, ${item.bag_size_g}g) is already fully allocated.`, false);
             return;
         }
 
@@ -1113,7 +1144,9 @@ async function openDispatchCheckoutModal(orderId) {
         if (!chosenLot) { alert('That lot is not available for this coffee/size.'); return; }
 
         const fifoLot = fifoLotForItemMachine(itemId);
-        const machineMismatch = chosenLot.machineId !== item.machine_id;
+        // A trade-name item isn't tied to one machine/origin — no such thing
+        // as a "different machine" mismatch, only a FIFO recommendation.
+        const machineMismatch = !item.coffee_code && chosenLot.machineId !== item.machine_id;
         const fifoMismatch = !machineMismatch && fifoLot && fifoLot.id !== chosenLot.id;
         if (machineMismatch || fifoMismatch) {
             const msg = machineMismatch
@@ -1127,9 +1160,12 @@ async function openDispatchCheckoutModal(orderId) {
 
         // Spill oldest-first within the CHOSEN lot's own machine group if it
         // runs short — same idea as the green-bean side (1B), just scoped to
-        // whichever machine the operator actually committed to here.
+        // whichever machine the operator actually committed to here. A
+        // trade-name item spills across EVERY origin/machine sharing the
+        // code instead, since none of them is "the" expected machine.
         let toDraw = cappedQty;
-        const sameMachinePool = lots.filter(l => l.machineId === chosenLot.machineId).sort((a, b) => new Date(a.packedDate) - new Date(b.packedDate) || a.id - b.id);
+        const sameMachinePool = (item.coffee_code ? lots : lots.filter(l => l.machineId === chosenLot.machineId))
+            .sort((a, b) => new Date(a.packedDate) - new Date(b.packedDate) || a.id - b.id);
         const startIdx = sameMachinePool.findIndex(l => l.id === chosenLot.id);
         for (let i = startIdx; i < sameMachinePool.length && toDraw > 0; i++) {
             const l = sameMachinePool[i];
@@ -1326,29 +1362,34 @@ async function printOrderDetail(orderId) {
         { data: orderItems },
         { data: greenbeans },
         { data: recipes },
-        { data: machines }
+        { data: machines },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
-        fetchData('machines')
+        fetchData('machines'),
+        fetchData('code_definitions')
     ]);
-    
+
     const order = (orders || []).find(o => o.id === orderId);
     if (!order) return;
     const items = (orderItems || []).filter(i => i.request_order_id === orderId);
-    
+
     let itemsTableRows = '';
     let totalBags = 0;
     let totalWeightKg = 0;
-    
+
     for (let idx = 0; idx < items.length; idx++) {
         const item = items[idx];
         const type = item.coffee_type;
         const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
         let coffeeName = '';
-        if (type === 'Single') {
+        if (item.coffee_code) {
+            const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+            coffeeName = def ? def.name : `Code ${item.coffee_code}`;
+        } else if (type === 'Single') {
             const gb = (greenbeans || []).find(g => g.id === coffeeId);
             coffeeName = gb ? gb.name : 'Single Origin';
         } else {
@@ -2911,13 +2952,15 @@ async function loadPackingHistorySection() {
         { data: orderItems },
         { data: greenbeans },
         { data: recipes },
-        { data: machines }
+        { data: machines },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
-        fetchData('machines')
+        fetchData('machines'),
+        fetchData('code_definitions')
     ]);
     const tbody = document.getElementById('packing-history-table-body');
     if (!tbody) return;
@@ -2956,7 +2999,10 @@ async function loadPackingHistorySection() {
                 const type = item.coffee_type;
                 const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
                 let coffeeName = '';
-                if (type === 'Single') {
+                if (item.coffee_code) {
+                    const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+                    coffeeName = def ? def.name : `Code ${item.coffee_code}`;
+                } else if (type === 'Single') {
                     const gb = (greenbeans || []).find(g => g.id === coffeeId);
                     coffeeName = gb ? gb.name : 'Single Origin';
                 } else {
@@ -3032,31 +3078,36 @@ async function printWaybill(orderId) {
         { data: greenbeans },
         { data: recipes },
         { data: machines },
-        { data: customers }
+        { data: customers },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
         fetchData('machines'),
-        fetchData('customers')
+        fetchData('customers'),
+        fetchData('code_definitions')
     ]);
 
     const order = (orders || []).find(o => o.id === orderId);
     if (!order) return;
     const items = (orderItems || []).filter(i => i.request_order_id === orderId);
     const customer = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
-    
+
     let itemsTableRows = '';
     let totalBags = 0;
     let totalWeightKg = 0;
-    
+
     for (let idx = 0; idx < items.length; idx++) {
         const item = items[idx];
         const type = item.coffee_type;
         const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
         let coffeeName = '';
-        if (type === 'Single') {
+        if (item.coffee_code) {
+            const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+            coffeeName = def ? def.name : `Code ${item.coffee_code}`;
+        } else if (type === 'Single') {
             const gb = (greenbeans || []).find(g => g.id === coffeeId);
             coffeeName = gb ? gb.name : 'Single Origin';
         } else {

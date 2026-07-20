@@ -1074,6 +1074,7 @@ async function loadSettingTabSpecificData(tabId) {
         case 'tab-sett-production':
             await loadMachinesSection();
             await loadPackagingSizesTable();
+            await loadCodeDefinitionsTable();
             await loadMinQtySettings();
             await loadCompanySettings();
             break;

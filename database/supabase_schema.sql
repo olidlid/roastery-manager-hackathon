@@ -113,6 +113,20 @@ CREATE TABLE IF NOT EXISTS public.green_coffee (
     -- it directly once 1A/1B ship (they write green_coffee_lots instead).
 );
 
+-- 4b. Code Definitions — added 2026-07-21. Maps a green_coffee.code value to a
+-- stable Sales-facing trade name (e.g. code 2 = "Fantastica"), since one code
+-- can be reused across multiple green_coffee rows over time as the actual
+-- physical origin behind a trade name changes. No FK to green_coffee.code
+-- (that column isn't unique/FK'd anywhere else — loose text match by design,
+-- same convention as resolvePackedGreenCoffeeId in js/packing.js). See
+-- database/v2_code_definitions_migration.sql.
+CREATE TABLE IF NOT EXISTS public.code_definitions (
+    id SERIAL PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 5. Green bean intake / arrival history
 CREATE TABLE IF NOT EXISTS public.green_coffee_intake (
     id SERIAL PRIMARY KEY,
@@ -409,7 +423,11 @@ CREATE TABLE IF NOT EXISTS public.request_order_items (
     request_order_id INTEGER REFERENCES public.request_orders(id) ON DELETE CASCADE, -- added 2026-07-06
     quantity_allocated INTEGER DEFAULT 0,       -- added 2026-07-06
     quantity_pending INTEGER DEFAULT 0,         -- added 2026-07-06
-    quantity_prepared INTEGER DEFAULT 0         -- added 2026-07-06 (packing progress at Order Requests stage; distinct from quantity_allocated, which is set at Dispatch Approval time)
+    quantity_prepared INTEGER DEFAULT 0,        -- added 2026-07-06 (packing progress at Order Requests stage; distinct from quantity_allocated, which is set at Dispatch Approval time)
+    coffee_code TEXT                            -- added 2026-07-21: set (with single_coffee_id left NULL) when this
+                                                 -- item is a trade-name product from code_definitions rather than
+                                                 -- one specific green_coffee row — fulfillment can draw from any
+                                                 -- green_coffee sharing this code (see code_definitions table below)
 );
 
 -- 20. Sales orders — LEGACY table from an earlier generation of the app.
@@ -575,7 +593,7 @@ BEGIN
     'stock_takes','stock_take_items',
     'green_coffee_lots','packed_coffee_lots','production_lots',
     'roast_batch_green_lots','production_lot_batches',
-    'dispatch_lot_items','post_blend_components'
+    'dispatch_lot_items','post_blend_components','code_definitions'
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);

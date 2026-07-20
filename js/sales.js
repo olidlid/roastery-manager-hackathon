@@ -225,25 +225,33 @@ async function viewCustomerHistory(customerId) {
         { data: dispatchLotItems },
         { data: packedLots },
         { data: greenbeans },
-        { data: recipes }
+        { data: recipes },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
         fetchData('dispatch_lot_items'),
         fetchData('packed_coffee_lots'),
         fetchData('green_coffee'),
-        fetchData('blend_recipes')
+        fetchData('blend_recipes'),
+        fetchData('code_definitions')
     ]);
 
     // Same coffee-name resolution convention as the dispatch checkout modal
     // (js/packing.js coffeeLabel) — request_order_items carries its own
     // coffee_type/single_coffee_id/blend_recipe_id directly, no join needed.
-    function coffeeLabel(type, coffeeId) {
-        if (type === 'Single') {
-            const gb = (greenbeans || []).find(g => g.id === coffeeId);
+    // A coffee_code item (V2 trade-name product) takes priority over
+    // single_coffee_id, which is left null for those items.
+    function coffeeLabel(item) {
+        if (item.coffee_code) {
+            const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+            return def ? `${def.name} (Single)` : `Code ${item.coffee_code}`;
+        }
+        if (item.coffee_type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === item.single_coffee_id);
             return gb ? `${gb.name} (Single)` : 'Single Origin';
         }
-        const r = (recipes || []).find(rec => rec.id === coffeeId);
+        const r = (recipes || []).find(rec => rec.id === item.blend_recipe_id);
         return r ? `${r.name} (Blend)` : 'Blend Recipe';
     }
 
@@ -266,7 +274,7 @@ async function viewCustomerHistory(customerId) {
         custOrders.forEach(o => {
             const items = (orderItems || []).filter(i => i.request_order_id === o.id);
             const itemsSummary = items.map(i => {
-                const label = coffeeLabel(i.coffee_type, i.coffee_type === 'Single' ? i.single_coffee_id : i.blend_recipe_id);
+                const label = coffeeLabel(i);
                 return `${label} — ${i.bag_size_g || '-'}g x${i.quantity_requested || 0}`;
             }).join('<br>') || '-';
 
@@ -421,7 +429,8 @@ async function loadSalesDispatchRequestsTable() {
         { data: greenbeans },
         { data: recipes },
         { data: machines },
-        { data: customers }
+        { data: customers },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
@@ -430,7 +439,8 @@ async function loadSalesDispatchRequestsTable() {
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
         fetchData('machines'),
-        fetchData('customers')
+        fetchData('customers'),
+        fetchData('code_definitions')
     ]);
     const tbody = document.getElementById('request-orders-table-body');
     if (!tbody) return;
@@ -459,9 +469,11 @@ async function loadSalesDispatchRequestsTable() {
             if (cust && (cust.name || '').toLowerCase().includes(searchVal)) return true;
             const items = (orderItems || []).filter(i => i.request_order_id === order.id);
             return items.some(item => {
-                const coffeeName = item.coffee_type === 'Single'
-                    ? (greenbeans || []).find(g => g.id === item.single_coffee_id)?.name
-                    : (recipes || []).find(r => r.id === item.blend_recipe_id)?.name;
+                const coffeeName = item.coffee_code
+                    ? (codeDefinitions || []).find(d => d.code === item.coffee_code)?.name
+                    : item.coffee_type === 'Single'
+                        ? (greenbeans || []).find(g => g.id === item.single_coffee_id)?.name
+                        : (recipes || []).find(r => r.id === item.blend_recipe_id)?.name;
                 return (coffeeName || '').toLowerCase().includes(searchVal);
             });
         });
@@ -586,11 +598,25 @@ async function loadSalesDispatchRequestsTable() {
         if (order.status === 'Pending Approval') {
             for (const item of items) {
                 const type = item.coffee_type;
-                const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
                 const size = parseInt(item.bag_size_g);
+                let packedStock = 0;
 
-                const key = `${type}-${coffeeId}-${size}-${item.machine_id}`;
-                const packedStock = item.machine_id ? (stockMap.get(key) || 0) : 0;
+                if (item.coffee_code) {
+                    // Trade-name item: sum packed stock across every origin
+                    // sharing the code, on any machine (fulfillment isn't
+                    // tied to one origin/machine for these — see js/packing.js
+                    // openDispatchCheckoutModal).
+                    const groupIds = (greenbeans || []).filter(g => g.code === item.coffee_code).map(g => g.id);
+                    (machines || []).forEach(m => {
+                        groupIds.forEach(gid => {
+                            packedStock += stockMap.get(`Single-${gid}-${size}-${m.id}`) || 0;
+                        });
+                    });
+                } else {
+                    const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
+                    const key = `${type}-${coffeeId}-${size}-${item.machine_id}`;
+                    packedStock = item.machine_id ? (stockMap.get(key) || 0) : 0;
+                }
 
                 if (item.quantity_requested > packedStock) {
                     needsRoast = true;
@@ -644,9 +670,12 @@ async function loadSalesDispatchRequestsTable() {
         for (const item of items) {
             const type = item.coffee_type;
             const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
-            
+
             let coffeeName = '';
-            if (type === 'Single') {
+            if (item.coffee_code) {
+                const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+                coffeeName = def ? `${def.name} (Single)` : `Code ${item.coffee_code}`;
+            } else if (type === 'Single') {
                 const gb = (greenbeans || []).find(g => g.id === coffeeId);
                 coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
             } else {
@@ -721,7 +750,8 @@ async function loadDispatchApprovalTable() {
         { data: machines },
         { data: customers },
         { data: packed },
-        { data: roastBatches }
+        { data: roastBatches },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
@@ -730,7 +760,8 @@ async function loadDispatchApprovalTable() {
         fetchData('machines'),
         fetchData('customers'),
         fetchData('packed_coffee'),
-        fetchData('roast_batches')
+        fetchData('roast_batches'),
+        fetchData('code_definitions')
     ]);
     const tbody = document.getElementById('approval-orders-table-body');
     if (!tbody) return;
@@ -827,7 +858,10 @@ async function loadDispatchApprovalTable() {
         let itemsHtml = `<div style="display: flex; flex-direction: column; gap: 8px;">`;
         for (const item of items) {
             let coffeeName = '';
-            if (item.coffee_type === 'Single') {
+            if (item.coffee_code) {
+                const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+                coffeeName = def ? `${def.name} (Single)` : `Code ${item.coffee_code}`;
+            } else if (item.coffee_type === 'Single') {
                 const gb = (greenbeans || []).find(g => g.id === item.single_coffee_id);
                 coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
             } else {
@@ -928,7 +962,7 @@ async function loadDispatchApprovalTable() {
         const tr = e.target.closest('tr[data-order-id]');
         if (tr) {
             const orderId = parseInt(tr.getAttribute('data-order-id'));
-            openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines, packed, roastBatches);
+            openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines, packed, roastBatches, codeDefinitions);
         }
     };
 
@@ -936,7 +970,7 @@ async function loadDispatchApprovalTable() {
     if (typeof window.translatePage === 'function') window.translatePage();
 }
 
-function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines, packed, roastBatches) {
+function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines, packed, roastBatches, codeDefinitions) {
     const order = (orders || []).find(o => o.id === orderId);
     if (!order) return;
 
@@ -1012,7 +1046,10 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
     let totalPending = 0;
     items.forEach((item, idx) => {
         let coffeeName = '';
-        if (item.coffee_type === 'Single') {
+        if (item.coffee_code) {
+            const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+            coffeeName = def ? def.name : `Code ${item.coffee_code}`;
+        } else if (item.coffee_type === 'Single') {
             const gb = (greenbeans || []).find(g => g.id === item.single_coffee_id);
             coffeeName = gb ? gb.name : 'Single Origin';
         } else {
@@ -1025,7 +1062,19 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
         totalBags += item.quantity_requested || 0;
 
         let availableStock, toPlan;
-        if (isPending && item.machine_id) {
+        if (isPending && item.coffee_code) {
+            // Trade-name item: sum packed stock across every origin sharing
+            // the code, on any machine (see loadSalesDispatchRequestsTable's
+            // needsRoast check above for the same aggregation).
+            const groupIds = (greenbeans || []).filter(g => g.code === item.coffee_code).map(g => g.id);
+            availableStock = 0;
+            (machines || []).forEach(m => {
+                groupIds.forEach(gid => {
+                    availableStock += perMachinePackedStock[`Single-${gid}-${item.bag_size_g}-${m.id}`] || 0;
+                });
+            });
+            toPlan = Math.max(0, (item.quantity_requested || 0) - availableStock);
+        } else if (isPending && item.machine_id) {
             const cId = item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
             const key = `${item.coffee_type}-${cId}-${item.bag_size_g}-${item.machine_id}`;
             availableStock = perMachinePackedStock[key] || 0;
@@ -1130,7 +1179,9 @@ async function approveSalesOrder(orderId) {
         { data: greenbeans },
         { data: recipes },
         { data: roastBatches },
-        { data: machines }
+        { data: machines },
+        { data: codeDefinitions },
+        { data: greenCoffeeLots }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
@@ -1138,39 +1189,45 @@ async function approveSalesOrder(orderId) {
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
         fetchData('roast_batches'),
-        fetchData('machines')
+        fetchData('machines'),
+        fetchData('code_definitions'),
+        fetchData('green_coffee_lots')
     ]);
-    
+
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
     const items = orderItems.filter(i => i.request_order_id === orderId);
-    
+
     // Build machine options HTML
     const machineOptionsHtml = (machines || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
-    
-    let htmlContent = `
-        <form id="modal-approve-form">
-            <p style="margin-bottom: 15px; font-size: 0.9rem; color: var(--text-secondary);" data-i18n="msg_approve_desc">Review the order quantities. You can adjust the fulfilled amount or send the remainder to the production queue.</p>
-            <div style="max-height: 50vh; overflow-y: auto; padding-right: 10px;">
-    `;
-    
-    for (const item of items) {
+
+    // Trade-name (coffee_code) items: which origin ends up filling the order
+    // is decided at packing/dispatch (js/packing.js openDispatchCheckoutModal),
+    // not here — so packed-stock matching considers every origin sharing the
+    // code, on any machine, instead of one exact single_coffee_id+machine.
+    // Shared by both the preview render below and the submit handler's
+    // deduction further down, so the matching rule can't drift between them.
+    function findMatchingPacked(item) {
         const type = item.coffee_type;
         const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
-        const size = parseInt(item.bag_size_g);
-        
-        let coffeeName = '';
-        if (type === 'Single') {
-            const gb = (greenbeans || []).find(g => g.id === coffeeId);
-            coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
-        } else {
-            const r = (recipes || []).find(rec => rec.id === coffeeId);
-            coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+        if (item.coffee_code) {
+            const groupIds = (greenbeans || []).filter(g => g.code === item.coffee_code).map(g => g.id);
+            return (packedGoods || []).filter(p => {
+                if (p.roast_batch_id) {
+                    const batch = (roastBatches || []).find(b => b.id === p.roast_batch_id);
+                    return batch && batch.coffee_type === 'Single' && groupIds.includes(batch.single_coffee_id);
+                }
+                if (p.custom_coffee_name) {
+                    const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+                    const gb = (greenbeans || []).find(g => groupIds.includes(g.id) && g.name === cleanName);
+                    return !!gb;
+                }
+                return false;
+            });
         }
-        
         // Machine-partitioned (confirmed 2026-07-15): packed stock from a
         // different machine is not a valid fulfillment source for this item.
-        const matchingPacked = (packedGoods || []).filter(p => {
+        return (packedGoods || []).filter(p => {
             if (p.roast_batch_id) {
                 const batch = (roastBatches || []).find(b => b.id === p.roast_batch_id);
                 return batch && batch.coffee_type === type && (batch.single_coffee_id === coffeeId || batch.blend_recipe_id === coffeeId) && batch.machine_id === item.machine_id;
@@ -1188,7 +1245,52 @@ async function approveSalesOrder(orderId) {
             }
             return false;
         });
-        const szItems = item.machine_id ? matchingPacked.filter(p => parseInt(p.bag_size_g) === size) : [];
+    }
+
+    // Among every green_coffee sharing a code, pick the one with the oldest
+    // remaining lot (FIFO) as the concrete origin a top-up Roasting Plan
+    // targets — same arrival_date ordering consumeGreenCoffeeLotsFifo uses
+    // (js/roasting.js). The plan is a completely normal single-origin plan
+    // from this point on; whoever reviews it can still change the coffee.
+    function pickFifoOriginForCode(code) {
+        const groupIds = (greenbeans || []).filter(g => g.code === code).map(g => g.id);
+        let best = null, bestDate = null;
+        (greenCoffeeLots || []).forEach(l => {
+            if (!groupIds.includes(l.green_coffee_id)) return;
+            if ((parseFloat(l.remaining_kg) || 0) <= 0) return;
+            if (!bestDate || (l.arrival_date && l.arrival_date < bestDate)) {
+                bestDate = l.arrival_date;
+                best = l.green_coffee_id;
+            }
+        });
+        return best || groupIds[0] || null;
+    }
+
+    let htmlContent = `
+        <form id="modal-approve-form">
+            <p style="margin-bottom: 15px; font-size: 0.9rem; color: var(--text-secondary);" data-i18n="msg_approve_desc">Review the order quantities. You can adjust the fulfilled amount or send the remainder to the production queue.</p>
+            <div style="max-height: 50vh; overflow-y: auto; padding-right: 10px;">
+    `;
+
+    for (const item of items) {
+        const type = item.coffee_type;
+        const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
+        const size = parseInt(item.bag_size_g);
+
+        let coffeeName = '';
+        if (item.coffee_code) {
+            const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+            coffeeName = def ? `${def.name} (Single)` : `Code ${item.coffee_code}`;
+        } else if (type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === coffeeId);
+            coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
+        } else {
+            const r = (recipes || []).find(rec => rec.id === coffeeId);
+            coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+        }
+
+        const matchingPacked = findMatchingPacked(item);
+        const szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === size) : [];
         const packedStock = szItems.reduce((acc, p) => acc + (parseInt(p.quantity) || 0), 0);
         
         let fulfillQty = Math.min(packedStock, item.quantity_requested);
@@ -1296,27 +1398,9 @@ async function approveSalesOrder(orderId) {
             // stock than what the "Packed Stock" figure shown to the approver
             // was actually based on.
             if (fQty > 0) {
-                const type = item.coffee_type;
-                const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
-                const matchingPacked = (packedGoods || []).filter(p => {
-                    if (p.roast_batch_id) {
-                        const batch = (roastBatches || []).find(b => b.id === p.roast_batch_id);
-                        return batch && batch.coffee_type === type && (batch.single_coffee_id === coffeeId || batch.blend_recipe_id === coffeeId) && batch.machine_id === item.machine_id;
-                    }
-                    if (p.custom_coffee_name) {
-                        const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
-                        if (type === 'Single') {
-                            const gb = (greenbeans || []).find(g => g.id === coffeeId);
-                            return gb && gb.name === cleanName && p.machine_id === item.machine_id;
-                        } else {
-                            const rec = (recipes || []).find(r => r.id === coffeeId);
-                            return rec && rec.name === cleanName && p.machine_id === item.machine_id;
-                        }
-                    }
-                    return false;
-                });
-                const szItems = item.machine_id ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
-                
+                const matchingPacked = findMatchingPacked(item);
+                const szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
+
                 let remainingDeduct = fQty;
                 for (const p of szItems) {
                     if (remainingDeduct <= 0) break;
@@ -1335,12 +1419,18 @@ async function approveSalesOrder(orderId) {
                 const weightKg = (pQty * parseInt(item.bag_size_g)) / 1000;
                 // Add a buffer for yield (roughly / 0.85)
                 const targetRoast = weightKg / 0.85;
-                
+
+                // Trade-name item: roasting always targets one concrete
+                // origin, so resolve the code to whichever origin sharing it
+                // has the oldest remaining stock (FIFO) — a normal editable
+                // single-origin plan from here on, see pickFifoOriginForCode above.
+                const planSingleCoffeeId = item.coffee_code ? pickFifoOriginForCode(item.coffee_code) : item.single_coffee_id;
+
                 const planRecord = {
                     day: new Date().toLocaleDateString('en-US', {weekday:'long'}),
                     plan_date: new Date().toISOString().split('T')[0],
                     coffee_type: item.coffee_type,
-                    single_coffee_id: item.single_coffee_id,
+                    single_coffee_id: planSingleCoffeeId,
                     blend_recipe_id: item.blend_recipe_id,
                     machine_id: machineId || item.machine_id || null,
                     target_roasted_kg: parseFloat(targetRoast.toFixed(2)),
@@ -1430,7 +1520,8 @@ async function openSalesRequestModal(orderId = null) {
         { data: packed },
         { data: roastBatches },
         { data: machines },
-        { data: packagingSizes }
+        { data: packagingSizes },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
@@ -1441,8 +1532,24 @@ async function openSalesRequestModal(orderId = null) {
         fetchData('packed_coffee'),
         fetchData('roast_batches'),
         fetchData('machines'),
-        fetchData('packaging_sizes')
+        fetchData('packaging_sizes'),
+        fetchData('code_definitions')
     ]);
+
+    // Trade-name grouping (V2): Sales only orders by code_definitions.name —
+    // one green_coffee.code can be shared by multiple origins (e.g. code 2 =
+    // both Cauca and Chambaku under trade name "Fantastica"), and which
+    // origin actually fulfills the order is decided later at packing/dispatch
+    // (see openDispatchCheckoutModal in js/packing.js). Coffees whose code
+    // has no matching code_definitions row simply aren't sales-orderable yet.
+    const codeGroups = {}; // code -> { name, ids: [...] }
+    (greenbeans || []).forEach(g => {
+        if (!g.code) return;
+        const def = (codeDefinitions || []).find(d => d.code === g.code);
+        if (!def) return;
+        if (!codeGroups[g.code]) codeGroups[g.code] = { name: def.name, ids: [] };
+        codeGroups[g.code].ids.push(g.id);
+    });
 
     let existingOrder = null;
     let existingItems = [];
@@ -1551,7 +1658,7 @@ async function openSalesRequestModal(orderId = null) {
             const requiredKg = (qty * sizeG) / 1000 / 0.85;
 
             const [type, idStr] = sel.value.split('-');
-            const coffeeId = parseInt(idStr);
+            const coffeeId = idStr.startsWith('CODE:') ? idStr : parseInt(idStr);
 
             if (type === 'Single') {
                 gbAlloc[coffeeId] = (gbAlloc[coffeeId] || 0) + requiredKg;
@@ -1573,8 +1680,12 @@ async function openSalesRequestModal(orderId = null) {
     function getPotentialBags(type, coffeeId, sizeG, gbAllocFromOtherRows = {}) {
         let maxGbKg = 0;
         if (type === 'Single') {
-            const gb = (greenbeans || []).find(g => g.id === coffeeId);
-            const avail = gb ? parseFloat(gb.stock_kg) : 0;
+            // A code-group id ("CODE:2") aggregates raw stock across every
+            // origin sharing that code instead of one specific green_coffee.
+            const matches = String(coffeeId).startsWith('CODE:')
+                ? (greenbeans || []).filter(g => g.code === String(coffeeId).slice(5))
+                : (greenbeans || []).filter(g => g.id === coffeeId);
+            const avail = matches.reduce((s, g) => s + (parseFloat(g.stock_kg) || 0), 0);
             const claimed = gbAllocFromOtherRows[coffeeId] || 0;
             maxGbKg = Math.max(0, avail - claimed);
         } else {
@@ -1603,7 +1714,10 @@ async function openSalesRequestModal(orderId = null) {
     const blendLbl = window.t ? window.t('opt_req_blend') : 'Blend';
     let coffeeOptionsHtml = `<option value="" disabled selected>-- Select Item --</option>`;
     coffeeOptionsHtml += `<optgroup label="${singleLbl}">`;
-    coffeeOptionsHtml += [...(greenbeans || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(g => `<option value="Single-${g.id}">${g.name}</option>`).join('');
+    coffeeOptionsHtml += Object.entries(codeGroups)
+        .sort((a, b) => a[1].name.localeCompare(b[1].name))
+        .map(([code, grp]) => `<option value="Single-CODE:${code}">${grp.name}</option>`)
+        .join('');
     coffeeOptionsHtml += `</optgroup>`;
     coffeeOptionsHtml += `<optgroup label="${blendLbl}">`;
     coffeeOptionsHtml += [...(recipes || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(r => `<option value="Blend-${r.id}">${r.name}</option>`).join('');
@@ -1770,10 +1884,49 @@ async function openSalesRequestModal(orderId = null) {
                 if (!sel.value) { infoBox.style.display = 'none'; return; }
 
                 const [type, idStr] = sel.value.split('-');
-                const coffeeId = parseInt(idStr);
+                const isGroup = idStr.startsWith('CODE:');
+                const coffeeId = isGroup ? idStr : parseInt(idStr);
                 const sizeG = parseInt(sizeEl.value);
                 const currentQty = parseInt(qtyEl.value) || 0;
                 const selectedMachineId = machineEl.value ? parseInt(machineEl.value) : null;
+
+                // Trade-name product (V2): no single origin/machine to break
+                // stock down by yet — that's decided at packing/dispatch time
+                // (see openDispatchCheckoutModal, js/packing.js). Show a
+                // combined-across-origins summary instead of the per-machine
+                // grid below, which assumes one specific coffee id.
+                if (isGroup) {
+                    const code = idStr.slice(5);
+                    const groupIds = (greenbeans || []).filter(g => g.code === code).map(g => g.id);
+                    const originNames = (greenbeans || []).filter(g => groupIds.includes(g.id)).map(g => g.name);
+
+                    const gbAllocFromOtherRows = getGreenbeanAllocations(currentRow);
+                    const potentialBags = getPotentialBags(type, coffeeId, sizeG, gbAllocFromOtherRows);
+                    const potentialKg = ((potentialBags * sizeG) / 1000).toFixed(2);
+
+                    let rawPacked = 0;
+                    groupIds.forEach(gid => { rawPacked += originalPackedStocks[`${type}-${gid}-${sizeG}`] || 0; });
+                    let otherRowsClaim = 0;
+                    itemsList.querySelectorAll('.sales-item-row').forEach(r => {
+                        if (r === currentRow) return;
+                        const rSel = r.querySelector('.item-select');
+                        const rSize = r.querySelector('.item-size');
+                        const rQty = r.querySelector('.item-qty');
+                        if (rSel && rSel.value === sel.value && rSize && parseInt(rSize.value) === sizeG) {
+                            otherRowsClaim += parseInt(rQty.value) || 0;
+                        }
+                    });
+                    const currentSizeAvailPacked = Math.max(0, rawPacked - otherRowsClaim);
+                    const potLbl = window.t ? window.t('lbl_potential_prod') : 'Potential Prod';
+
+                    infoBox.innerHTML = `
+                        <div style="font-size: 0.75rem;"><strong style="color: var(--primary);">Packed stock:</strong> ${currentSizeAvailPacked} available — combined across ${groupIds.length} origin${groupIds.length === 1 ? '' : 's'}${originNames.length ? ` (${originNames.join(', ')})` : ''}</div>
+                        <div style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 0.75rem; line-height: 1.2;"><strong style="color: var(--primary);">${potLbl}:</strong> ~${potentialKg} kg</div>
+                    `;
+                    currentRow.dataset.packedStock = currentSizeAvailPacked;
+                    currentRow.dataset.potentialBags = potentialBags;
+                    return;
+                }
 
                 // 1. Build per-machine stock cards for ALL machines
                 let machineCardsHtml = '<div style="display: flex; gap: 6px; flex-wrap: wrap;">';
@@ -1892,7 +2045,9 @@ async function openSalesRequestModal(orderId = null) {
         const qtyEl = row.querySelector('.item-qty');
 
         if (initialItemData) {
-            const coffeeVal = `${initialItemData.coffee_type}-${initialItemData.single_coffee_id || initialItemData.blend_recipe_id}`;
+            const coffeeVal = initialItemData.coffee_code
+                ? `Single-CODE:${initialItemData.coffee_code}`
+                : `${initialItemData.coffee_type}-${initialItemData.single_coffee_id || initialItemData.blend_recipe_id}`;
             sel.value = coffeeVal;
             if (initialItemData.machine_id) machineEl.value = initialItemData.machine_id;
             sizeEl.value = initialItemData.bag_size_g;
@@ -2092,14 +2247,16 @@ async function openSalesRequestModal(orderId = null) {
             for (const r of rows) {
                 const val = r.querySelector('.item-select').value;
                 const [type, idStr] = val.split('-');
+                const isGroup = idStr.startsWith('CODE:');
                 const qty = parseInt(r.querySelector('.item-qty').value);
                 const machId = r.querySelector('.item-machine').value ? parseInt(r.querySelector('.item-machine').value) : null;
-                
+
                 const itemRecord = {
                     request_order_id: savedOrder.id,
                     coffee_type: type,
-                    single_coffee_id: type === 'Single' ? parseInt(idStr) : null,
+                    single_coffee_id: (type === 'Single' && !isGroup) ? parseInt(idStr) : null,
                     blend_recipe_id: type === 'Blend' ? parseInt(idStr) : null,
+                    coffee_code: isGroup ? idStr.slice(5) : null,
                     machine_id: machId,
                     bag_size_g: parseInt(r.querySelector('.item-size').value),
                     quantity_requested: qty,
@@ -2118,14 +2275,16 @@ async function openSalesRequestModal(orderId = null) {
             for (const r of rows) {
                 const val = r.querySelector('.item-select').value;
                 const [type, idStr] = val.split('-');
+                const isGroup = idStr.startsWith('CODE:');
                 const qty = parseInt(r.querySelector('.item-qty').value);
                 const machId = r.querySelector('.item-machine').value ? parseInt(r.querySelector('.item-machine').value) : null;
-                
+
                 const itemRecord = {
                     request_order_id: savedOrder.id,
                     coffee_type: type,
-                    single_coffee_id: type === 'Single' ? parseInt(idStr) : null,
+                    single_coffee_id: (type === 'Single' && !isGroup) ? parseInt(idStr) : null,
                     blend_recipe_id: type === 'Blend' ? parseInt(idStr) : null,
+                    coffee_code: isGroup ? idStr.slice(5) : null,
                     machine_id: machId,
                     bag_size_g: parseInt(r.querySelector('.item-size').value),
                     quantity_requested: qty,
