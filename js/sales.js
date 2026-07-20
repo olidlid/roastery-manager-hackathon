@@ -1201,6 +1201,25 @@ async function approveSalesOrder(orderId) {
     // Build machine options HTML
     const machineOptionsHtml = (machines || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 
+    // Resolves a packed_coffee row back to its underlying green_coffee name —
+    // used only for the trade-name origin-breakdown display (see
+    // originBreakdownHtml below), not for matching (findMatchingPacked
+    // already knows a row belongs to the code group by the time this runs).
+    function resolvePackedIdentityForApproval(p) {
+        if (p.roast_batch_id) {
+            const batch = (roastBatches || []).find(b => b.id === p.roast_batch_id);
+            if (!batch || batch.coffee_type !== 'Single') return null;
+            const gb = (greenbeans || []).find(g => g.id === batch.single_coffee_id);
+            return gb ? { type: 'Single', name: gb.name } : null;
+        }
+        if (p.custom_coffee_name) {
+            const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+            const gb = (greenbeans || []).find(g => g.name === cleanName);
+            return gb ? { type: 'Single', name: gb.name } : null;
+        }
+        return null;
+    }
+
     // Trade-name (coffee_code) items: which origin ends up filling the order
     // is decided at packing/dispatch (js/packing.js openDispatchCheckoutModal),
     // not here — so packed-stock matching considers every origin sharing the
@@ -1292,7 +1311,27 @@ async function approveSalesOrder(orderId) {
         const matchingPacked = findMatchingPacked(item);
         const szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === size) : [];
         const packedStock = szItems.reduce((acc, p) => acc + (parseInt(p.quantity) || 0), 0);
-        
+
+        // Trade-name item: "Packed Stock" is a total across every origin
+        // sharing the code — show which origin contributed how much, so the
+        // approver isn't looking at an opaque combined number.
+        let originBreakdownHtml = '';
+        if (item.coffee_code) {
+            const kgByOrigin = new Map();
+            szItems.forEach(p => {
+                const idn = resolvePackedIdentityForApproval(p);
+                const label = idn && idn.type === 'Single' ? (idn.name || 'Unknown') : 'Unknown';
+                kgByOrigin.set(label, (kgByOrigin.get(label) || 0) + (parseInt(p.quantity) || 0));
+            });
+            const rows = Array.from(kgByOrigin.entries())
+                .map(([name, qty]) => `<div style="display:flex; justify-content:space-between; padding:2px 0;"><span style="font-family:monospace;">${name}</span><span>${qty}</span></div>`)
+                .join('');
+            originBreakdownHtml = `
+                <button type="button" class="breakdown-toggle" style="display:inline-flex; align-items:center; gap:4px; font-size:0.72rem; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:2px 0; margin-top:6px; text-decoration:underline dotted;">ⓘ combined across ${kgByOrigin.size} origin${kgByOrigin.size === 1 ? '' : 's'}</button>
+                <div class="breakdown-panel" style="display:none; margin-top:6px; padding:8px 10px; background:rgba(255,255,255,0.06); border-radius:6px; font-size:0.76rem; color:var(--text-secondary); grid-template-columns:1fr 1fr; column-gap:16px;">${rows || '<span style="color:var(--text-muted);">No packed stock yet.</span>'}</div>
+            `;
+        }
+
         let fulfillQty = Math.min(packedStock, item.quantity_requested);
         let prodQty = item.quantity_requested > packedStock ? (item.quantity_requested - packedStock) : 0;
         
@@ -1318,6 +1357,7 @@ async function approveSalesOrder(orderId) {
                         <span style="color: var(--text-secondary);" data-i18n="lbl_packed_stock">Packed Stock:</span> <strong style="${packedStock < item.quantity_requested ? 'color: var(--danger);' : ''}">${packedStock}</strong>
                     </div>
                 </div>
+                ${originBreakdownHtml}
                 <div style="display: flex; gap: 15px; margin-top: 15px; align-items: flex-end;">
                     <div class="flex-1">
                         <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_fulfill_packed">Fulfill from Packed</label>
@@ -1356,6 +1396,15 @@ async function approveSalesOrder(orderId) {
             const machineRow = row.querySelector('.machine-select-row');
             const val = parseInt(this.value) || 0;
             machineRow.style.display = val > 0 ? '' : 'none';
+        });
+    });
+
+    // Toggle the per-origin breakdown for trade-name items
+    document.querySelectorAll('.approval-item-row .breakdown-toggle').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const panel = this.nextElementSibling;
+            const isOpen = panel.style.display === 'grid';
+            panel.style.display = isOpen ? 'none' : 'grid';
         });
     });
     
@@ -1886,47 +1935,14 @@ async function openSalesRequestModal(orderId = null) {
                 const [type, idStr] = sel.value.split('-');
                 const isGroup = idStr.startsWith('CODE:');
                 const coffeeId = isGroup ? idStr : parseInt(idStr);
+                // Trade-name product (V2): no single origin to break stock
+                // down by, but still per-machine — each machine's number is
+                // the SUM of every origin sharing the code that landed on
+                // that machine, instead of one coffee id's own stock.
+                const groupIds = isGroup ? (greenbeans || []).filter(g => g.code === idStr.slice(5)).map(g => g.id) : [];
                 const sizeG = parseInt(sizeEl.value);
                 const currentQty = parseInt(qtyEl.value) || 0;
                 const selectedMachineId = machineEl.value ? parseInt(machineEl.value) : null;
-
-                // Trade-name product (V2): no single origin/machine to break
-                // stock down by yet — that's decided at packing/dispatch time
-                // (see openDispatchCheckoutModal, js/packing.js). Show a
-                // combined-across-origins summary instead of the per-machine
-                // grid below, which assumes one specific coffee id.
-                if (isGroup) {
-                    const code = idStr.slice(5);
-                    const groupIds = (greenbeans || []).filter(g => g.code === code).map(g => g.id);
-                    const originNames = (greenbeans || []).filter(g => groupIds.includes(g.id)).map(g => g.name);
-
-                    const gbAllocFromOtherRows = getGreenbeanAllocations(currentRow);
-                    const potentialBags = getPotentialBags(type, coffeeId, sizeG, gbAllocFromOtherRows);
-                    const potentialKg = ((potentialBags * sizeG) / 1000).toFixed(2);
-
-                    let rawPacked = 0;
-                    groupIds.forEach(gid => { rawPacked += originalPackedStocks[`${type}-${gid}-${sizeG}`] || 0; });
-                    let otherRowsClaim = 0;
-                    itemsList.querySelectorAll('.sales-item-row').forEach(r => {
-                        if (r === currentRow) return;
-                        const rSel = r.querySelector('.item-select');
-                        const rSize = r.querySelector('.item-size');
-                        const rQty = r.querySelector('.item-qty');
-                        if (rSel && rSel.value === sel.value && rSize && parseInt(rSize.value) === sizeG) {
-                            otherRowsClaim += parseInt(rQty.value) || 0;
-                        }
-                    });
-                    const currentSizeAvailPacked = Math.max(0, rawPacked - otherRowsClaim);
-                    const potLbl = window.t ? window.t('lbl_potential_prod') : 'Potential Prod';
-
-                    infoBox.innerHTML = `
-                        <div style="font-size: 0.75rem;"><strong style="color: var(--primary);">Packed stock:</strong> ${currentSizeAvailPacked} available — combined across ${groupIds.length} origin${groupIds.length === 1 ? '' : 's'}${originNames.length ? ` (${originNames.join(', ')})` : ''}</div>
-                        <div style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 0.75rem; line-height: 1.2;"><strong style="color: var(--primary);">${potLbl}:</strong> ~${potentialKg} kg</div>
-                    `;
-                    currentRow.dataset.packedStock = currentSizeAvailPacked;
-                    currentRow.dataset.potentialBags = potentialBags;
-                    return;
-                }
 
                 // 1. Build per-machine stock cards for ALL machines
                 let machineCardsHtml = '<div style="display: flex; gap: 6px; flex-wrap: wrap;">';
@@ -1939,8 +1955,9 @@ async function openSalesRequestModal(orderId = null) {
                     let sizesHtml = '';
                     visibleSizes.forEach(s => {
                         const sz = parseFloat(s.gram);
-                        const mKey = `${type}-${coffeeId}-${sz}-${m.id}`;
-                        const rawMachStock = perMachinePackedStocks[mKey] || 0;
+                        const rawMachStock = isGroup
+                            ? groupIds.reduce((sum, gid) => sum + (perMachinePackedStocks[`${type}-${gid}-${sz}-${m.id}`] || 0), 0)
+                            : (perMachinePackedStocks[`${type}-${coffeeId}-${sz}-${m.id}`] || 0);
                         // Subtract what OTHER rows in this same unsubmitted order
                         // already reserved for this exact coffee+size+machine, so
                         // two lines can't both show the full stock and jointly
@@ -1965,7 +1982,7 @@ async function openSalesRequestModal(orderId = null) {
                     `;
                 });
                 machineCardsHtml += '</div>';
-                
+
                 // Calculate aggregate for validation (subtract other rows'
                 // allocations) — machine-partitioned, same reasoning as the
                 // display cards above: a row with no machine selected yet has
@@ -1977,8 +1994,11 @@ async function openSalesRequestModal(orderId = null) {
                     const totalAllocForThisSize = totalAlloc[stockKey] || 0;
                     const allocByThisRow = currentQty;
                     const otherAlloc = Math.max(0, totalAllocForThisSize - allocByThisRow);
-                    const packKey = `${type}-${coffeeId}-${sizeG}-${selectedMachineId}`;
-                    const totalPacked = selectedMachineId ? (perMachinePackedStocks[packKey] || 0) : 0;
+                    const totalPacked = selectedMachineId
+                        ? (isGroup
+                            ? groupIds.reduce((sum, gid) => sum + (perMachinePackedStocks[`${type}-${gid}-${sizeG}-${selectedMachineId}`] || 0), 0)
+                            : (perMachinePackedStocks[`${type}-${coffeeId}-${sizeG}-${selectedMachineId}`] || 0))
+                        : 0;
                     currentSizeAvailPacked = Math.max(0, totalPacked - otherAlloc);
                 }
 

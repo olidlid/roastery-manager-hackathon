@@ -926,7 +926,6 @@ window.addEventListener('languageChanged', (e) => {
     if (settingsSec && !settingsSec.classList.contains('hidden')) {
         loadMachinesSection();
         loadPackagingSizesTable();
-        loadCodeDefinitionsTable();
     }
     const reportsSec = document.getElementById('sec-reports');
     if (reportsSec && !reportsSec.classList.contains('hidden')) {
@@ -1071,122 +1070,6 @@ async function openPackagingSizeModal(id = null) {
 const btnAddPackSize = document.getElementById('btn-add-pack-size');
 if (btnAddPackSize) {
     btnAddPackSize.addEventListener('click', () => openPackagingSizeModal());
-}
-
-// --- CODE DEFINITIONS MANAGEMENT ---
-// Maps a green_coffee.code value to a stable trade name shown to Sales (e.g.
-// code 2 = "Fantastica") — see js/sales.js openSalesRequestModal for where
-// this groups the Single Origin picker, and database/v2_code_definitions_migration.sql.
-async function loadCodeDefinitionsTable() {
-    const tbody = document.getElementById('code-defs-table-body');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-
-    const [{ data: defs }, { data: greenbeans }] = await Promise.all([
-        fetchData('code_definitions'),
-        fetchData('green_coffee')
-    ]);
-
-    if (!defs || defs.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="text-center-muted">No code definitions found.</td></tr>`;
-        return;
-    }
-
-    renderCodeDefinitionsRows(tbody, defs, greenbeans || []);
-}
-
-function renderCodeDefinitionsRows(tbody, defs, greenbeans) {
-    [...defs].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true })).forEach(d => {
-        const origins = greenbeans.filter(g => g.code === d.code).map(g => g.name);
-        const originsHtml = origins.length
-            ? origins.map(n => `<span style="font-size:0.75rem; color:var(--text-secondary); background:var(--bg-glass-active); padding:2px 8px; border-radius:999px; margin-right:4px; display:inline-block; margin-bottom:2px;">${n}</span>`).join('')
-            : `<span style="font-size:0.8rem; color:var(--text-muted);">No origins yet</span>`;
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td><code>${d.code}</code></td>
-            <td><strong>${d.name}</strong></td>
-            <td>${originsHtml}</td>
-            <td>
-                <div class="action-buttons">
-                    <button class="btn btn-outline btn-sm btn-edit-code-def" data-id="${d.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>
-                    <button class="btn btn-danger btn-sm btn-delete-code-def" data-id="${d.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
-                </div>
-            </td>
-        `;
-        tbody.appendChild(tr);
-    });
-
-    document.querySelectorAll('.btn-edit-code-def').forEach(btn => {
-        btn.addEventListener('click', () => openCodeDefinitionModal(parseInt(btn.getAttribute('data-id'))));
-    });
-    document.querySelectorAll('.btn-delete-code-def').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            if (await showDeleteConfirmModal('this code definition')) {
-                await deleteData('code_definitions', parseInt(btn.getAttribute('data-id')));
-                loadCodeDefinitionsTable();
-            }
-        });
-    });
-}
-
-async function openCodeDefinitionModal(id = null) {
-    let def = { code: '', name: '' };
-    if (id) {
-        const { data: defs } = await fetchData('code_definitions');
-        const found = defs.find(d => d.id === id);
-        if (found) def = found;
-    }
-
-    const html = `
-        <div id="modal-code-def-form">
-            <div class="form-group">
-                <label class="form-label">Code</label>
-                <input type="text" id="m-cd-code" class="form-control" value="${def.code}" placeholder="e.g. 2" required>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Trade Name</label>
-                <input type="text" id="m-cd-name" class="form-control" value="${def.name}" placeholder="e.g. Fantastica" required>
-                <p style="margin:6px 0 0; font-size:0.75rem; color:var(--text-muted);">Shown to Sales instead of the origin's real name.</p>
-            </div>
-            <button type="button" id="btn-save-code-def" class="btn btn-primary" style="width:100%; margin-top:24px;">Save Code Definition</button>
-        </div>
-    `;
-
-    openModal(id ? 'Edit Code Definition' : 'Add Code Definition', html);
-
-    document.getElementById('btn-save-code-def').onclick = async () => {
-        const codeInput = document.getElementById('m-cd-code').value.trim();
-        const nameInput = document.getElementById('m-cd-name').value.trim();
-
-        if (!codeInput || !nameInput) {
-            alert("Please fill all required fields.");
-            return;
-        }
-
-        const { data: existingDefs } = await fetchData('code_definitions');
-        const duplicate = (existingDefs || []).find(d => d.code === codeInput && d.id !== id);
-        if (duplicate) {
-            alert(`Code "${codeInput}" is already defined as "${duplicate.name}".`);
-            return;
-        }
-
-        const saveDataObj = { code: codeInput, name: nameInput };
-        if (id) saveDataObj.id = id;
-
-        const { error } = await saveData('code_definitions', saveDataObj);
-        if (error) {
-            alert('Failed to save code definition: ' + error.message);
-            return;
-        }
-
-        modalContainer.classList.add('hidden');
-        loadCodeDefinitionsTable();
-    };
-}
-
-const btnAddCodeDef = document.getElementById('btn-add-code-def');
-if (btnAddCodeDef) {
-    btnAddCodeDef.addEventListener('click', () => openCodeDefinitionModal());
 }
 
 // --- RESET MOCK DATABASE (flush bloated localStorage) ---

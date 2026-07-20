@@ -738,6 +738,7 @@
                         <button class="tab-btn" data-tab="tab-roast-logs" data-i18n="tab_roast_logs">Batch Logs</button>
                         <button class="tab-btn" data-tab="tab-blend-recipes" data-i18n="tab_recipes">Blend Recipes</button>
                         <button class="tab-btn" data-tab="tab-custom-blend" data-i18n="tab_custom_blend">Custom Blend</button>
+                        <button class="tab-btn" data-tab="tab-code-definitions" data-i18n="title_code_definitions">Code Definitions</button>
                         <button class="tab-btn" data-tab="tab-recipe-potential" data-i18n="tab_potential">Production Potential</button>
                         <button class="tab-btn" data-tab="tab-daily-achievement">Daily Achievement</button>
                     </div>
@@ -946,6 +947,40 @@
                                     </thead>
                                     <tbody id="custom-blend-table-body">
                                         <!-- Dynamically loaded custom blend history -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB: Code Definitions — maps a green_coffee.code value to a
+                         stable trade name Sales sees, since one code can be reused
+                         across multiple green_coffee rows over time (see
+                         database/v2_code_definitions_migration.sql). Moved here from
+                         Settings > Production per user request. -->
+                    <div id="tab-code-definitions" class="tab-content hidden">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <div>
+                                    <h3 class="card-title" style="margin-bottom: 4px;" data-i18n="title_code_definitions">Code Definitions</h3>
+                                    <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="hint_code_definitions">Trade name Sales sees for each coffee code — stock shown is the total across every origin sharing it</p>
+                                </div>
+                                <button id="btn-add-code-def" class="btn btn-primary btn-sm" data-i18n="btn_add_code_def">
+                                    <i class="lucide-plus"></i> Add Code Definition
+                                </button>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_code">Code</th>
+                                            <th data-i18n="col_trade_name">Trade Name</th>
+                                            <th data-i18n="col_origins_grouped">Origins Grouped</th>
+                                            <th data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="code-defs-table-body">
+                                        <!-- Dynamically loaded -->
                                     </tbody>
                                 </table>
                             </div>
@@ -2075,50 +2110,6 @@
                                 </div>
                             </div>
 
-                            <!-- Accordion: Code Definitions — maps a green_coffee.code value
-                                 to a stable trade name Sales sees, since one code can be reused
-                                 across multiple green_coffee rows over time (see
-                                 database/v2_code_definitions_migration.sql). -->
-                            <div class="card" style="overflow:hidden;">
-                                <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
-                                    <div style="display:flex; align-items:center; gap:10px;">
-                                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, rgba(217,119,6,0.12), rgba(217,119,6,0.04)); display:flex; align-items:center; justify-content:center;">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-                                        </div>
-                                        <div>
-                                            <h3 style="margin:0; font-size:0.95rem; font-weight:700;" data-i18n="title_code_definitions">Code Definitions</h3>
-                                            <p style="margin:0; font-size:0.75rem; color:var(--text-muted);" data-i18n="hint_code_definitions">Trade name Sales sees for each coffee code &mdash; stock shown is the total across every origin sharing it</p>
-                                        </div>
-                                    </div>
-                                    <svg class="accordion-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.3s;"><polyline points="6 9 12 15 18 9"/></svg>
-                                </div>
-                                <div class="settings-accordion-body" style="max-height:0; overflow:hidden; transition:max-height 0.35s ease;">
-                                    <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
-                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                                            <h3 class="card-title" style="margin-bottom: 0;" data-i18n="title_code_definitions">Code Definitions</h3>
-                                            <button id="btn-add-code-def" class="btn btn-primary btn-sm" data-i18n="btn_add_code_def">
-                                                <i class="lucide-plus"></i> Add Code Definition
-                                            </button>
-                                        </div>
-                                        <div class="table-container">
-                                            <table>
-                                                <thead>
-                                                    <tr>
-                                                        <th data-i18n="col_code">Code</th>
-                                                        <th data-i18n="col_trade_name">Trade Name</th>
-                                                        <th data-i18n="col_origins_grouped">Origins Grouped</th>
-                                                        <th data-i18n="col_action">Actions</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody id="code-defs-table-body">
-                                                    <!-- Dynamically loaded -->
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
                             <!-- Accordion: Minimum Quantities -->
                             <div class="card" style="overflow:hidden;">
                                 <div class="settings-accordion-header" onclick="toggleSettingsCard(this)" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; padding:4px 0;">
@@ -2520,11 +2511,11 @@
     <script src="js/db.js?v=1"></script>
     <script src="js/auth.js?v=9"></script>
     <script src="js/greenbean.js?v=12"></script>
-    <script src="js/roasting.js?v=16"></script>
-    <script src="js/packing.js?v=30"></script>
-    <script src="js/sales.js?v=11"></script>
-    <script src="js/settings.js?v=11"></script>
+    <script src="js/roasting.js?v=17"></script>
+    <script src="js/packing.js?v=31"></script>
+    <script src="js/sales.js?v=13"></script>
+    <script src="js/settings.js?v=12"></script>
     <script src="js/tracking.js?v=6"></script>
-    <script src="js/app.js?v=70"></script>
+    <script src="js/app.js?v=71"></script>
 </body>
 </html>

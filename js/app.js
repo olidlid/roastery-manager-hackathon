@@ -889,6 +889,7 @@ function enforceGranularPermissions() {
         'tab-roast-logs': 'roasting_batch_view',
         'tab-blend-recipes': 'blend_view',
         'tab-custom-blend': 'blend_view',
+        'tab-code-definitions': 'blend_view',
         'tab-recipe-potential': 'production_potential_view',
         // Greenbean tabs
         'tab-add-gb-history': 'greenbean_arrival_view',
@@ -1074,7 +1075,6 @@ async function loadSettingTabSpecificData(tabId) {
         case 'tab-sett-production':
             await loadMachinesSection();
             await loadPackagingSizesTable();
-            await loadCodeDefinitionsTable();
             await loadMinQtySettings();
             await loadCompanySettings();
             break;

@@ -939,6 +939,17 @@ async function openDispatchCheckoutModal(orderId) {
         return r ? `${r.name} (Blend)` : 'Blend Recipe';
     }
 
+    // Code shown alongside coffeeLabel — the trade code for a coffee_code
+    // item, or the specific green_coffee's own code otherwise.
+    function itemCode(item) {
+        if (item.coffee_code) return item.coffee_code;
+        if (item.coffee_type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === item.single_coffee_id);
+            return gb ? (gb.code || '-') : '-';
+        }
+        return '-';
+    }
+
     // For every order line, find ALL packed_coffee_lots for that coffee+size
     // (across every machine, so a machine-mismatch pick is still visible —
     // just flagged, per the "warn instead of block" decision), oldest first.
@@ -961,6 +972,14 @@ async function openDispatchCheckoutModal(orderId) {
         });
         const packedIds = new Set(matchingPacked.map(p => p.id));
         const machineByPackedId = new Map(matchingPacked.map(p => [p.id, p.machine_id]));
+        // Origin name/code per packed_coffee_id — the physical green bean
+        // that lot's sticker was printed for, not the trade name. Needed so
+        // the Lot dropdown/Cart can tell two same-code origins apart.
+        const originByPackedId = new Map(matchingPacked.map(p => {
+            const idn = resolvePackedIdentity(p);
+            const gb = idn && idn.type === 'Single' ? (greenbeans || []).find(g => g.id === idn.coffeeId) : null;
+            return [p.id, gb ? { name: gb.name, code: gb.code || '' } : { name: 'Unknown', code: '' }];
+        }));
         const lots = (packedLots || [])
             .filter(l => packedIds.has(l.packed_coffee_id) && (parseInt(l.remaining_pcs) || 0) > 0)
             .map(l => ({
@@ -968,7 +987,9 @@ async function openDispatchCheckoutModal(orderId) {
                 lotCode: l.lot_code,
                 packedDate: l.packed_date,
                 remaining: parseInt(l.remaining_pcs) || 0,
-                machineId: machineByPackedId.get(l.packed_coffee_id) || null
+                machineId: machineByPackedId.get(l.packed_coffee_id) || null,
+                originName: (originByPackedId.get(l.packed_coffee_id) || {}).name || 'Unknown',
+                originCode: (originByPackedId.get(l.packed_coffee_id) || {}).code || ''
             }))
             .sort((a, b) => new Date(a.packedDate) - new Date(b.packedDate) || a.id - b.id);
         lotsByItem[item.id] = lots;
@@ -999,7 +1020,7 @@ async function openDispatchCheckoutModal(orderId) {
     };
 
     const itemOptionsHtml = items.map(item => {
-        const label = `${coffeeLabel(item)} — ${item.bag_size_g}g, ${machineName(item.machine_id)}`;
+        const label = `(${itemCode(item)}) ${coffeeLabel(item)} — ${item.bag_size_g}g, ${machineName(item.machine_id)}`;
         return `<option value="${item.id}">${label}</option>`;
     }).join('');
 
@@ -1007,7 +1028,7 @@ async function openDispatchCheckoutModal(orderId) {
         <div id="dispatch-checkout-body">
             <table class="nested-table-rows" style="width:100%; margin-bottom:16px;">
                 <thead><tr>
-                    <th>Coffee</th><th>Size / Machine</th>
+                    <th>Code</th><th>Coffee</th><th>Size / Machine</th>
                     <th class="text-right">Requested</th><th class="text-right">Fulfilled</th><th class="text-right">Remaining</th>
                 </tr></thead>
                 <tbody id="dc-summary-body"></tbody>
@@ -1037,7 +1058,7 @@ async function openDispatchCheckoutModal(orderId) {
 
             <p style="font-weight:600; font-size:0.85rem; margin-bottom:6px;">Cart</p>
             <table class="nested-table-rows" style="width:100%; margin-bottom:12px;">
-                <thead><tr><th>Lot</th><th>Machine</th><th>Size</th><th class="text-right">Stock</th><th class="text-right">Qty</th><th></th></tr></thead>
+                <thead><tr><th>Code</th><th>Coffee</th><th>Lot</th><th>Machine</th><th>Size</th><th class="text-right">Stock</th><th class="text-right">Qty</th><th></th></tr></thead>
                 <tbody id="dc-cart-body"></tbody>
             </table>
 
@@ -1061,6 +1082,7 @@ async function openDispatchCheckoutModal(orderId) {
             const remaining = Math.max(0, requested - fulfilled);
             return `
                 <tr>
+                    <td class="text-secondary-xs">${itemCode(item)}</td>
                     <td>${coffeeLabel(item)}</td>
                     <td class="text-secondary-xs">${item.bag_size_g}g, ${machineName(item.machine_id)}</td>
                     <td class="text-right">${requested}</td>
@@ -1092,6 +1114,8 @@ async function openDispatchCheckoutModal(orderId) {
         cart.forEach((row, key) => {
             rows.push(`
                 <tr data-key="${key}">
+                    <td class="text-secondary-xs">${row.originCode || '-'}</td>
+                    <td>${row.originName || '-'}</td>
                     <td class="text-secondary-xs">${row.lotCode}</td>
                     <td>${row.machineName}</td>
                     <td>${row.sizeG}g</td>
@@ -1101,7 +1125,7 @@ async function openDispatchCheckoutModal(orderId) {
                 </tr>
             `);
         });
-        document.getElementById('dc-cart-body').innerHTML = rows.join('') || `<tr><td colspan="6" class="text-center-muted">No lots added yet.</td></tr>`;
+        document.getElementById('dc-cart-body').innerHTML = rows.join('') || `<tr><td colspan="8" class="text-center-muted">No lots added yet.</td></tr>`;
     }
 
     function populateManualLotOptions() {
@@ -1110,18 +1134,22 @@ async function openDispatchCheckoutModal(orderId) {
         const lots = lotsByItem[itemId] || [];
         const fifo = fifoLotForItemMachine(itemId);
         const lotSelect = document.getElementById('dc-manual-lot');
+        // Greenbean name shown alongside the lot code — this IS the code
+        // printed on the physical packed-coffee sticker (packed_coffee_lots
+        // .lot_code), not a bulk/production lot code, so the packing team
+        // can visually match it against the physical bag.
         lotSelect.innerHTML = lots.map(l => {
             if (item.coffee_code) {
                 // Any origin/machine sharing the code is a valid pick — no
                 // "different machine" mismatch concept here, just FIFO.
                 const isFifo = fifo && fifo.id === l.id;
                 const tag = isFifo ? ' (FIFO)' : ` — ${machineName(l.machineId)}`;
-                return `<option value="${l.id}">${l.lotCode} — ${liveRemaining[l.id]} left${tag}</option>`;
+                return `<option value="${l.id}">${l.lotCode} — ${l.originName} — ${liveRemaining[l.id]} left${tag}</option>`;
             }
             const isFifo = fifo && fifo.id === l.id && l.machineId === item.machine_id;
             const mismatch = l.machineId !== item.machine_id;
             const tag = mismatch ? ` — ${machineName(l.machineId)} (different machine)` : (isFifo ? ' (FIFO)' : '');
-            return `<option value="${l.id}">${l.lotCode} — ${liveRemaining[l.id]} left${tag}</option>`;
+            return `<option value="${l.id}">${l.lotCode} — ${l.originName} — ${liveRemaining[l.id]} left${tag}</option>`;
         }).join('') || `<option value="">No stock available</option>`;
     }
 
@@ -1180,7 +1208,7 @@ async function openDispatchCheckoutModal(orderId) {
             if (existing) {
                 existing.qty += take;
             } else {
-                cart.set(key, { orderItemId: itemId, lotId: l.id, lotCode: l.lotCode, machineId: l.machineId, machineName: machineName(l.machineId), sizeG: item.bag_size_g, qty: take });
+                cart.set(key, { orderItemId: itemId, lotId: l.id, lotCode: l.lotCode, machineId: l.machineId, machineName: machineName(l.machineId), sizeG: item.bag_size_g, qty: take, originName: l.originName, originCode: l.originCode });
             }
         }
 
