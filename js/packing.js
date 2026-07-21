@@ -151,13 +151,33 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
             `;
         }
 
+        // Coffee code badge, top-right — the green_coffee/blend_recipes code
+        // (or the manually-typed custom_coffee_code for a post-blend), so
+        // the crew can identify the coffee at a glance next to the name.
+        let coffeeCode = null;
+        if (bulk.is_post_blend) {
+            coffeeCode = bulk.custom_coffee_code || null;
+        } else if (bulk.coffee_type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === bulk.single_coffee_id);
+            coffeeCode = gb ? gb.code : null;
+        } else if (bulk.coffee_type === 'Blend') {
+            const r = (recipes || []).find(rec => rec.id === bulk.blend_recipe_id);
+            coffeeCode = r ? r.code : null;
+        }
+        const codeBadgeHtml = coffeeCode
+            ? `<div style="font-family: monospace; font-weight: 800; font-size: 0.95rem; color: var(--primary); background: var(--primary-glow); border: 1px solid var(--primary); border-radius: 8px; padding: 5px 11px; letter-spacing: 0.3px; flex: 0 0 auto;">${coffeeCode}</div>`
+            : '';
+
         const card = document.createElement('div');
         card.className = 'card';
         card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px;';
         card.innerHTML = `
-            <div>
-                <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}${bulk.is_post_blend ? ' <span style="font-size:0.65rem; font-weight:700; text-transform:uppercase; color:var(--primary); background:var(--primary-glow); border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>' : ''}</div>
-                <div style="font-size: 0.8rem; color: var(--text-muted);">${machine ? machine.name : (bulk.is_post_blend ? 'Assembled blend' : 'Unknown Machine')}</div>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+                <div>
+                    <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}${bulk.is_post_blend ? ' <span style="font-size:0.65rem; font-weight:700; text-transform:uppercase; color:var(--primary); background:var(--primary-glow); border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>' : ''}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">${machine ? machine.name : (bulk.is_post_blend ? 'Assembled blend' : 'Unknown Machine')}</div>
+                </div>
+                ${codeBadgeHtml}
             </div>
             <div style="font-family: monospace; font-size: 0.72rem; font-weight: 700; color: var(--primary); background: var(--primary-glow); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; align-self: flex-start; letter-spacing: 0.3px;">${bulk.custom_blend_code || baseLotCode}</div>
             <div style="font-size: 1.4rem; font-weight: 700; color: var(--primary);">${parseFloat(bulk.bulk_available).toFixed(2)} kg</div>
