@@ -287,7 +287,8 @@ CREATE TABLE IF NOT EXISTS public.bulk_roasted_coffee (
     custom_blend_name TEXT,               -- V2 1I-a: user-typed name for a custom post-blend
     custom_blend_code TEXT,               -- V2 1I-a/1I-b: date-based identity code for a post-blend
     source_plan_id INTEGER REFERENCES public.roasting_plans(id) ON DELETE SET NULL,  -- V2 1I-b: links a recipe-assembled post-blend back to its parent roasting_plans row, so composition is derived from that parent's sub-plans (parent_plan_id) instead of a components table
-    custom_coffee_code TEXT               -- V2 Custom Blend: user-typed short code for a custom blend (distinct from custom_blend_code, which is the auto-generated date-based bulk/lot code)
+    custom_coffee_code TEXT,              -- V2 Custom Blend: user-typed short code for a custom blend (distinct from custom_blend_code, which is the auto-generated date-based bulk/lot code)
+    production_date DATE NOT NULL DEFAULT CURRENT_DATE  -- V2: re-keys bulk pooling by (coffee, machine, roast day) instead of pooling indefinitely — see bulk_production_date_migration.sql
 );
 
 -- 12. Waste inventory (failed test batches etc.)
@@ -351,7 +352,8 @@ CREATE TABLE IF NOT EXISTS public.packing_records (
     status TEXT DEFAULT 'Packed',
     date DATE NOT NULL DEFAULT CURRENT_DATE,
     machine_id INTEGER,
-    bag_size_g INTEGER
+    bag_size_g INTEGER,
+    packed_coffee_lot_id INTEGER REFERENCES public.packed_coffee_lots(id) ON DELETE SET NULL  -- V2: links this log entry back to the packed_coffee_lots row it created/added to, so a correction flow can find/adjust it even after the lot is fully depleted
 );
 
 -- 16. Customers (WHL/RTL)

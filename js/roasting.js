@@ -2125,10 +2125,11 @@ async function deleteBatch(id) {
             // Refund/deduct from bulk_roasted_coffee if it was already approved/Success
             if (batch.qc_status === 'Success') {
                 const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-                const bulkRec = bulkList.find(b => 
-                    b.coffee_type === batch.coffee_type && 
+                const bulkRec = bulkList.find(b =>
+                    b.coffee_type === batch.coffee_type &&
                     (batch.coffee_type === 'Single' ? b.single_coffee_id === batch.single_coffee_id : b.blend_recipe_id === batch.blend_recipe_id) &&
-                    b.machine_id === batch.machine_id
+                    b.machine_id === batch.machine_id &&
+                    b.production_date === batch.roast_date
                 );
                 if (bulkRec) {
                     bulkRec.bulk_available = Math.max(0, parseFloat(bulkRec.bulk_available) - parseFloat(batch.output_weight_kg));
@@ -2148,14 +2149,20 @@ async function deleteBatch(id) {
     }
 }
 
-async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, weightKg) {
+// roastDate scopes the pool to a single roast day — bulk is physically kept
+// separate per roast day, so a coffee+machine combo roasted again on a
+// different day must land in its own row/card, not accumulate into an
+// older day's pool (which would blur FIFO and misdate printed lot codes —
+// see database/bulk_production_date_migration.sql).
+async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, weightKg, roastDate) {
     const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-    const existingBulk = bulkList.find(b => 
-        b.coffee_type === type && 
+    const existingBulk = bulkList.find(b =>
+        b.coffee_type === type &&
         (type === 'Single' ? b.single_coffee_id === singleId : b.blend_recipe_id === blendId) &&
-        b.machine_id === machineId
+        b.machine_id === machineId &&
+        b.production_date === roastDate
     );
-    
+
     if (existingBulk) {
         existingBulk.bulk_available = parseFloat(existingBulk.bulk_available || 0) + weightKg;
         await saveData('bulk_roasted_coffee', existingBulk);
@@ -2166,7 +2173,8 @@ async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, 
             blend_recipe_id: type === 'Blend' ? blendId : null,
             machine_id: machineId,
             coffee_name: coffeeName,
-            bulk_available: weightKg
+            bulk_available: weightKg,
+            production_date: roastDate
         };
         await saveData('bulk_roasted_coffee', newBulk);
     }
@@ -2203,10 +2211,11 @@ async function tryAssemblePostBlend(parentPlanId) {
 // normal single-origin bulk_roasted_coffee card instead of being wasted —
 // same idea as recipe over-yield.
 async function finalizePostBlendPlan(parentPlanId) {
-    const [{ data: allPlans }, { data: recipes }, { data: greenbeans }] = await Promise.all([
+    const [{ data: allPlans }, { data: recipes }, { data: greenbeans }, { data: allBatches }] = await Promise.all([
         fetchData('roasting_plans'),
         fetchData('blend_recipes'),
-        fetchData('green_coffee')
+        fetchData('green_coffee'),
+        fetchData('roast_batches')
     ]);
     const parent = (allPlans || []).find(p => p.id === parentPlanId);
     if (!parent || parent.status === 'Completed') return;
@@ -2232,11 +2241,23 @@ async function finalizePostBlendPlan(parentPlanId) {
 
         if (leftover > 0.005) {
             const gb = (greenbeans || []).find(g => g.id === s.single_coffee_id);
-            await addWeightToBulkRoastedCoffee('Single', s.single_coffee_id, null, s.machine_id, gb ? gb.name : 'Roasted Coffee', leftover);
+            // Prefer the actual roast date of the batch(es) that fulfilled this
+            // sub-plan (guaranteed to exist whenever fulfilled_roasted_kg > 0 —
+            // it's only ever incremented by a real batch save); plan_date is
+            // just the scheduled date and can drift from the real roast day.
+            const subPlanBatchDates = (allBatches || [])
+                .filter(b => b.roasting_plan_id === s.id && b.roast_date)
+                .map(b => b.roast_date)
+                .sort();
+            const leftoverRoastDate = subPlanBatchDates.length > 0
+                ? subPlanBatchDates[subPlanBatchDates.length - 1]
+                : s.plan_date;
+            await addWeightToBulkRoastedCoffee('Single', s.single_coffee_id, null, s.machine_id, gb ? gb.name : 'Roasted Coffee', leftover, leftoverRoastDate);
         }
     }
 
     if (assembledKg > 0.005) {
+        const todayStr = new Date().toISOString().split('T')[0];
         const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
         const { data: bulkList } = await fetchData('bulk_roasted_coffee');
         let code = `PB-${dateStr}`;
@@ -2252,7 +2273,8 @@ async function finalizePostBlendPlan(parentPlanId) {
             custom_blend_code: code,
             bulk_available: assembledKg,
             machine_id: null,
-            source_plan_id: parent.id
+            source_plan_id: parent.id,
+            production_date: todayStr
         });
     }
 
@@ -2338,7 +2360,7 @@ async function approveTestBatch(id) {
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
 
-            await addWeightToBulkRoastedCoffee(batch.coffee_type, batch.single_coffee_id, batch.blend_recipe_id, batch.machine_id, coffeeName, parseFloat(batch.output_weight_kg));
+            await addWeightToBulkRoastedCoffee(batch.coffee_type, batch.single_coffee_id, batch.blend_recipe_id, batch.machine_id, coffeeName, parseFloat(batch.output_weight_kg), batch.roast_date);
 
             loadRoastingBatches();
             scheduleDashboardRefresh();
@@ -3141,7 +3163,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 const r = recipes.find(rec => rec.id === blendId);
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
-            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg);
+            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate);
 
         } else if (prevQcStatus === 'Success' && qcStatus !== 'Success') {
             // Transition: Success → Pending  (approved checkbox unchecked)
@@ -3152,7 +3174,8 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 (existingBatch.coffee_type === 'Single'
                     ? b.single_coffee_id === existingBatch.single_coffee_id
                     : b.blend_recipe_id === existingBatch.blend_recipe_id) &&
-                b.machine_id === existingBatch.machine_id
+                b.machine_id === existingBatch.machine_id &&
+                b.production_date === existingBatch.roast_date
             );
             if (existingBulk) {
                 const prevOutputKg = parseFloat(existingBatch.output_weight_kg || 0);
@@ -3175,7 +3198,8 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 (existingBatch.coffee_type === 'Single'
                     ? b.single_coffee_id === existingBatch.single_coffee_id
                     : b.blend_recipe_id === existingBatch.blend_recipe_id) &&
-                b.machine_id === existingBatch.machine_id
+                b.machine_id === existingBatch.machine_id &&
+                b.production_date === existingBatch.roast_date
             );
             if (oldBulk) {
                 oldBulk.bulk_available = Math.max(0, parseFloat(oldBulk.bulk_available || 0) - parseFloat(existingBatch.output_weight_kg || 0));
@@ -3189,7 +3213,10 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 const r = recipes.find(rec => rec.id === blendId);
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
-            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg);
+            // Refund matched the OLD roast_date (existingBatch.roast_date);
+            // re-add uses the NEW roastDate (form value) — these can differ
+            // if the user also changed the roast date during this edit.
+            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate);
         }
         // else: new batch not Success (Pending, first save) → nothing counted yet
 
@@ -3902,7 +3929,7 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
                 const r = (recipes || []).find(rec => rec.id === blendId);
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
-            await addWeightToBulkRoastedCoffee(type, singleId, blendId, mId, coffeeName, outputKg);
+            await addWeightToBulkRoastedCoffee(type, singleId, blendId, mId, coffeeName, outputKg, roastDate);
         }
 
         // Show success toast

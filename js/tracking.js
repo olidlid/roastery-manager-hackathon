@@ -24,8 +24,10 @@ async function loadTrackingSection() {
     // "type" the code + Enter is all that's needed — no custom scan-capture
     // logic required, as long as lot codes don't collide with the 'RMP:'
     // prefix the global quick-roast-log scanner listener reacts to (see the
-    // GLOBAL BARCODE SCANNER LISTENER section in app.js). Lot codes are
-    // generated as 'LOT-...' so there's no ambiguity between the two.
+    // GLOBAL BARCODE SCANNER LISTENER section in app.js). production_lots
+    // codes are {coffee code}-{machine code}{MMDDYY}{lot number} (see
+    // buildLotCode in js/packing.js) — never starts with 'RMP:', so no
+    // ambiguity between the two.
     if (scanBtn && !scanBtn.hasAttribute('data-init')) {
         scanBtn.setAttribute('data-init', 'true');
         scanBtn.addEventListener('click', () => {

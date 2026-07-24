@@ -327,7 +327,7 @@ async function openLotCodeLookupModal() {
     const html = `
         <div class="form-group">
             <label class="form-label">Lot Code</label>
-            <input type="text" id="lot-lookup-input" class="form-control" placeholder="e.g. PKL-25-1784197076303" oninput="searchLotCodeLookup(this.value)" autocomplete="off">
+            <input type="text" id="lot-lookup-input" class="form-control" placeholder="e.g. SKR-M4072426-3" oninput="searchLotCodeLookup(this.value)" autocomplete="off">
         </div>
         <div id="lot-lookup-results" style="margin-top:16px;"></div>
     `;

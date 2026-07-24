@@ -3424,6 +3424,11 @@ function cancelStockTake() {
 
 // Push a group's counted total back onto its underlying source rows. Surplus is
 // added to the first row; a shortage is deducted across rows until satisfied.
+// Known limitation (pre-existing, not introduced by bulk's date-scoping):
+// surplus/shortage lands on group.rows in whatever order they were fetched,
+// not deliberately oldest/newest — was already true across machines, now
+// also true across roast dates within a machine since bulk_roasted_coffee
+// can have several date-rows per coffee+machine.
 function applyStockGroupAdjustment(group, actual) {
     const changed = [];
     const field = group.field;
