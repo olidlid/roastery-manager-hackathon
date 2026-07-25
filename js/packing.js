@@ -729,11 +729,15 @@ async function openEditPackingRecordModal(recordId) {
     const [
         { data: records },
         { data: packedLots },
-        { data: packedList }
+        { data: packedList },
+        { data: productionLots },
+        { data: bulkList }
     ] = await Promise.all([
         fetchData('packing_records'),
         fetchData('packed_coffee_lots'),
-        fetchData('packed_coffee')
+        fetchData('packed_coffee'),
+        fetchData('production_lots'),
+        fetchData('bulk_roasted_coffee')
     ]);
 
     const record = (records || []).find(r => r.id === recordId);
@@ -744,9 +748,32 @@ async function openEditPackingRecordModal(recordId) {
     }
     const parentPacked = (packedList || []).find(p => p.id === lot.packed_coffee_id);
 
+    // A pack action always draws from a production lot's bulk source, EXCEPT
+    // manual/custom packing (no bulk to trace back to — production_lot_id is
+    // null in that case, same as elsewhere in this file).
+    const productionLot = lot.production_lot_id ? (productionLots || []).find(pl => pl.id === lot.production_lot_id) : null;
+    const bulkRow = productionLot ? (bulkList || []).find(b => b.id === productionLot.bulk_roasted_coffee_id) : null;
+    const bagSizeKg = (parseFloat((parentPacked && parentPacked.bag_size_g) || record.bag_size_g) || 0) / 1000;
+    const bulkAvailable = bulkRow ? parseFloat(bulkRow.bulk_available) || 0 : 0;
+
     const currentQty = parseInt(lot.quantity_pcs) || 0;
     const currentRemaining = parseInt(lot.remaining_pcs) || 0;
     const alreadyShipped = Math.max(0, currentQty - currentRemaining);
+
+    const bulkSectionHtml = bulkRow ? `
+        <div class="form-group" style="display:flex; align-items:flex-start; gap:8px; background: var(--bg-app); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;">
+            <input type="checkbox" id="m-correct-adjust-bulk" checked style="margin-top:2px;">
+            <label for="m-correct-adjust-bulk" style="margin:0; font-size:0.85rem; cursor:pointer;">
+                Also adjust bulk stock (${bulkRow.coffee_name}, roasted ${bulkRow.production_date || '-'})
+                <div id="m-correct-bulk-delta" style="font-family:monospace; font-size:0.8rem; color:var(--text-secondary); margin-top:2px;"></div>
+            </label>
+        </div>
+        <p id="m-correct-bulk-warning" class="hidden" style="font-size: 0.82rem; color: var(--warning, #c9a227); margin-top: -4px;">
+            That lot's bulk source only has ${bulkAvailable.toFixed(2)} kg left — the adjustment will be capped at 0 kg rather than going negative.
+        </p>
+    ` : `
+        <p style="font-size: 0.82rem; color: var(--text-secondary);">This pack has no traceable bulk source (manual/custom packing) — only the packed stock will be adjusted.</p>
+    `;
 
     const html = `
         <form id="modal-edit-packing-record-form">
@@ -775,6 +802,7 @@ async function openEditPackingRecordModal(recordId) {
             <p id="m-correct-warning" class="hidden" style="font-size: 0.82rem; color: var(--warning, #c9a227); margin-top: -4px;">
                 ${alreadyShipped} bag(s) from this lot are already dispatched — the corrected total can't go below that.
             </p>
+            ${bulkSectionHtml}
             <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Correction</button>
@@ -785,9 +813,24 @@ async function openEditPackingRecordModal(recordId) {
 
     const qtyInput = document.getElementById('m-correct-qty');
     const warningEl = document.getElementById('m-correct-warning');
-    qtyInput.addEventListener('input', () => {
-        warningEl.classList.toggle('hidden', (parseInt(qtyInput.value) || 0) >= alreadyShipped);
-    });
+    const bulkDeltaEl = document.getElementById('m-correct-bulk-delta');
+    const bulkWarningEl = document.getElementById('m-correct-bulk-warning');
+
+    const refreshPreview = () => {
+        const newQty = parseInt(qtyInput.value) || 0;
+        warningEl.classList.toggle('hidden', newQty >= alreadyShipped);
+        if (bulkRow && bulkDeltaEl) {
+            const delta = newQty - currentQty;
+            const bulkDeltaKg = -delta * bagSizeKg;
+            const wouldGoNegative = bulkAvailable + bulkDeltaKg < 0;
+            bulkDeltaEl.textContent = bulkDeltaKg === 0
+                ? 'No change to bulk stock.'
+                : `${bulkDeltaKg > 0 ? '+' : ''}${bulkDeltaKg.toFixed(2)} kg (${bulkAvailable.toFixed(2)} → ${Math.max(0, bulkAvailable + bulkDeltaKg).toFixed(2)} kg)`;
+            if (bulkWarningEl) bulkWarningEl.classList.toggle('hidden', !wouldGoNegative);
+        }
+    };
+    qtyInput.addEventListener('input', refreshPreview);
+    refreshPreview();
 
     document.getElementById('modal-edit-packing-record-form').addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -805,6 +848,18 @@ async function openEditPackingRecordModal(recordId) {
         if (parentPacked) {
             const newParentQty = Math.max(0, (parseInt(parentPacked.quantity) || 0) + (newRemaining - currentRemaining));
             await saveData('packed_coffee', { id: parentPacked.id, quantity: newParentQty });
+        }
+
+        // More bags packed = more bulk kg consumed, so bulk moves the
+        // opposite direction of the packed-quantity delta. Optional: the
+        // correction might instead be about a QC/spoilage issue where the
+        // bulk really was consumed as originally recorded, so this is
+        // left as a checkbox rather than automatic.
+        const adjustBulkEl = document.getElementById('m-correct-adjust-bulk');
+        if (bulkRow && adjustBulkEl && adjustBulkEl.checked) {
+            const bulkDeltaKg = -delta * bagSizeKg;
+            const newBulkAvailable = Math.max(0, bulkAvailable + bulkDeltaKg);
+            await saveData('bulk_roasted_coffee', { id: bulkRow.id, bulk_available: newBulkAvailable });
         }
 
         await saveData('packing_records', {
@@ -826,6 +881,7 @@ async function openEditPackingRecordModal(recordId) {
         await showWarningModal('Correction saved.', false);
         loadPackingRecordsTable();
         loadPackedCoffeeSection();
+        loadPackingSection();
         scheduleDashboardRefresh();
     });
 }
