@@ -1892,7 +1892,7 @@ async function syncProductionLotBatches(lot, bulk, roastBatches) {
     }
 }
 
-function printLotBarcodeLabels(lot, requested, machines) {
+function printLotBarcodeLabels(lot, requested, machines, rotateOverride) {
     // Production date = the lot's roast/pack date (production_date). Expiry
     // is a fixed 1-year shelf life from that date — no separate field to
     // track, just computed at print time. dd-mm-yyyy per the label spec
@@ -1961,7 +1961,7 @@ function printLotBarcodeLabels(lot, requested, machines) {
         alert('Could not open the print window — please allow pop-ups for this site and try again.');
         return;
     }
-    printWin.document.write(buildFixedLabelDocument(labelsHtml, showCode));
+    printWin.document.write(buildFixedLabelDocument(labelsHtml, showCode, rotateOverride));
     printWin.document.close();
 }
 
@@ -1990,15 +1990,19 @@ function printLotBarcodeLabels(lot, requested, machines) {
 // doesn't remove the element from flow) lands it exactly filling the portrait
 // page's content box. See index.html Settings > Production > Label Layout >
 // Print Orientation for the toggle.
-function buildFixedLabelDocument(labelsHtml, showCode) {
-    const rotate = companySettings.label_rotate_90 === true;
+function buildFixedLabelDocument(labelsHtml, showCode, rotateOverride) {
+    const rotate = (rotateOverride === undefined || rotateOverride === null) ? companySettings.label_rotate_90 === true : rotateOverride === true;
+    // Page margin trimmed from 1mm to 0.5mm to reclaim print area — most
+    // thermal roll printers can hold 0.5mm reliably. Content box is then
+    // 49mm x 24mm either way (50/25mm minus 2x0.5mm), so the rotated item's
+    // width/height/left below are sized to match (were 48/23/23 at 1mm).
     const pageCss = rotate
-        ? `@page { size: 25mm 50mm; margin: 1mm; }`
-        : `@page { size: 50mm 25mm; margin: 1mm; }`;
+        ? `@page { size: 25mm 50mm; margin: 0.5mm; }`
+        : `@page { size: 50mm 25mm; margin: 0.5mm; }`;
     const itemCss = rotate
         ? `.barcode-label-item {
-                width: 48mm;
-                height: 23mm;
+                width: 49mm;
+                height: 24mm;
                 box-sizing: border-box;
                 display: flex;
                 flex-direction: column;
@@ -2007,7 +2011,7 @@ function buildFixedLabelDocument(labelsHtml, showCode) {
                 padding: 0 1mm;
                 page-break-after: always;
                 position: relative;
-                left: 23mm;
+                left: 24mm;
                 top: 0;
                 transform: rotate(90deg);
                 transform-origin: top left;
@@ -2022,6 +2026,20 @@ function buildFixedLabelDocument(labelsHtml, showCode) {
                 padding: 0 1mm;
                 page-break-after: always;
            }`;
+    // Barcode zone is orientation-aware: in portrait/rotated mode, the SVG's
+    // own HEIGHT becomes the label's physical cross-width after the 90°
+    // rotation (see the rotate comment above) — that's the dimension that
+    // was leaving unused margin either side of the bars. Bumped from a
+    // shared 12mm to 14mm for portrait specifically, paid for by tightening
+    // line-height/margins on the text lines below (not font-size — text
+    // stays just as legible). Landscape's barcode already used most of its
+    // available width, so only got a small bump for slightly thicker bars.
+    // 25mm of label height minus 4 text lines leaves little slack — going
+    // taller than ~14mm here would mean either dropping a text line or
+    // shrinking fonts, both a legibility trade-off, not just a CSS tweak.
+    const barcodeCss = rotate
+        ? `.lot-barcode-svg { width: 44mm; height: 14mm; display: block; margin: 0.15mm auto 0; }`
+        : `.lot-barcode-svg { width: 46mm; height: 12mm; display: block; margin: 0.3mm auto 0; }`;
     return `
         <html><head><title>Barcode Labels</title>
         <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
@@ -2039,11 +2057,11 @@ function buildFixedLabelDocument(labelsHtml, showCode) {
                makes it stretch to fill this exact box every time, always
                using the label's full available width for maximum module
                thickness regardless of how many digits the payload has. */
-            .lot-barcode-svg { width: 44mm; height: 12mm; display: block; margin: 0.4mm auto 0; }
-            .lbl-coffee { font-size: 2.3mm; font-weight: 700; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 0.4mm; }
-            .lbl-size { font-size: 2.1mm; font-weight: 700; line-height: 1.3; margin-top: 0.3mm; }
-            .lbl-machine { font-size: 1.7mm; font-weight: 600; line-height: 1.3; color: #333; margin-top: 0.2mm; }
-            .lbl-dates { font-size: 2mm; font-weight: 700; line-height: 1.3; margin-top: 0.3mm; }
+            ${barcodeCss}
+            .lbl-coffee { font-size: 2.3mm; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 0.2mm; }
+            .lbl-size { font-size: 2.1mm; font-weight: 700; line-height: 1.15; margin-top: 0.15mm; }
+            .lbl-machine { font-size: 1.7mm; font-weight: 600; line-height: 1.15; color: #333; margin-top: 0.1mm; }
+            .lbl-dates { font-size: 2mm; font-weight: 700; line-height: 1.15; margin-top: 0.15mm; }
         </style></head><body>
         ${labelsHtml}
         <script>
@@ -2117,6 +2135,19 @@ async function openPrintBarcodeModal(bulkId) {
                 <input type="text" class="form-control" value="${bulk.coffee_name} (${parseFloat(bulk.bulk_available).toFixed(2)} kg available)" readonly>
             </div>
             <div style="margin-top: 16px;">
+                <label class="form-label">Label Orientation</label>
+                <div style="display: flex; gap: 8px;">
+                    <label style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 0.88rem;">
+                        <input type="radio" name="print-orientation" value="landscape" ${companySettings.label_rotate_90 !== true ? 'checked' : ''}>
+                        Landscape
+                    </label>
+                    <label style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 0.88rem;">
+                        <input type="radio" name="print-orientation" value="portrait" ${companySettings.label_rotate_90 === true ? 'checked' : ''}>
+                        Portrait
+                    </label>
+                </div>
+            </div>
+            <div style="margin-top: 16px;">
                 <label class="form-label">Number of labels to print per size</label>
                 <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                     ${sizesHtml}
@@ -2162,7 +2193,10 @@ async function openPrintBarcodeModal(bulkId) {
             r.lotCode = packedLot ? packedLot.lot_code : null;
         }
 
-        printLotBarcodeLabels(lot, requested, machines);
+        const orientationInput = document.querySelector('input[name="print-orientation"]:checked');
+        const rotateOverride = orientationInput ? orientationInput.value === 'portrait' : undefined;
+
+        printLotBarcodeLabels(lot, requested, machines, rotateOverride);
         document.getElementById('btn-close-modal').click();
     });
 }
