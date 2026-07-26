@@ -259,8 +259,8 @@ CREATE TABLE IF NOT EXISTS public.roast_batches (
     coffee_type TEXT,
     single_coffee_id INTEGER,
     roasting_plan_id INTEGER,
-    input_weight_kg NUMERIC,
-    output_weight_kg NUMERIC,
+    input_weight_kg NUMERIC(10,3),              -- 1-gram precision; was undocumented NUMERIC(10,2) in production (silently rounded to nearest 10g) — see roast_batch_weight_precision_migration.sql
+    output_weight_kg NUMERIC(10,3),              -- same fix as input_weight_kg above
     yield_percentage NUMERIC,
     roast_type TEXT DEFAULT 'Regular',
     qc_status TEXT DEFAULT 'Success',
