@@ -589,6 +589,15 @@ button.is-saving::after {
     background-color: #dc2626;
 }
 
+.btn-success {
+    background-color: var(--success);
+    color: #fff;
+}
+
+.btn-success:hover {
+    background-color: #429c73;
+}
+
 .btn-outline {
     background-color: transparent;
     border: 1px solid var(--border);

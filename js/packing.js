@@ -1518,7 +1518,7 @@ async function openDispatchCheckoutModal(orderId) {
             <button type="button" class="dc-item-row" data-item="${item.id}" aria-expanded="false" aria-controls="dc-lots-${item.id}">
                 <span class="dc-item-name">
                     <span class="dc-chev">&#9656;</span>
-                    <span class="dc-code">${itemCode(item)}</span>
+                    ${itemCode(item) !== '-' ? `<span class="dc-code">${itemCode(item)}</span>` : ''}
                     <span class="dc-title">${coffeeLabel(item)}</span>
                     <span class="dc-size">${item.bag_size_g}g</span>
                 </span>
@@ -1626,6 +1626,13 @@ async function openDispatchCheckoutModal(orderId) {
 
     const html = `
         <div id="dispatch-checkout-body">
+            <div class="dc-order-info">
+                <div>
+                    <div class="dc-order-info-value"><code>${order.order_number || '#ORD-' + order.id}</code></div>
+                    <div class="dc-order-info-sub">${order.sales_name || '-'}${cust ? ' &middot; ' + cust.name : ''}</div>
+                </div>
+                <div class="dc-order-info-value">${order.order_date || '-'}</div>
+            </div>
             <div class="dc-col-head">
                 <span>Coffee</span><span>Machine</span><span class="text-right">Stock</span><span class="text-right">Ready</span>
             </div>
@@ -1652,17 +1659,28 @@ async function openDispatchCheckoutModal(orderId) {
                makes [hidden] work) — without this, a hidden Take/Cancel
                button stays visible instead of actually disappearing. */
             #dispatch-checkout-body [hidden] { display: none !important; }
+            /* The shared modal header carries inline padding/margin (see
+               index.html), so only !important can tighten it — and :has()
+               keeps it scoped to THIS modal, reverting on its own for
+               every other modal that reuses the same shell. */
+            #modal-container:has(#dispatch-checkout-body) .overlay-card > div:has(> #modal-title) {
+                padding-bottom: 6px !important;
+                margin-bottom: 8px !important;
+            }
+            #dispatch-checkout-body .dc-order-info { display:flex; justify-content:space-between; align-items:flex-start; padding:0 12px 8px; margin-bottom:8px; border-bottom:1px solid var(--border); }
+            #dispatch-checkout-body .dc-order-info-value { font-weight:600; font-size:0.86rem; color:var(--text-primary); }
+            #dispatch-checkout-body .dc-order-info-sub { font-size:0.76rem; color:var(--text-muted); margin-top:1px; }
             #dispatch-checkout-body .dc-col-head { display:grid; grid-template-columns:1fr 130px 70px 70px; gap:10px; padding:0 12px 6px; font-size:0.66rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); }
             #dispatch-checkout-body .dc-col-head span:nth-child(3), #dispatch-checkout-body .dc-col-head span:nth-child(4) { text-align:right; }
-            #dispatch-checkout-body .dc-item { border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:8px; }
-            #dispatch-checkout-body .dc-item-row { display:grid; grid-template-columns:1fr 130px 70px 70px; gap:10px; align-items:center; width:100%; padding:11px 12px; background:none; border:none; text-align:left; cursor:pointer; font-family:inherit; font-size:0.86rem; color:var(--text-primary); }
+            #dispatch-checkout-body .dc-item { border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:10px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+            #dispatch-checkout-body .dc-item-row { display:grid; grid-template-columns:1fr 130px 70px 70px; gap:10px; align-items:center; width:100%; padding:14px 14px; background:var(--bg-card, none); border:none; text-align:left; cursor:pointer; font-family:inherit; font-size:0.86rem; color:var(--text-primary); }
             #dispatch-checkout-body .dc-item-row:hover { background:var(--bg-app); }
-            #dispatch-checkout-body .dc-item-name { display:flex; align-items:center; gap:7px; min-width:0; }
+            #dispatch-checkout-body .dc-item-name { display:flex; align-items:center; gap:9px; min-width:0; }
             #dispatch-checkout-body .dc-chev { display:inline-block; color:var(--text-muted); font-size:0.7rem; transition:transform 0.15s ease; }
             #dispatch-checkout-body .dc-item.open .dc-chev { transform:rotate(90deg); }
-            #dispatch-checkout-body .dc-code { font-family:monospace; font-size:0.76rem; color:var(--text-muted); flex:0 0 auto; }
-            #dispatch-checkout-body .dc-title { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-            #dispatch-checkout-body .dc-size { font-family:monospace; font-size:0.76rem; color:var(--text-muted); flex:0 0 auto; }
+            #dispatch-checkout-body .dc-code { font-family:monospace; font-weight:800; font-size:0.76rem; color:var(--primary); background:var(--primary-glow); border:1px solid var(--primary); border-radius:6px; padding:2px 7px; letter-spacing:0.3px; flex:0 0 auto; }
+            #dispatch-checkout-body .dc-title { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+            #dispatch-checkout-body .dc-size { font-family:monospace; font-size:0.76rem; color:var(--text-muted); flex:0 0 auto; background:var(--bg-app); border-radius:5px; padding:2px 6px; }
             #dispatch-checkout-body .dc-mach { font-size:0.78rem; color:var(--text-muted); }
             #dispatch-checkout-body .dc-stock { font-family:monospace; font-size:0.85rem; text-align:right; }
             #dispatch-checkout-body .dc-ready { font-family:monospace; font-weight:700; font-size:0.85rem; text-align:right; }
