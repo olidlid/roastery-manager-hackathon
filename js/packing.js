@@ -42,6 +42,8 @@ async function loadPackingSection() {
                     loadPackingHistorySection();
                 } else if (btn.getAttribute('data-target') === 'tab-packing-records') {
                     loadPackingRecordsTable();
+                } else if (btn.getAttribute('data-target') === 'tab-waste-inventory') {
+                    loadWasteInventorySection();
                 }
             });
         });
@@ -73,22 +75,20 @@ async function loadPackingSection() {
     // attaching a second listener that would fire the modal twice per click.
 }
 
-// Renders the "Ready to Pack" cards — one card per bulk_roasted_coffee row
-// (i.e. per coffee+machine combination with stock still available). Each
-// card offers Print Barcode (generates/reuses today's lot code for that
-// bulk item, then prints labels) and Pack (moves kg from bulk into
-// packed_coffee, scoped to just this card's bulk item).
+// Renders the "Ready to Pack" cards. Bulk is date-scoped (one row per
+// coffee+machine+roast day — see database/bulk_production_date_migration.sql),
+// which made a frequently-roasted coffee spread across several near-identical
+// cards. Cards are therefore GROUPED by coffee+machine: a group with one roast
+// date renders exactly as before, a group with several renders one card
+// showing the combined kg plus an expandable list of its dates, oldest first
+// (FIFO order). Print Barcode / Pack stay per roast date either way — each
+// date is its own lot and must never be conflated.
 function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans) {
     const container = document.getElementById('ready-to-pack-cards');
     const emptyEl = document.getElementById('ready-to-pack-empty');
     if (!container) return;
     container.innerHTML = '';
 
-    // Bulk is now date-scoped (one card per coffee+machine+roast day — see
-    // database/bulk_production_date_migration.sql), so the same coffee+
-    // machine can show multiple cards. groupKey clusters them; sorting by
-    // (coffee, machine, production_date asc) puts the oldest card of each
-    // group first, matching FIFO pick order.
     const groupKey = (b) => `${b.coffee_type}|${b.single_coffee_id || ''}|${b.blend_recipe_id || ''}|${b.machine_id || ''}|${b.coffee_name}`;
 
     const activeBulk = (bulkList || [])
@@ -101,32 +101,26 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     }
     if (emptyEl) emptyEl.classList.add('hidden');
 
-    const groupCounts = {};
-    activeBulk.forEach(b => { const k = groupKey(b); groupCounts[k] = (groupCounts[k] || 0) + 1; });
-    const seenGroups = new Set();
+    // Post-blends are deliberately never grouped: machine_id is null and each
+    // carries its own custom_blend_code (CB-/PB-), so merging two of them
+    // would misrepresent them as one pool.
+    const groups = [];
+    const groupPos = new Map();
+    activeBulk.forEach(b => {
+        const k = b.is_post_blend ? `postblend:${b.id}` : groupKey(b);
+        if (!groupPos.has(k)) { groupPos.set(k, groups.length); groups.push([]); }
+        groups[groupPos.get(k)].push(b);
+    });
 
-    activeBulk.forEach(bulk => {
-        const machine = (machines || []).find(m => m.id === bulk.machine_id);
-        // Base lot code (same format as the printed label, minus the trailing
-        // production-lot number) shown as a preview badge.
-        const baseLotCode = buildLotCode(bulk, machines, greenbeans, recipes, bulk.production_date);
+    // ---- per-bulk fragments shared by both card shapes ----
 
-        // First (oldest) card in a multi-date coffee+machine group — same
-        // "PICK FIRST" pattern as the Stock by Lot drill-down (openPackedLotsModal).
-        const gKey = groupKey(bulk);
-        const isPickFirst = groupCounts[gKey] > 1 && !seenGroups.has(gKey);
-        seenGroups.add(gKey);
-        const pickFirstBadge = isPickFirst
-            ? ' <span style="font-size:0.68rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px; margin-left:6px;">PICK FIRST</span>'
-            : '';
-
-        // Post-blend cards show a composition breakdown (coffee, amount,
-        // share) as a mixing reference for the crew — sourced from
-        // post_blend_components for a custom post-blend (1I-a, existing
-        // stock mixed ad-hoc) or from the parent plan's sub-plans for a
-        // recipe-based post-blend (1I-b, assembled from fresh roast batches
-        // — see bulk_roasted_coffee.source_plan_id / finalizePostBlendPlan
-        // in js/roasting.js).
+    // Composition breakdown shown on post-blend cards as a mixing reference —
+    // sourced from post_blend_components for a custom post-blend (1I-a,
+    // existing stock mixed ad-hoc) or from the parent plan's sub-plans for a
+    // recipe-based post-blend (1I-b, assembled from fresh roast batches — see
+    // bulk_roasted_coffee.source_plan_id / finalizePostBlendPlan in
+    // js/roasting.js).
+    function compositionHtmlFor(bulk) {
         let compositionHtml = '';
         if (bulk.is_post_blend && bulk.source_plan_id) {
             const subPlans = (roastingPlans || []).filter(p => p.parent_plan_id === bulk.source_plan_id);
@@ -169,9 +163,13 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
             `;
         }
 
-        // Coffee code badge, top-right — the green_coffee/blend_recipes code
-        // (or the manually-typed custom_coffee_code for a post-blend), so
-        // the crew can identify the coffee at a glance next to the name.
+        return compositionHtml;
+    }
+
+    // Coffee code badge, top-right — the green_coffee/blend_recipes code (or
+    // the manually-typed custom_coffee_code for a post-blend), so the crew can
+    // identify the coffee at a glance next to the name.
+    function codeBadgeHtmlFor(bulk) {
         let coffeeCode = null;
         if (bulk.is_post_blend) {
             coffeeCode = bulk.custom_coffee_code || null;
@@ -182,32 +180,122 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
             const r = (recipes || []).find(rec => rec.id === bulk.blend_recipe_id);
             coffeeCode = r ? r.code : null;
         }
-        const codeBadgeHtml = coffeeCode
+        return coffeeCode
             ? `<div style="font-family: monospace; font-weight: 800; font-size: 0.95rem; color: var(--primary); background: var(--primary-glow); border: 1px solid var(--primary); border-radius: 8px; padding: 5px 11px; letter-spacing: 0.3px; flex: 0 0 auto;">${coffeeCode}</div>`
             : '';
+    }
 
+    const machineLabel = (bulk) => {
+        const machine = (machines || []).find(m => m.id === bulk.machine_id);
+        return machine ? machine.name : (bulk.is_post_blend ? 'Assembled blend' : 'Unknown Machine');
+    };
+    const lotCodeFor = (bulk) => bulk.custom_blend_code
+        || buildLotCode(bulk, machines, greenbeans, recipes, bulk.production_date);
+    const postBlendBadge = (bulk) => bulk.is_post_blend
+        ? ' <span style="font-size:0.65rem; font-weight:700; text-transform:uppercase; color:var(--primary); background:var(--primary-glow); border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>'
+        : '';
+    // Print/Pack keep the full-width row they've always had; Close Lot goes on
+    // its own line as a quiet text button — it's an occasional end-of-lot
+    // tidy-up for leftover grams, so it shouldn't crowd the two primary
+    // actions (squeezing three buttons onto one row wrapped "Print Barcode"
+    // onto two lines).
+    const actionButtons = (bulk) => `
+        <div style="display: flex; gap: 8px;">
+            <button type="button" class="btn btn-secondary btn-sm btn-print-lot-barcode" data-bulk-id="${bulk.id}" style="flex: 1;" data-i18n="btn_print_barcode">Barcode</button>
+            <button type="button" class="btn btn-primary btn-sm btn-pack-bulk" data-bulk-id="${bulk.id}" style="flex: 1;" data-i18n="btn_pack">Pack</button>
+        </div>
+        <button type="button" class="btn-close-lot" data-bulk-id="${bulk.id}"
+            style="align-self: flex-end; background: none; border: none; padding: 2px 0; cursor: pointer; color: var(--text-muted); font-size: 0.74rem; text-decoration: underline; font-family: inherit;" data-i18n="btn_close_lot">Close Lot</button>
+    `;
+
+    // One roast date in this coffee+machine group — unchanged from before the
+    // grouping, so a coffee that's only been roasted once costs no extra click.
+    function buildSingleCard(bulk) {
+        return `
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+                <div>
+                    <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}${postBlendBadge(bulk)}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">${machineLabel(bulk)}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">${bulk.production_date || '-'}</div>
+                </div>
+                ${codeBadgeHtmlFor(bulk)}
+            </div>
+            <div style="font-family: monospace; font-size: 0.72rem; font-weight: 700; color: var(--primary); background: var(--primary-glow); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; align-self: flex-start; letter-spacing: 0.3px;">${lotCodeFor(bulk)}</div>
+            <div style="font-size: 1.4rem; font-weight: 700; color: var(--primary);">${parseFloat(bulk.bulk_available).toFixed(2)} kg</div>
+            ${compositionHtmlFor(bulk)}
+            <div style="display: flex; flex-direction: column; gap: 5px; margin-top: auto;">
+                ${actionButtons(bulk)}
+            </div>
+        `;
+    }
+
+    // Several roast dates for the same coffee+machine — combined kg up front,
+    // dates collapsed behind a toggle. `rows` arrives oldest-first from the
+    // sort above, so the first row is the FIFO pick.
+    function buildGroupedCard(rows) {
+        const head = rows[0];
+        const totalKg = rows.reduce((sum, b) => sum + (parseFloat(b.bulk_available) || 0), 0);
+        const listId = `rtp-dates-${head.id}`;
+        const datesLabel = (window.t ? window.t('rtp_roast_dates') : '{n} roast dates').replace('{n}', rows.length);
+        const oldestLabel = (window.t ? window.t('rtp_oldest') : 'oldest {date}').replace('{date}', head.production_date || '-');
+        const pickFirst = `<span style="font-size:0.62rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px;" data-i18n="badge_pick_first">PICK FIRST</span>`;
+
+        const dateRows = rows.map((bulk, idx) => `
+            <div style="padding: 9px 10px; ${idx > 0 ? 'border-top: 1px solid var(--border);' : ''} display: flex; flex-direction: column; gap: 7px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="min-width: 0;">
+                        <div style="display: flex; align-items: center; gap: 7px; flex-wrap: wrap;">
+                            <span style="font-weight: 700; font-size: 0.86rem;">${bulk.production_date || '-'}</span>
+                            ${idx === 0 ? pickFirst : ''}
+                        </div>
+                        <div style="font-family: monospace; font-size: 0.68rem; color: var(--text-muted); margin-top: 2px;">${lotCodeFor(bulk)}</div>
+                    </div>
+                    <div style="margin-left: auto; font-weight: 700; font-size: 0.95rem; color: var(--primary); white-space: nowrap;">${parseFloat(bulk.bulk_available).toFixed(2)} kg</div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 5px;">
+                    ${actionButtons(bulk)}
+                </div>
+            </div>
+        `).join('');
+
+        return `
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+                <div>
+                    <div style="font-weight: 700; font-size: 1rem;">${head.coffee_name}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">${machineLabel(head)}</div>
+                </div>
+                ${codeBadgeHtmlFor(head)}
+            </div>
+            <div style="font-size: 1.4rem; font-weight: 700; color: var(--primary);">${totalKg.toFixed(2)} kg</div>
+            <button type="button" class="btn-rtp-dates-toggle" data-target="${listId}" aria-expanded="false" aria-controls="${listId}"
+                style="display: flex; align-items: center; gap: 7px; background: none; border: none; padding: 0; cursor: pointer; color: var(--text-muted); font-size: 0.78rem; align-self: flex-start; font-family: inherit;">
+                <span class="rtp-chev" style="display: inline-block; transition: transform 0.15s ease;">&#9656;</span>
+                <span>${datesLabel} &middot; ${oldestLabel}</span>
+            </button>
+            <div id="${listId}" class="rtp-dates-list hidden" style="border: 1px solid var(--border); border-radius: 8px; background: var(--bg-app); margin-top: -2px;">
+                ${dateRows}
+            </div>
+        `;
+    }
+
+    groups.forEach(rows => {
         const card = document.createElement('div');
         card.className = 'card';
         card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px;';
-        card.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
-                <div>
-                    <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}${bulk.is_post_blend ? ' <span style="font-size:0.65rem; font-weight:700; text-transform:uppercase; color:var(--primary); background:var(--primary-glow); border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>' : ''}${pickFirstBadge}</div>
-                    <div style="font-size: 0.8rem; color: var(--text-muted);">${machine ? machine.name : (bulk.is_post_blend ? 'Assembled blend' : 'Unknown Machine')} · Roasted ${bulk.production_date || '-'}</div>
-                </div>
-                ${codeBadgeHtml}
-            </div>
-            <div style="font-family: monospace; font-size: 0.72rem; font-weight: 700; color: var(--primary); background: var(--primary-glow); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; align-self: flex-start; letter-spacing: 0.3px;">${bulk.custom_blend_code || baseLotCode}</div>
-            <div style="font-size: 1.4rem; font-weight: 700; color: var(--primary);">${parseFloat(bulk.bulk_available).toFixed(2)} kg</div>
-            ${compositionHtml}
-            <div style="display: flex; gap: 8px; margin-top: auto;">
-                <button type="button" class="btn btn-secondary btn-sm btn-print-lot-barcode" data-bulk-id="${bulk.id}" style="flex: 1;" data-i18n="btn_print_barcode">Print Barcode</button>
-                <button type="button" class="btn btn-primary btn-sm btn-pack-bulk" data-bulk-id="${bulk.id}" style="flex: 1;" data-i18n="btn_pack">Pack</button>
-            </div>
-        `;
+        card.innerHTML = rows.length === 1 ? buildSingleCard(rows[0]) : buildGroupedCard(rows);
         container.appendChild(card);
     });
 
+    container.querySelectorAll('.btn-rtp-dates-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const list = document.getElementById(btn.getAttribute('data-target'));
+            if (!list) return;
+            const open = list.classList.toggle('hidden') === false;
+            btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            const chev = btn.querySelector('.rtp-chev');
+            if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+        });
+    });
     container.querySelectorAll('.btn-print-lot-barcode').forEach(btn => {
         btn.addEventListener('click', () => openPrintBarcodeModal(parseInt(btn.getAttribute('data-bulk-id'))));
         btn.style.display = hasPermission('packing_print_barcode') ? '' : 'none';
@@ -216,7 +304,169 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         btn.addEventListener('click', () => openPackBulkModal(parseInt(btn.getAttribute('data-bulk-id'))));
         btn.style.display = hasPermission('packing_daily') ? '' : 'none';
     });
+    container.querySelectorAll('.btn-close-lot').forEach(btn => {
+        btn.addEventListener('click', () => openCloseLotModal(parseInt(btn.getAttribute('data-bulk-id'))));
+        btn.style.display = hasPermission('packing_daily') ? '' : 'none';
+    });
+    if (window.translatePage) window.translatePage();
 }
+
+// Retires a bulk lot whose physical stock is finished while the system still
+// shows a leftover — the everyday "0.03 kg that isn't really there" case.
+// Deliberately NOT a delete: production_lots.bulk_roasted_coffee_id is
+// ON DELETE SET NULL, so deleting the row would sever every already-printed
+// label's link back to its origin. Instead bulk_available goes to 0 (which
+// drops the card from Ready to Pack, since renderReadyToPackCards filters
+// > 0.005) and the leftover is written to waste_inventory, keeping the
+// discrepancy visible rather than silently absorbed.
+async function openCloseLotModal(bulkId) {
+    const [{ data: bulkList }, { data: machines }, { data: greenbeans }, { data: recipes }] = await Promise.all([
+        fetchData('bulk_roasted_coffee'),
+        fetchData('machines'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
+    ]);
+    const bulk = (bulkList || []).find(b => b.id === bulkId);
+    if (!bulk) return;
+
+    const leftoverKg = parseFloat(bulk.bulk_available) || 0;
+    const machine = (machines || []).find(m => m.id === bulk.machine_id);
+    const lotCode = bulk.custom_blend_code || buildLotCode(bulk, machines, greenbeans, recipes, bulk.production_date);
+    // Anything sizeable is far more likely a mis-click or a real stock
+    // discrepancy than end-of-lot residue — say so and point at Stock Take.
+    const BIG_LEFTOVER_KG = 1;
+    const isBig = leftoverKg > BIG_LEFTOVER_KG;
+
+    const html = `
+        <form id="modal-close-lot-form">
+            <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; margin: 0 0 16px;" data-i18n="close_lot_intro">Use this when the physical stock for this lot is finished but the system still shows a leftover. The lot stops appearing in Ready to Pack, its history stays intact, and the leftover is recorded as waste.</p>
+            <div class="form-group">
+                <label class="form-label" data-i18n="close_lot_lbl_lot">Lot</label>
+                <input type="text" class="form-control" value="${lotCode}" readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label" data-i18n="close_lot_lbl_coffee">Coffee</label>
+                <input type="text" class="form-control" value="${bulk.coffee_name}${machine ? ' · ' + machine.name : ''}${bulk.production_date ? ' · ' + bulk.production_date : ''}" readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label" data-i18n="close_lot_lbl_leftover">Leftover in system</label>
+                <input type="text" class="form-control" value="${leftoverKg.toFixed(2)} kg" readonly>
+            </div>
+            ${isBig ? `<p style="background: rgba(217,119,6,0.12); border: 1px solid #d97706; color: #d97706; padding: 9px 12px; border-radius: 8px; font-size: 0.8rem; line-height: 1.5; margin-bottom: 14px;">${(window.t ? window.t('close_lot_big_warning') : 'This lot still holds {kg} kg. Closing it writes all of it off as waste. For a real stock count, use Stock Take in Inventory instead.').replace('{kg}', leftoverKg.toFixed(2))}</p>` : ''}
+            <div class="form-group">
+                <label class="form-label" data-i18n="close_lot_lbl_reason">Reason</label>
+                <select id="m-closelot-reason" class="form-control">
+                    <option value="Finished — scale difference" data-i18n="close_lot_reason_finished">Finished — scale difference</option>
+                    <option value="Spilled / discarded" data-i18n="close_lot_reason_spilled">Spilled / discarded</option>
+                    <option value="Moisture loss" data-i18n="close_lot_reason_moisture">Moisture loss</option>
+                    <option value="Other" data-i18n="close_lot_reason_other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label" data-i18n="close_lot_lbl_notes">Notes (optional)</label>
+                <input type="text" id="m-closelot-notes" class="form-control" placeholder="e.g. residue left in the hopper" data-i18n-placeholder="close_lot_notes_ph">
+            </div>
+            <div class="modal-footer-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                <button type="submit" class="btn btn-danger" data-i18n="btn_close_lot">Close Lot</button>
+            </div>
+        </form>
+    `;
+
+    openModal(window.t ? window.t('close_lot_title') : 'Close Lot', html, '480px');
+    if (window.translatePage) window.translatePage();
+
+    document.getElementById('modal-close-lot-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const reason = document.getElementById('m-closelot-reason').value;
+        const notes = document.getElementById('m-closelot-notes').value.trim();
+
+        if (!await showWarningModal(window.t ? window.t('close_lot_confirm') : 'Close this lot?')) return;
+
+        const { error: wasteErr } = await saveData('waste_inventory', {
+            source_type: 'Bulk',
+            source_name: `${bulk.coffee_name} (${lotCode})`,
+            bulk_roasted_coffee_id: bulk.id,
+            waste_kg: leftoverKg,
+            discard_date: new Date().toISOString().split('T')[0],
+            reason: notes ? `${reason} — ${notes}` : reason,
+            recorded_by: (currentUser && currentUser.name) || null
+        });
+        if (wasteErr) {
+            await showWarningModal('Could not record the leftover as waste: ' + wasteErr.message, false);
+            return;
+        }
+
+        const { error: bulkErr } = await saveData('bulk_roasted_coffee', { id: bulk.id, bulk_available: 0 });
+        if (bulkErr) {
+            await showWarningModal('Could not close the lot: ' + bulkErr.message, false);
+            return;
+        }
+
+        document.getElementById('btn-close-modal').click();
+        await showWarningModal(window.t ? window.t('close_lot_saved') : 'Lot closed. The leftover was recorded as waste.', false);
+        await loadPackingSection();
+        scheduleDashboardRefresh();
+    });
+}
+
+// Waste tab — the only place waste_inventory is actually visible. Fed by
+// Close Lot above (source_type 'Bulk') and by a failed-QC roast batch
+// (source_type 'Roast Batch', see roasting.js openRoastBatchModal/
+// openQuickRoastModal submit handlers). Read-only: corrections happen at the
+// source (re-open via a new lot, or re-log the batch), not here.
+async function loadWasteInventorySection() {
+    const { data: waste } = await fetchData('waste_inventory');
+    const tbody = document.getElementById('waste-inventory-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const rows = (waste || []).slice().sort((a, b) => new Date(b.discard_date) - new Date(a.discard_date) || b.id - a.id);
+
+    if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center-muted">${window.t ? window.t('waste_inventory_empty') : 'No waste recorded.'}</td></tr>`;
+        return;
+    }
+
+    const sourceLabel = (r) => {
+        if (r.source_type === 'Bulk') return window.t ? window.t('waste_source_bulk') : 'Bulk';
+        if (r.source_type === 'Roast Batch') return window.t ? window.t('waste_source_batch') : 'Roast Batch';
+        return r.source_type || '-';
+    };
+
+    rows.forEach(r => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${r.discard_date || '-'}</td>
+            <td><strong>${r.source_name || '-'}</strong></td>
+            <td>${sourceLabel(r)}</td>
+            <td class="text-right">${(parseFloat(r.waste_kg) || 0).toFixed(2)}</td>
+            <td>${r.reason || '-'}</td>
+            <td>${r.recorded_by || '-'}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+document.getElementById('btn-export-waste-inventory').addEventListener('click', async () => {
+    const { data: waste } = await fetchData('waste_inventory');
+    const rows = (waste || [])
+        .slice()
+        .sort((a, b) => new Date(b.discard_date) - new Date(a.discard_date) || b.id - a.id)
+        .map(r => ({
+            'Date': r.discard_date || '-',
+            'Item': r.source_name || '-',
+            'Source': r.source_type || '-',
+            'Kg': (parseFloat(r.waste_kg) || 0).toFixed(2),
+            'Reason': r.reason || '-',
+            'Recorded By': r.recorded_by || '-'
+        }));
+    if (rows.length === 0) {
+        await showWarningModal('No waste recorded to export.', false);
+        return;
+    }
+    exportToExcel(rows, `Waste_Inventory_${new Date().toISOString().split('T')[0]}`);
+});
 
 // V2 Custom Blend: mixes existing single-origin bulk (kg) and packed (bags)
 // stock into a brand-new bulk_roasted_coffee row (is_post_blend=true), so it
@@ -1254,79 +1504,97 @@ async function openDispatchCheckoutModal(orderId) {
         return sum;
     };
 
-    const itemOptionsHtml = items.map(item => {
-        const label = `(${itemCode(item)}) ${coffeeLabel(item)} — ${item.bag_size_g}g, ${machineName(item.machine_id)}`;
-        return `<option value="${item.id}">${label}</option>`;
-    }).join('');
+    // Header row for one order line — Code / Coffee (+size) / Machine / Stock
+    // / Ready, click to expand its lots. A coffee_code (trade-name) line has
+    // no single machine (it can draw from any origin sharing the code), so
+    // that column shows '-'.
+    function itemHeaderHtml(item) {
+        const lots = lotsByItem[item.id] || [];
+        const stock = lots.reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
+        const requested = parseInt(item.quantity_requested) || 0;
+        const ready = (parseInt(item.quantity_prepared) || 0) + alreadyInCartForItem(item.id);
+        const short = stock < (requested - (parseInt(item.quantity_prepared) || 0));
+        return `
+            <button type="button" class="dc-item-row" data-item="${item.id}" aria-expanded="false" aria-controls="dc-lots-${item.id}">
+                <span class="dc-item-name">
+                    <span class="dc-chev">&#9656;</span>
+                    <span class="dc-code">${itemCode(item)}</span>
+                    <span class="dc-title">${coffeeLabel(item)}</span>
+                    <span class="dc-size">${item.bag_size_g}g</span>
+                </span>
+                <span class="dc-mach">${item.coffee_code ? '-' : machineName(item.machine_id)}</span>
+                <span class="dc-stock" id="dc-stock-${item.id}" style="${short ? 'color: var(--warning, #d97706);' : ''}">${stock}</span>
+                <span class="dc-ready" id="dc-ready-${item.id}" style="color: ${ready >= requested ? 'var(--success)' : 'var(--danger)'};">${ready} / ${requested}</span>
+            </button>
+            <div id="dc-lots-${item.id}" class="dc-lots hidden"></div>
+        `;
+    }
 
-    const html = `
-        <div id="dispatch-checkout-body">
-            <table class="nested-table-rows" style="width:100%; margin-bottom:16px;">
-                <thead><tr>
-                    <th>Code</th><th>Coffee</th><th>Size / Machine</th>
-                    <th class="text-right">Requested</th><th class="text-right">Fulfilled</th><th class="text-right">Remaining</th>
-                </tr></thead>
-                <tbody id="dc-summary-body"></tbody>
-            </table>
+    // Rebuilds ONE item's lot list from current cart/liveRemaining state —
+    // called after every Take/Cancel/qty edit so a Take that spills across
+    // several lots (addCartEntry's existing FIFO-spill logic, unchanged)
+    // shows correctly without hand-patching individual rows.
+    function renderItemLots(itemId) {
+        const item = items.find(i => i.id === itemId);
+        const lots = lotsByItem[itemId] || [];
+        const prepared = parseInt(item.quantity_prepared) || 0;
+        const requested = parseInt(item.quantity_requested) || 0;
 
-            <div style="display:flex; gap:8px; margin-bottom:6px;">
-                <input type="text" id="dc-scan-input" class="form-control" placeholder="Scan a package or carton barcode" autocomplete="off" style="flex:1;">
-                <button type="button" id="dc-btn-manual-toggle" class="btn btn-secondary">Add manually</button>
-            </div>
-            <p style="font-size:0.78rem; color:var(--text-muted); margin: 0 0 12px;">Stays focused while this checkout is open.</p>
+        const committedHtml = prepared > 0
+            ? `<div class="dc-committed">Already checked out earlier: <b>${prepared}</b> — already saved, not editable here.</div>`
+            : '';
 
-            <div id="dc-manual-form" class="hidden" style="display:none; gap:8px; align-items:flex-end; padding:12px; background:rgba(0,0,0,0.03); border-radius:8px; margin-bottom:16px;">
-                <div class="form-group flex-1-mb-0" style="flex:1.4;">
-                    <label class="form-label">Coffee</label>
-                    <select id="dc-manual-item" class="form-control">${itemOptionsHtml}</select>
+        // Suggested qty for a not-yet-taken lot = remaining shortfall for this
+        // line, split across lots in the order they'd naturally fill (FIFO
+        // first) — mirrors what addCartEntry's own spill would do, so what's
+        // pre-filled matches what actually happens on Take.
+        let shortfall = Math.max(0, requested - prepared - alreadyInCartForItem(itemId));
+
+        const rowsHtml = lots.map(l => {
+            const key = `${itemId}:${l.id}`;
+            const cartRow = cart.get(key);
+            const taken = cartRow ? cartRow.qty : 0;
+            const avail = (liveRemaining[l.id] || 0) + taken;
+            const mismatch = !item.coffee_code && l.machineId !== item.machine_id;
+            const isFifo = (fifoLotForItemMachine(itemId) || {}).id === l.id;
+            let suggestQty = 1;
+            if (!cartRow) {
+                suggestQty = Math.max(1, Math.min(shortfall, liveRemaining[l.id] || 0) || 1);
+                shortfall = Math.max(0, shortfall - Math.min(shortfall, liveRemaining[l.id] || 0));
+            }
+            return `
+                <div class="dc-lot${mismatch ? ' dc-lot-mismatch' : ''}${taken > 0 ? ' dc-lot-taken' : ''}" data-item="${itemId}" data-lot="${l.id}">
+                    <div class="dc-lot-main">
+                        <span class="dc-lot-code">${l.lotCode}${isFifo ? ' <span class="dc-pill dc-pill-fifo">FIFO</span>' : ''}${mismatch ? ' <span class="dc-pill dc-pill-mismatch">Different machine</span>' : ''}</span>
+                        <span class="dc-lot-meta">${l.originName}${l.originCode ? ' (' + l.originCode + ')' : ''} &middot; packed ${l.packedDate || '-'}${!item.coffee_code ? '' : ' &middot; ' + machineName(l.machineId)}</span>
+                    </div>
+                    <span class="dc-lot-stock">${avail}</span>
+                    <span class="dc-lot-add">
+                        <span class="dc-lot-check" ${taken > 0 ? '' : 'hidden'}>&#10003;</span>
+                        <input type="number" class="dc-lot-qty" min="1" value="${taken > 0 ? taken : suggestQty}" ${avail <= 0 && taken === 0 ? 'disabled' : ''}>
+                        <button type="button" class="btn btn-primary btn-sm dc-lot-take" ${taken > 0 ? 'hidden' : ''} ${avail <= 0 ? 'disabled' : ''}>Take</button>
+                        <button type="button" class="btn btn-sm dc-lot-cancel" style="border:1px solid var(--border); background:none; color: var(--danger);" ${taken > 0 ? '' : 'hidden'}>Cancel</button>
+                    </span>
                 </div>
-                <div class="form-group flex-1-mb-0" style="flex:1.6;">
-                    <label class="form-label">Lot (FIFO first)</label>
-                    <select id="dc-manual-lot" class="form-control"></select>
-                </div>
-                <div class="form-group flex-1-mb-0" style="width:70px;">
-                    <label class="form-label">Qty</label>
-                    <input type="number" id="dc-manual-qty" class="form-control" value="1" min="1">
-                </div>
-                <button type="button" id="dc-btn-manual-add" class="btn btn-primary">Add</button>
-            </div>
+            `;
+        }).join('') || `<div class="dc-lot-empty">No packed stock available for this coffee/size.</div>`;
 
-            <p style="font-weight:600; font-size:0.85rem; margin-bottom:6px;">Cart</p>
-            <table class="nested-table-rows" style="width:100%; margin-bottom:12px;">
-                <thead><tr><th>Code</th><th>Coffee</th><th>Lot</th><th>Machine</th><th>Size</th><th class="text-right">Stock</th><th class="text-right">Qty</th><th></th></tr></thead>
-                <tbody id="dc-cart-body"></tbody>
-            </table>
+        document.getElementById(`dc-lots-${itemId}`).innerHTML = committedHtml + rowsHtml;
+    }
 
-            <div id="dc-warning" class="hidden" style="background: rgba(217,119,6,0.12); border: 1px solid #d97706; color: #d97706; padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; margin-bottom: 12px;"></div>
-
-            <div class="modal-footer-actions-lg">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
-                <button type="button" id="dc-btn-checkout" class="btn btn-primary">Checkout</button>
-            </div>
-        </div>
-    `;
-
-    openModal(`Checkout — ${order.order_number || '#ORD-' + order.id}`, html, '700px');
-
-    function renderSummary() {
-        const rows = items.map(item => {
+    function renderAllHeaders() {
+        items.forEach(item => {
+            const lots = lotsByItem[item.id] || [];
+            const stock = lots.reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
             const requested = parseInt(item.quantity_requested) || 0;
             const prepared = parseInt(item.quantity_prepared) || 0;
-            const inCart = alreadyInCartForItem(item.id);
-            const fulfilled = prepared + inCart;
-            const remaining = Math.max(0, requested - fulfilled);
-            return `
-                <tr>
-                    <td class="text-secondary-xs">${itemCode(item)}</td>
-                    <td>${coffeeLabel(item)}</td>
-                    <td class="text-secondary-xs">${item.bag_size_g}g, ${machineName(item.machine_id)}</td>
-                    <td class="text-right">${requested}</td>
-                    <td class="text-right">${fulfilled}</td>
-                    <td class="text-right" style="font-weight:600; color:${remaining === 0 ? 'var(--success)' : 'var(--danger)'};">${remaining}</td>
-                </tr>
-            `;
-        }).join('');
-        document.getElementById('dc-summary-body').innerHTML = rows;
+            const ready = prepared + alreadyInCartForItem(item.id);
+            const short = stock < (requested - prepared);
+            const stockEl = document.getElementById(`dc-stock-${item.id}`);
+            const readyEl = document.getElementById(`dc-ready-${item.id}`);
+            if (stockEl) { stockEl.textContent = stock; stockEl.style.color = short ? 'var(--warning, #d97706)' : ''; }
+            if (readyEl) { readyEl.textContent = `${ready} / ${requested}`; readyEl.style.color = ready >= requested ? 'var(--success)' : 'var(--danger)'; }
+        });
 
         const anyRemaining = items.some(item => {
             const requested = parseInt(item.quantity_requested) || 0;
@@ -1342,51 +1610,85 @@ async function openDispatchCheckoutModal(orderId) {
             warnEl.classList.add('hidden');
             warnEl.style.display = 'none';
         }
+
+        let totalTaken = 0;
+        cart.forEach(row => { totalTaken += row.qty; });
+        const totalEl = document.getElementById('dc-total-taken');
+        if (totalEl) totalEl.textContent = totalTaken;
     }
 
-    function renderCart() {
-        const rows = [];
-        cart.forEach((row, key) => {
-            rows.push(`
-                <tr data-key="${key}">
-                    <td class="text-secondary-xs">${row.originCode || '-'}</td>
-                    <td>${row.originName || '-'}</td>
-                    <td class="text-secondary-xs">${row.lotCode}</td>
-                    <td>${row.machineName}</td>
-                    <td>${row.sizeG}g</td>
-                    <td class="text-right text-secondary-xs">${liveRemaining[row.lotId] + row.qty}</td>
-                    <td class="text-right"><input type="number" min="1" class="form-control dc-cart-qty" data-key="${key}" value="${row.qty}" style="width:64px; text-align:right;"></td>
-                    <td class="text-right"><button type="button" class="btn btn-danger btn-sm dc-cart-remove" data-key="${key}">&times;</button></td>
-                </tr>
-            `);
-        });
-        document.getElementById('dc-cart-body').innerHTML = rows.join('') || `<tr><td colspan="8" class="text-center-muted">No lots added yet.</td></tr>`;
+    function renderAll() {
+        items.forEach(item => renderItemLots(item.id));
+        renderAllHeaders();
     }
 
-    function populateManualLotOptions() {
-        const itemId = parseInt(document.getElementById('dc-manual-item').value);
-        const item = items.find(i => i.id === itemId);
-        const lots = lotsByItem[itemId] || [];
-        const fifo = fifoLotForItemMachine(itemId);
-        const lotSelect = document.getElementById('dc-manual-lot');
-        // Greenbean name shown alongside the lot code — this IS the code
-        // printed on the physical packed-coffee sticker (packed_coffee_lots
-        // .lot_code), not a bulk/production lot code, so the packing team
-        // can visually match it against the physical bag.
-        lotSelect.innerHTML = lots.map(l => {
-            if (item.coffee_code) {
-                // Any origin/machine sharing the code is a valid pick — no
-                // "different machine" mismatch concept here, just FIFO.
-                const isFifo = fifo && fifo.id === l.id;
-                const tag = isFifo ? ' (FIFO)' : ` — ${machineName(l.machineId)}`;
-                return `<option value="${l.id}">${l.lotCode} — ${l.originName} — ${liveRemaining[l.id]} left${tag}</option>`;
-            }
-            const isFifo = fifo && fifo.id === l.id && l.machineId === item.machine_id;
-            const mismatch = l.machineId !== item.machine_id;
-            const tag = mismatch ? ` — ${machineName(l.machineId)} (different machine)` : (isFifo ? ' (FIFO)' : '');
-            return `<option value="${l.id}">${l.lotCode} — ${l.originName} — ${liveRemaining[l.id]} left${tag}</option>`;
-        }).join('') || `<option value="">No stock available</option>`;
-    }
+    const itemsListHtml = items.map(item => `<div class="dc-item" id="dc-item-${item.id}">${itemHeaderHtml(item)}</div>`).join('');
+
+    const html = `
+        <div id="dispatch-checkout-body">
+            <div class="dc-col-head">
+                <span>Coffee</span><span>Machine</span><span class="text-right">Stock</span><span class="text-right">Ready</span>
+            </div>
+            <div id="dc-item-list" style="margin-bottom:16px;">${itemsListHtml}</div>
+
+            <div style="display:flex; gap:8px; margin-bottom:6px;">
+                <input type="text" id="dc-scan-input" class="form-control" placeholder="Scan a package or carton barcode (coming soon)" autocomplete="off" style="flex:1;" disabled>
+            </div>
+            <p style="font-size:0.78rem; color:var(--text-muted); margin: 0 0 12px;">Scanning isn't wired up yet — pick lots from the list above for now.</p>
+
+            <div id="dc-warning" class="hidden" style="background: rgba(217,119,6,0.12); border: 1px solid #d97706; color: #d97706; padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; margin-bottom: 12px;"></div>
+
+            <div class="modal-footer-actions-lg" style="justify-content:space-between;">
+                <span style="font-size:0.82rem; color:var(--text-muted);">Total taken: <strong id="dc-total-taken" style="color:var(--text-primary);">0</strong></span>
+                <div style="display:flex; gap:10px;">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                    <button type="button" id="dc-btn-checkout" class="btn btn-primary">Checkout</button>
+                </div>
+            </div>
+        </div>
+        <style>
+            /* .btn sets display:inline-flex, which beats the bare [hidden]
+               attribute (author CSS always outranks the UA default that
+               makes [hidden] work) — without this, a hidden Take/Cancel
+               button stays visible instead of actually disappearing. */
+            #dispatch-checkout-body [hidden] { display: none !important; }
+            #dispatch-checkout-body .dc-col-head { display:grid; grid-template-columns:1fr 130px 70px 70px; gap:10px; padding:0 12px 6px; font-size:0.66rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); }
+            #dispatch-checkout-body .dc-col-head span:nth-child(3), #dispatch-checkout-body .dc-col-head span:nth-child(4) { text-align:right; }
+            #dispatch-checkout-body .dc-item { border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:8px; }
+            #dispatch-checkout-body .dc-item-row { display:grid; grid-template-columns:1fr 130px 70px 70px; gap:10px; align-items:center; width:100%; padding:11px 12px; background:none; border:none; text-align:left; cursor:pointer; font-family:inherit; font-size:0.86rem; color:var(--text-primary); }
+            #dispatch-checkout-body .dc-item-row:hover { background:var(--bg-app); }
+            #dispatch-checkout-body .dc-item-name { display:flex; align-items:center; gap:7px; min-width:0; }
+            #dispatch-checkout-body .dc-chev { display:inline-block; color:var(--text-muted); font-size:0.7rem; transition:transform 0.15s ease; }
+            #dispatch-checkout-body .dc-item.open .dc-chev { transform:rotate(90deg); }
+            #dispatch-checkout-body .dc-code { font-family:monospace; font-size:0.76rem; color:var(--text-muted); flex:0 0 auto; }
+            #dispatch-checkout-body .dc-title { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+            #dispatch-checkout-body .dc-size { font-family:monospace; font-size:0.76rem; color:var(--text-muted); flex:0 0 auto; }
+            #dispatch-checkout-body .dc-mach { font-size:0.78rem; color:var(--text-muted); }
+            #dispatch-checkout-body .dc-stock { font-family:monospace; font-size:0.85rem; text-align:right; }
+            #dispatch-checkout-body .dc-ready { font-family:monospace; font-weight:700; font-size:0.85rem; text-align:right; }
+            #dispatch-checkout-body .dc-lots { border-top:1px solid var(--border); background:var(--bg-app); padding:6px; }
+            #dispatch-checkout-body .dc-committed { font-size:0.76rem; color:var(--text-muted); background:none; border:1px solid var(--border); border-radius:6px; padding:7px 9px; margin:2px 3px 6px; }
+            #dispatch-checkout-body .dc-lot-empty { font-size:0.8rem; color:var(--text-muted); padding:10px; text-align:center; }
+            #dispatch-checkout-body .dc-lot { display:grid; grid-template-columns:1fr 64px 190px; gap:10px; align-items:center; padding:8px 9px; border-radius:6px; font-size:0.82rem; }
+            #dispatch-checkout-body .dc-lot + .dc-lot { margin-top:2px; }
+            #dispatch-checkout-body .dc-lot:hover { background:rgba(127,127,127,0.08); }
+            #dispatch-checkout-body .dc-lot-mismatch { background:rgba(190,72,52,0.1); box-shadow:inset 2px 0 0 rgba(190,72,52,0.55); }
+            #dispatch-checkout-body .dc-lot-taken { background:rgba(45,106,79,0.12); box-shadow:inset 2px 0 0 var(--primary); }
+            #dispatch-checkout-body .dc-lot-mismatch.dc-lot-taken { box-shadow:inset 2px 0 0 var(--primary), inset 0 0 0 1px rgba(190,72,52,0.4); }
+            #dispatch-checkout-body .dc-lot-main { display:flex; flex-direction:column; gap:2px; min-width:0; }
+            #dispatch-checkout-body .dc-lot-code { font-family:monospace; font-size:0.78rem; }
+            #dispatch-checkout-body .dc-lot-meta { font-size:0.7rem; color:var(--text-muted); }
+            #dispatch-checkout-body .dc-lot-stock { font-family:monospace; font-size:0.8rem; text-align:right; color:var(--text-muted); }
+            #dispatch-checkout-body .dc-pill { font-size:0.6rem; font-weight:700; padding:1px 6px; border-radius:9999px; white-space:nowrap; }
+            #dispatch-checkout-body .dc-pill-fifo { color:var(--primary); background:var(--primary-glow); }
+            #dispatch-checkout-body .dc-pill-mismatch { color:var(--danger); background:rgba(190,72,52,0.14); }
+            #dispatch-checkout-body .dc-lot-add { display:flex; gap:6px; justify-content:flex-end; align-items:center; }
+            #dispatch-checkout-body .dc-lot-check { color:var(--primary); font-weight:700; }
+            #dispatch-checkout-body .dc-lot-qty { width:52px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--bg-app); color:var(--text-primary); font-size:0.78rem; text-align:right; font-family:monospace; }
+        </style>
+    `;
+
+    openModal(`Checkout — ${order.order_number || '#ORD-' + order.id}`, html, '760px');
 
     // Core shared logic for both scan and manual add. Returns nothing; shows
     // its own alerts/warnings and re-renders on success.
@@ -1447,63 +1749,80 @@ async function openDispatchCheckoutModal(orderId) {
             }
         }
 
-        renderSummary();
-        renderCart();
+        renderAll();
     }
 
-    renderSummary();
-    renderCart();
-    document.getElementById('dc-manual-item').addEventListener('change', populateManualLotOptions);
-    populateManualLotOptions();
+    renderAll();
 
-    document.getElementById('dc-btn-manual-toggle').addEventListener('click', () => {
-        const form = document.getElementById('dc-manual-form');
-        const showing = form.style.display !== 'none';
-        form.style.display = showing ? 'none' : 'flex';
-        form.classList.toggle('hidden', showing);
+    // Expand/collapse — lazy nothing to compute, the lot list for every item
+    // was already rendered above, this only toggles visibility.
+    document.getElementById('dc-item-list').addEventListener('click', async (e) => {
+        const headerBtn = e.target.closest('.dc-item-row');
+        if (headerBtn) {
+            const itemEl = headerBtn.closest('.dc-item');
+            const list = document.getElementById(headerBtn.getAttribute('aria-controls'));
+            const open = list.classList.toggle('hidden') === false;
+            headerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            itemEl.classList.toggle('open', open);
+            return;
+        }
+
+        const takeBtn = e.target.closest('.dc-lot-take');
+        if (takeBtn) {
+            const lotEl = takeBtn.closest('.dc-lot');
+            const itemId = parseInt(lotEl.getAttribute('data-item'));
+            const lotId = parseInt(lotEl.getAttribute('data-lot'));
+            const qty = parseInt(lotEl.querySelector('.dc-lot-qty').value) || 0;
+            if (qty <= 0) return;
+            await addCartEntry(itemId, lotId, qty);
+            return;
+        }
+
+        const cancelBtn = e.target.closest('.dc-lot-cancel');
+        if (cancelBtn) {
+            const lotEl = cancelBtn.closest('.dc-lot');
+            const itemId = parseInt(lotEl.getAttribute('data-item'));
+            const lotId = parseInt(lotEl.getAttribute('data-lot'));
+            const key = `${itemId}:${lotId}`;
+            const row = cart.get(key);
+            if (row) { liveRemaining[lotId] = (liveRemaining[lotId] || 0) + row.qty; }
+            cart.delete(key);
+            renderAll();
+        }
     });
 
-    document.getElementById('dc-btn-manual-add').addEventListener('click', async () => {
-        const itemId = parseInt(document.getElementById('dc-manual-item').value);
-        const lotId = parseInt(document.getElementById('dc-manual-lot').value);
-        const qty = parseInt(document.getElementById('dc-manual-qty').value) || 0;
-        if (!lotId || qty <= 0) return;
-        await addCartEntry(itemId, lotId, qty);
-        populateManualLotOptions();
-    });
-
-    document.getElementById('dc-cart-body').addEventListener('click', (e) => {
-        const btn = e.target.closest('.dc-cart-remove');
-        if (!btn) return;
-        const key = btn.getAttribute('data-key');
-        const row = cart.get(key);
-        if (row) { liveRemaining[row.lotId] = (liveRemaining[row.lotId] || 0) + row.qty; }
-        cart.delete(key);
-        renderSummary();
-        renderCart();
-        populateManualLotOptions();
-    });
-
-    document.getElementById('dc-cart-body').addEventListener('input', (e) => {
-        const inp = e.target.closest('.dc-cart-qty');
+    // Editing the qty on an already-taken lot adjusts it directly — no need
+    // to Cancel first just to fix a miscount.
+    document.getElementById('dc-item-list').addEventListener('input', (e) => {
+        const inp = e.target.closest('.dc-lot-qty');
         if (!inp) return;
-        const key = inp.getAttribute('data-key');
+        const lotEl = inp.closest('.dc-lot');
+        if (!lotEl.classList.contains('dc-lot-taken')) return;
+        const itemId = parseInt(lotEl.getAttribute('data-item'));
+        const lotId = parseInt(lotEl.getAttribute('data-lot'));
+        const key = `${itemId}:${lotId}`;
         const row = cart.get(key);
         if (!row) return;
-        const maxAvail = liveRemaining[row.lotId] + row.qty;
+        const maxAvail = (liveRemaining[lotId] || 0) + row.qty;
         let newQty = parseInt(inp.value) || 0;
         if (newQty < 1) newQty = 1;
         if (newQty > maxAvail) newQty = maxAvail;
-        liveRemaining[row.lotId] = maxAvail - newQty;
+        liveRemaining[lotId] = maxAvail - newQty;
         row.qty = newQty;
         inp.value = newQty;
-        renderSummary();
+        renderAllHeaders();
+        // "avail" shown on the row = liveRemaining + taken, a constant pool
+        // size regardless of how newQty splits it — unchanged by this edit.
+        lotEl.querySelector('.dc-lot-stock').textContent = maxAvail;
     });
 
     // V2 barcode label fix: a RMP:9{lotId:05d}{sizeG:04d}{mult:02d} barcode
     // is resolved here (by the packed_coffee_lots row's own numeric id, not
     // its lot_code text) while this modal is open — see
-    // js/roasting.js handleBarcodeScan's PackLot dispatch branch.
+    // js/roasting.js handleBarcodeScan's PackLot dispatch branch. Scanning
+    // itself isn't wired up in the UI yet (dc-scan-input is disabled — see
+    // openDispatchCheckoutModal's HTML), so this only fires if something
+    // else routes a scan here; left in place for when scanning ships.
     window.activeDispatchCheckoutHandler = async function (lotId, sizeG, multiplier) {
         const targetItem = items.find(item => {
             const lots = lotsByItem[item.id] || [];
@@ -1517,8 +1836,6 @@ async function openDispatchCheckoutModal(orderId) {
         if (!lot) return;
         await addCartEntry(targetItem.id, lot.id, multiplier || 1);
     };
-    const scanInput = document.getElementById('dc-scan-input');
-    if (scanInput) scanInput.focus();
 
     document.getElementById('dc-btn-checkout').addEventListener('click', async () => {
         await submitDispatchCheckout(order, items, cart, cust);

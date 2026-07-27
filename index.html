@@ -1071,6 +1071,7 @@
                         <button class="tab-btn" data-target="tab-order-request" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_order_request">Order Requests</button>
                         <button class="tab-btn" data-target="tab-packing-records" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Packing Records</button>
                         <button class="tab-btn" data-target="tab-packing-history" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Completed Order</button>
+                        <button class="tab-btn" data-target="tab-waste-inventory" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_waste_inventory">Waste</button>
                     </nav>
                 </div>
                 
@@ -1152,6 +1153,38 @@
                                     </tr>
                                 </thead>
                                 <tbody id="packing-records-table-body">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-waste-inventory" class="packing-tab-content hidden">
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <div>
+                                <h3 class="card-title" style="margin-bottom: 2px;" data-i18n="waste_inventory_title">Waste</h3>
+                                <p style="font-size: 0.82rem; color: var(--text-secondary); margin: 0;" data-i18n="waste_inventory_hint">Leftover recorded when a bulk lot is closed, or a batch fails QC.</p>
+                            </div>
+                            <button id="btn-export-waste-inventory" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                Export Excel
+                            </button>
+                        </div>
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th data-i18n="col_date">Date</th>
+                                        <th data-i18n="waste_col_item">Item</th>
+                                        <th data-i18n="waste_col_source">Source</th>
+                                        <th class="text-right" data-i18n="waste_col_kg">Kg</th>
+                                        <th data-i18n="close_lot_lbl_reason">Reason</th>
+                                        <th data-i18n="waste_col_recorded_by">Recorded By</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="waste-inventory-table-body">
                                     <!-- Dynamic rows -->
                                 </tbody>
                             </table>
@@ -2506,15 +2539,15 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=17"></script>
+    <script src="js/translations.js?v=19"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
     <script src="js/auth.js?v=9"></script>
     <script src="js/greenbean.js?v=12"></script>
-    <script src="js/roasting.js?v=18"></script>
-    <script src="js/packing.js?v=38"></script>
+    <script src="js/roasting.js?v=19"></script>
+    <script src="js/packing.js?v=45"></script>
     <script src="js/sales.js?v=14"></script>
     <script src="js/settings.js?v=12"></script>
     <script src="js/tracking.js?v=6"></script>

@@ -301,7 +301,8 @@ CREATE TABLE IF NOT EXISTS public.waste_inventory (
     recorded_by TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     discard_date DATE DEFAULT CURRENT_DATE,
-    roast_batch_id INTEGER
+    roast_batch_id INTEGER,
+    bulk_roasted_coffee_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE SET NULL  -- V2 Close Lot: bulk lot this loss came from — see waste_inventory_bulk_link_migration.sql
 );
 
 -- 13. Packaging sizes (250g / 500g / 1kg ...)

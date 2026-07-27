@@ -3221,15 +3221,26 @@ async function openRoastBatchModal(plan = null, editId = null) {
         // else: new batch not Success (Pending, first save) → nothing counted yet
 
 
-        // 5. If QC fails, log to waste inventory
+        // 5. If QC fails, log to waste inventory.
+        //    Was writing `weight_kg`, but the column is `waste_kg` — every
+        //    failed-QC batch silently failed to record its discarded weight
+        //    (waste_inventory was empty in production as a result). Also fills
+        //    source_type/source_name so the row is identifiable on its own.
         if (qcStatus === 'Failed') {
+            const wasteCoffee = type === 'Single'
+                ? ((greenbeans.find(g => g.id === singleId) || {}).name || 'Single Origin')
+                : ((recipes.find(rec => rec.id === blendId) || {}).name || 'Blend Recipe');
             const wasteRecord = {
                 roast_batch_id: savedBatch.id,
-                weight_kg: outputKg,
+                source_type: 'Roast Batch',
+                source_name: `${wasteCoffee} (${code})`,
+                waste_kg: outputKg,
                 discard_date: new Date().toISOString().split('T')[0],
-                reason: `Failed QC inspection: ${notes}`
+                reason: `Failed QC inspection: ${notes}`,
+                recorded_by: (currentUser && currentUser.name) || null
             };
-            await saveData('waste_inventory', wasteRecord);
+            const { error: wasteErr } = await saveData('waste_inventory', wasteRecord);
+            if (wasteErr) console.error('Failed to log waste for failed QC batch:', wasteErr);
         }
 
         modalContainer.classList.add('hidden');
