@@ -1300,8 +1300,13 @@ async function loadPackingRequestsSection() {
 
         const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
 
+        // A fully-ready order used to only show Dispatch, with no way back
+        // into the checkout modal to correct a wrong fulfillment (found
+        // 2026-07-27: an order auto-marked "Ready" from stale packed stock
+        // at approval had no path to reopen and fix it). Edit reopens the
+        // same checkout modal regardless of ready state.
         const actionBtnHtml = allItemsReady
-            ? `<button class="btn btn-success btn-sm btn-dispatch-order" data-order="${order.id}" style="flex: 1; font-weight: 700;">Dispatch</button>`
+            ? `<button class="btn btn-secondary btn-sm btn-edit-ready-order" data-order="${order.id}" style="flex: 0 0 auto; padding-left: 14px; padding-right: 14px;" title="Edit / correct fulfillment" ${hasPermission('packing_dispatch_checkout') ? '' : 'disabled title="No permission to edit orders"'}>Edit</button><button class="btn btn-success btn-sm btn-dispatch-order" data-order="${order.id}" style="flex: 1; font-weight: 700;">Dispatch</button>`
             : `<button class="btn btn-primary btn-sm btn-prepare-order" data-order="${order.id}" style="flex: 1; font-weight: 700;" ${hasPermission('packing_dispatch_checkout') ? '' : 'disabled title="No permission to checkout orders"'}>Prepare</button>`;
 
         cardsHtml += `
@@ -1331,6 +1336,15 @@ async function loadPackingRequestsSection() {
         const btnPrepare = e.target.closest('.btn-prepare-order');
         if (btnPrepare) {
             const orderId = parseInt(btnPrepare.getAttribute('data-order'));
+            await openDispatchCheckoutModal(orderId);
+            return;
+        }
+
+        // Handle Edit button on an already-fully-ready order — same modal,
+        // so a wrong fulfillment can still be corrected (see actionBtnHtml).
+        const btnEditReady = e.target.closest('.btn-edit-ready-order');
+        if (btnEditReady) {
+            const orderId = parseInt(btnEditReady.getAttribute('data-order'));
             await openDispatchCheckoutModal(orderId);
             return;
         }
@@ -1374,7 +1388,8 @@ async function openDispatchCheckoutModal(orderId) {
         { data: recipes },
         { data: customers },
         { data: roastBatches },
-        { data: codeDefinitions }
+        { data: codeDefinitions },
+        { data: dispatchLotItemsData }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
@@ -1385,13 +1400,19 @@ async function openDispatchCheckoutModal(orderId) {
         fetchData('blend_recipes'),
         fetchData('customers'),
         fetchData('roast_batches'),
-        fetchData('code_definitions')
+        fetchData('code_definitions'),
+        fetchData('dispatch_lot_items')
     ]);
 
     const order = (orders || []).find(o => o.id === orderId);
     if (!order) return;
     const items = (orderItemsAll || []).filter(i => i.request_order_id === orderId);
     const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
+    // Which lot(s) fulfilled an already-prepared line, if the fulfillment
+    // came from THIS modal (records a trail) rather than from stock-fulfill
+    // at order approval (js/sales.js, no per-lot trail) — lets "Undo" below
+    // restore the exact stock it came from instead of guessing.
+    let dispatchLotItemsAll = (dispatchLotItemsData || []).filter(d => items.some(i => i.id === d.request_order_item_id));
 
     // Resolve a packed_coffee row's (type, coffeeId) identity — same matching
     // pattern used throughout sales.js/packing.js for coffee+machine lookups.
@@ -1540,8 +1561,34 @@ async function openDispatchCheckoutModal(orderId) {
         const prepared = parseInt(item.quantity_prepared) || 0;
         const requested = parseInt(item.quantity_requested) || 0;
 
+        const itemTrail = dispatchLotItemsAll.filter(d => d.request_order_item_id === itemId);
+        const trailQty = itemTrail.reduce((s, d) => s + (parseInt(d.qty) || 0), 0);
+        const untrackedQty = Math.max(0, prepared - trailQty);
+        // An inline expand-in-place form, not a second openModal() — the
+        // checkout body already occupies the app's single shared modal slot,
+        // so stacking another openModal() on top would wipe out this modal's
+        // own DOM instead of layering over it. A plain prompt() was tried
+        // first but froze the page during testing (native dialogs block the
+        // renderer this app's automation drives) and is inconsistent with
+        // the rest of the UI besides, so this follows the same
+        // hidden-attribute expand/collapse pattern as .dc-lots.
         const committedHtml = prepared > 0
-            ? `<div class="dc-committed">Already checked out earlier: <b>${prepared}</b> — already saved, not editable here.</div>`
+            ? `<div class="dc-committed">
+                    <div>
+                        Already checked out earlier: <b>${prepared}</b>
+                        <span style="opacity:0.75;">(${trailQty > 0 ? trailQty + ' from lots' : ''}${trailQty > 0 && untrackedQty > 0 ? ', ' : ''}${untrackedQty > 0 ? untrackedQty + ' from approval' : ''})</span>
+                        <button type="button" class="dc-committed-undo-toggle" data-item="${itemId}">Undo&hellip;</button>
+                    </div>
+                    <div class="dc-committed-undo-form hidden" data-item="${itemId}">
+                        ${trailQty > 0 ? `<div class="dc-undo-note">${trailQty} from tracked lots — stock will be restored</div>` : ''}
+                        ${untrackedQty > 0 ? `<div class="dc-undo-note">${untrackedQty} from order approval — stock already deducted, can't be auto-restored</div>` : ''}
+                        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+                            <input type="number" class="dc-undo-qty" min="1" max="${prepared}" value="${prepared}">
+                            <button type="button" class="btn btn-danger btn-sm dc-committed-undo-confirm" data-item="${itemId}">Undo</button>
+                            <button type="button" class="btn btn-secondary btn-sm dc-committed-undo-cancel" data-item="${itemId}">Cancel</button>
+                        </div>
+                    </div>
+               </div>`
             : '';
 
         // Suggested qty for a not-yet-taken lot = remaining shortfall for this
@@ -1622,6 +1669,80 @@ async function openDispatchCheckoutModal(orderId) {
         renderAllHeaders();
     }
 
+    // Lets a wrongly-fulfilled line be walked back even after the order shows
+    // fully "Ready" (see actionBtnHtml's Edit button). Restores stock for
+    // whatever portion has a dispatch_lot_items trail (this modal's own past
+    // checkouts), newest-first; anything beyond that trail came from order
+    // approval's stock-fulfill (js/sales.js, no per-lot record) and can only
+    // have its counted quantity reduced, not its stock restored.
+    async function undoCommittedQty(itemId, requestedUndoQty) {
+        const item = items.find(i => i.id === itemId);
+        if (!item) return;
+        const prepared = parseInt(item.quantity_prepared) || 0;
+        if (prepared <= 0) return;
+
+        const trail = dispatchLotItemsAll.filter(d => d.request_order_item_id === itemId).sort((a, b) => b.id - a.id);
+
+        let undoQty = parseInt(requestedUndoQty) || 0;
+        if (undoQty <= 0) return;
+        if (undoQty > prepared) undoQty = prepared;
+
+        const [{ data: freshLots }, { data: freshPacked }] = await Promise.all([
+            fetchData('packed_coffee_lots'),
+            fetchData('packed_coffee')
+        ]);
+
+        let remaining = undoQty;
+        for (const d of trail) {
+            if (remaining <= 0) break;
+            const dQty = parseInt(d.qty) || 0;
+            if (dQty <= 0) continue;
+            const take = Math.min(dQty, remaining);
+
+            if (d.packed_coffee_lot_id) {
+                const lot = (freshLots || []).find(l => l.id === d.packed_coffee_lot_id);
+                if (lot) {
+                    const newRemainingPcs = (parseInt(lot.remaining_pcs) || 0) + take;
+                    await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemainingPcs });
+                    liveRemaining[lot.id] = (liveRemaining[lot.id] || 0) + take;
+                    const packedRow = (freshPacked || []).find(p => p.id === lot.packed_coffee_id);
+                    if (packedRow) {
+                        packedRow.quantity = (parseInt(packedRow.quantity) || 0) + take;
+                        await saveData('packed_coffee', packedRow);
+                    }
+                }
+            }
+
+            const newDQty = dQty - take;
+            if (newDQty <= 0) {
+                await deleteData('dispatch_lot_items', d.id);
+                d.qty = 0;
+                d._undone = true;
+            } else {
+                d.qty = newDQty;
+                await saveData('dispatch_lot_items', { id: d.id, qty: newDQty });
+            }
+            remaining -= take;
+        }
+        dispatchLotItemsAll = dispatchLotItemsAll.filter(d => !d._undone);
+
+        const newPrepared = Math.max(0, prepared - undoQty);
+        item.quantity_prepared = newPrepared;
+        if (remaining > 0) {
+            // Leftover after the trail is exhausted came out of the
+            // untracked (approval-fulfilled) portion.
+            item.quantity_allocated = Math.max(0, (parseInt(item.quantity_allocated) || 0) - remaining);
+        }
+        const requested = parseInt(item.quantity_requested) || 0;
+        item.item_status = newPrepared >= requested ? 'Ready for Handover' : 'Packing';
+        await saveData('request_order_items', item);
+
+        renderAll();
+        await loadPackingRequestsSection();
+        scheduleDashboardRefresh();
+        await showWarningModal(`Undid ${undoQty} unit(s) for ${coffeeLabel(item)}.`, false);
+    }
+
     const itemsListHtml = items.map(item => `<div class="dc-item" id="dc-item-${item.id}">${itemHeaderHtml(item)}</div>`).join('');
 
     const html = `
@@ -1686,6 +1807,10 @@ async function openDispatchCheckoutModal(orderId) {
             #dispatch-checkout-body .dc-ready { font-family:monospace; font-weight:700; font-size:0.85rem; text-align:right; }
             #dispatch-checkout-body .dc-lots { border-top:1px solid var(--border); background:var(--bg-app); padding:6px; }
             #dispatch-checkout-body .dc-committed { font-size:0.76rem; color:var(--text-muted); background:none; border:1px solid var(--border); border-radius:6px; padding:7px 9px; margin:2px 3px 6px; }
+            #dispatch-checkout-body .dc-committed-undo-toggle { margin-left:8px; background:none; border:none; padding:0; cursor:pointer; color:var(--danger); text-decoration:underline; font-size:0.76rem; font-family:inherit; }
+            #dispatch-checkout-body .dc-committed-undo-form { margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
+            #dispatch-checkout-body .dc-undo-note { font-size:0.72rem; color:var(--text-muted); margin-top:2px; }
+            #dispatch-checkout-body .dc-undo-qty { width:60px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--bg-app); color:var(--text-primary); font-size:0.78rem; text-align:right; font-family:monospace; }
             #dispatch-checkout-body .dc-lot-empty { font-size:0.8rem; color:var(--text-muted); padding:10px; text-align:center; }
             #dispatch-checkout-body .dc-lot { display:grid; grid-template-columns:1fr 64px 190px; gap:10px; align-items:center; padding:8px 9px; border-radius:6px; font-size:0.82rem; }
             #dispatch-checkout-body .dc-lot + .dc-lot { margin-top:2px; }
@@ -1782,6 +1907,32 @@ async function openDispatchCheckoutModal(orderId) {
             const open = list.classList.toggle('hidden') === false;
             headerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
             itemEl.classList.toggle('open', open);
+            return;
+        }
+
+        const undoToggle = e.target.closest('.dc-committed-undo-toggle');
+        if (undoToggle) {
+            const itemId = undoToggle.getAttribute('data-item');
+            const form = document.querySelector(`.dc-committed-undo-form[data-item="${itemId}"]`);
+            if (form) form.classList.toggle('hidden');
+            return;
+        }
+
+        const undoCancel = e.target.closest('.dc-committed-undo-cancel');
+        if (undoCancel) {
+            const form = undoCancel.closest('.dc-committed-undo-form');
+            if (form) form.classList.add('hidden');
+            return;
+        }
+
+        const undoConfirm = e.target.closest('.dc-committed-undo-confirm');
+        if (undoConfirm) {
+            const itemId = parseInt(undoConfirm.getAttribute('data-item'));
+            const form = undoConfirm.closest('.dc-committed-undo-form');
+            const qty = parseInt(form.querySelector('.dc-undo-qty').value) || 0;
+            if (qty <= 0) return;
+            if (!await showWarningModal(`Undo ${qty} unit(s) already checked out for this line?`, true)) return;
+            await undoCommittedQty(itemId, qty);
             return;
         }
 

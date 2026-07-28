@@ -1181,7 +1181,8 @@ async function approveSalesOrder(orderId) {
         { data: roastBatches },
         { data: machines },
         { data: codeDefinitions },
-        { data: greenCoffeeLots }
+        { data: greenCoffeeLots },
+        { data: packedCoffeeLots }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
@@ -1191,7 +1192,8 @@ async function approveSalesOrder(orderId) {
         fetchData('roast_batches'),
         fetchData('machines'),
         fetchData('code_definitions'),
-        fetchData('green_coffee_lots')
+        fetchData('green_coffee_lots'),
+        fetchData('packed_coffee_lots')
     ]);
 
     const order = orders.find(o => o.id === orderId);
@@ -1332,8 +1334,16 @@ async function approveSalesOrder(orderId) {
             `;
         }
 
-        let fulfillQty = Math.min(packedStock, item.quantity_requested);
-        let prodQty = item.quantity_requested > packedStock ? (item.quantity_requested - packedStock) : 0;
+        // Default to 0 fulfilled / everything sent to production — an approver
+        // must deliberately type a "Fulfill from Packed" amount to draw down
+        // existing stock. Previously this defaulted to min(packedStock, requested),
+        // which silently marked orders "Ready for Handover" the instant an
+        // approver clicked Confirm without touching the pre-filled value,
+        // even though nobody on the packing team had done anything (found
+        // 2026-07-27: a fresh order showed 20/20 solely because old packed
+        // stock under the same trade code happened to cover it).
+        let fulfillQty = 0;
+        let prodQty = item.quantity_requested;
         
         // Resolve machine name from item
         const itemMachine = item.machine_id ? (machines || []).find(m => m.id === item.machine_id) : null;
@@ -1459,6 +1469,28 @@ async function approveSalesOrder(orderId) {
                         p.quantity = avail - take;
                         remainingDeduct -= take;
                         await saveData('packed_coffee', p);
+
+                        // Keep packed_coffee_lots (the per-lot FIFO source of
+                        // truth the dispatch checkout modal reads) in sync,
+                        // oldest lot first — without this, fulfilling an
+                        // order from existing stock at approval time only
+                        // shrank this flattened total, leaving every lot's
+                        // remaining_pcs stale/overstated so checkout could
+                        // still offer units already consumed here (found
+                        // 2026-07-27, see also js/packing.js's checkout
+                        // deduction which already does both together).
+                        const myLots = (packedCoffeeLots || [])
+                            .filter(l => l.packed_coffee_id === p.id && (parseInt(l.remaining_pcs) || 0) > 0)
+                            .sort((a, b) => new Date(a.packed_date) - new Date(b.packed_date) || a.id - b.id);
+                        let lotDeduct = take;
+                        for (const lot of myLots) {
+                            if (lotDeduct <= 0) break;
+                            const lotAvail = parseInt(lot.remaining_pcs) || 0;
+                            const lotTake = Math.min(lotAvail, lotDeduct);
+                            lot.remaining_pcs = lotAvail - lotTake;
+                            lotDeduct -= lotTake;
+                            await saveData('packed_coffee_lots', lot);
+                        }
                     }
                 }
             }
