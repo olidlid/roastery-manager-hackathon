@@ -336,6 +336,13 @@ CREATE TABLE IF NOT EXISTS public.packed_coffee (
     selling_price NUMERIC
 );
 
+-- Prevents two concurrent packing submits for the same coffee+size+machine
+-- from creating duplicate packed_coffee rows (see
+-- packed_coffee_dedup_migration.sql, applied 2026-07-28).
+CREATE UNIQUE INDEX IF NOT EXISTS packed_coffee_custom_identity_uniq
+ON public.packed_coffee (lower(custom_coffee_name), bag_size_g, machine_id)
+WHERE roast_batch_id IS NULL;
+
 -- 15. Packing records (daily packing history)
 CREATE TABLE IF NOT EXISTS public.packing_records (
     id SERIAL PRIMARY KEY,

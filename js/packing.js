@@ -2702,7 +2702,7 @@ async function openPrintBarcodeModal(bulkId) {
         // its own lots (packed_coffee + this production lot), so whichever
         // of Print/Pack happens first, the other converges on the same row.
         for (const r of requested) {
-            const packedRow = await getOrCreatePackedCoffeeRow(bulk, r.gram);
+            const packedRow = await getOrCreatePackedCoffeeRow(bulk.coffee_name, r.gram, bulk.machine_id);
             if (!packedRow) continue;
             const packedLot = await getOrCreatePackedCoffeeLot(packedRow.id, 0, lot ? lot.id : null);
             r.packedCoffeeLotId = packedLot ? packedLot.id : null;
@@ -2830,7 +2830,7 @@ async function openPackBulkModal(bulkId) {
             const productionLot = await getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roastBatches);
 
             for (const add of additions) {
-                const packedRow = await getOrCreatePackedCoffeeRow(bulk, add.gram);
+                const packedRow = await getOrCreatePackedCoffeeRow(bulk.coffee_name, add.gram, bulk.machine_id);
                 if (!packedRow) continue;
                 packedRow.quantity = (parseInt(packedRow.quantity) || 0) + add.qty;
                 await saveData('packed_coffee', packedRow);
@@ -2982,30 +2982,55 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId) 
     return newLot;
 }
 
-// Shared by openPackBulkModal and openPrintBarcodeModal so either can run
-// first without creating two separate packed_coffee rows for the same
-// bulk+size — quantity starts at 0 either way; callers add to it themselves
-// (Pack adds the real count; Print Barcode never touches quantity, it's
-// just reserving/reusing the row's identity for the barcode).
-async function getOrCreatePackedCoffeeRow(bulk, gram) {
-    const { data: packedList } = await fetchData('packed_coffee');
-    const existing = (packedList || []).find(p =>
+// Shared by openPackBulkModal, openPrintBarcodeModal, AND
+// openCustomPackingModal so none of them can create two separate
+// packed_coffee rows for the same name+size+machine — quantity starts at 0
+// either way; callers add to it themselves (Pack/manual entry add the real
+// count; Print Barcode never touches quantity, it's just reserving/reusing
+// the row's identity for the barcode). Name match is case-insensitive —
+// callers type/store the coffee name inconsistently in case.
+//
+// Race-safe: two concurrent callers both finding no existing row will both
+// attempt an insert, but the partial unique index on (lower(custom_coffee_name),
+// bag_size_g, machine_id) WHERE roast_batch_id IS NULL (see
+// database/packed_coffee_dedup_migration.sql) lets only one insert succeed.
+// The loser catches the unique-violation (Postgres 23505) and re-fetches to
+// pick up the winner's row instead of creating a duplicate. This exact race
+// was live in production 2026-07-28 (pre-fix): 3 concurrent Pack submissions
+// for the same coffee+size+machine created 3 separate packed_coffee rows,
+// each with its own quantity and its own packed_coffee_lots, fragmenting
+// stock across them (surfaced as duplicate entries in the Custom Blend
+// source-pool dropdown, and as the root risk for the new lot fifo_code below
+// — two duplicate rows would each mint their own conflicting number).
+async function getOrCreatePackedCoffeeRow(name, gram, machineId) {
+    const findExisting = (list) => (list || []).find(p =>
         !p.roast_batch_id &&
-        p.custom_coffee_name === bulk.coffee_name &&
+        (p.custom_coffee_name || '').trim().toLowerCase() === (name || '').trim().toLowerCase() &&
         parseInt(p.bag_size_g) === parseInt(gram) &&
-        parseInt(p.machine_id) === parseInt(bulk.machine_id)
+        parseInt(p.machine_id) === parseInt(machineId)
     );
+
+    const { data: packedList } = await fetchData('packed_coffee');
+    const existing = findExisting(packedList);
     if (existing) return existing;
+
     const { data: savedPacked, error } = await saveData('packed_coffee', {
         roast_batch_id: null,
-        machine_id: bulk.machine_id,
-        custom_coffee_name: bulk.coffee_name,
+        machine_id: machineId,
+        custom_coffee_name: name,
         bag_size_g: gram,
         quantity: 0,
         selling_price: 12.00
     });
-    if (error) { console.error('Failed to create packed_coffee row:', error); return null; }
-    return savedPacked;
+    if (!error) return savedPacked;
+
+    if (error.code === '23505') {
+        const { data: freshList } = await fetchData('packed_coffee');
+        const winner = findExisting(freshList);
+        if (winner) return winner;
+    }
+    console.error('Failed to create packed_coffee row:', error);
+    return null;
 }
 
 // Adjust Packed Coffee Stock level manually
@@ -3740,32 +3765,17 @@ async function openCustomPackingModal() {
             return;
         }
 
-        const { data: packed } = await fetchData('packed_coffee');
-
         for (const item of packsToSave) {
-            // Find existing row matching the exact custom coffee name, machine, and size
-            const existing = (packed || []).find(p =>
-                p.roast_batch_id === null &&
-                p.machine_id === machineId &&
-                p.bag_size_g === item.gram &&
-                (p.custom_coffee_name || '').toLowerCase() === coffeeName.toLowerCase()
-            );
-
+            // getOrCreatePackedCoffeeRow (shared with the bulk-pack flow,
+            // race-safe via the DB's partial unique index) resolves the row
+            // then we add this entry's qty on top — same two-step shape as
+            // openPackBulkModal.
+            const packedRow = await getOrCreatePackedCoffeeRow(coffeeName, item.gram, machineId);
             let packedCoffeeId = null;
-            if (existing) {
-                existing.quantity = (parseInt(existing.quantity) || 0) + item.qty;
-                await saveData('packed_coffee', existing);
-                packedCoffeeId = existing.id;
-            } else {
-                const newPacked = {
-                    roast_batch_id: null,
-                    machine_id: machineId,
-                    custom_coffee_name: coffeeName,
-                    bag_size_g: item.gram,
-                    quantity: item.qty
-                };
-                const { data: savedPacked } = await saveData('packed_coffee', newPacked);
-                packedCoffeeId = savedPacked ? savedPacked.id : null;
+            if (packedRow) {
+                packedRow.quantity = (parseInt(packedRow.quantity) || 0) + item.qty;
+                await saveData('packed_coffee', packedRow);
+                packedCoffeeId = packedRow.id;
             }
             // V2 1G-1: no source bulk/production lot for a manual entry — link left null.
             if (packedCoffeeId) {
