@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Roastery Manager Pro — PRD</title>
+<style>
+  :root {
+    --bg: #eff0ee;
+    --surface: #fbfbfa;
+    --surface-2: #f3f4f1;
+    --ink: #191b1b;
+    --ink-muted: #5b5f5e;
+    --ink-faint: #84887f;
+    --border: #d8d9d5;
+    --border-strong: #b9bbb5;
+    --accent: #c9540e;
+    --accent-ink: #7a3308;
+    --accent-soft: #f4dfce;
+    --success: #2f8558;
+    --success-soft: #e1efe6;
+    --warning: #a6790a;
+    --warning-soft: #f4e9cf;
+    --critical: #b33a24;
+    --critical-soft: #f6e0da;
+    --info: #3b6fa0;
+    --info-soft: #dfe9f2;
+    --shadow: 0 1px 2px rgba(20,20,18,0.06), 0 8px 24px -16px rgba(20,20,18,0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171a;
+      --surface: #1d2023;
+      --surface-2: #23262a;
+      --ink: #e9e7e1;
+      --ink-muted: #9ca09f;
+      --ink-faint: #6d716f;
+      --border: #333739;
+      --border-strong: #454a4c;
+      --accent: #e38b45;
+      --accent-ink: #f2b37b;
+      --accent-soft: #3a2718;
+      --success: #56b382;
+      --success-soft: #163326;
+      --warning: #d7a83c;
+      --warning-soft: #362a10;
+      --critical: #e0745a;
+      --critical-soft: #3a1e17;
+      --info: #74a4d8;
+      --info-soft: #17293a;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -16px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a; --surface: #1d2023; --surface-2: #23262a;
+    --ink: #e9e7e1; --ink-muted: #9ca09f; --ink-faint: #6d716f;
+    --border: #333739; --border-strong: #454a4c;
+    --accent: #e38b45; --accent-ink: #f2b37b; --accent-soft: #3a2718;
+    --success: #56b382; --success-soft: #163326;
+    --warning: #d7a83c; --warning-soft: #362a10;
+    --critical: #e0745a; --critical-soft: #3a1e17;
+    --info: #74a4d8; --info-soft: #17293a;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -16px rgba(0,0,0,0.5);
+  }
+  :root[data-theme="light"] {
+    --bg: #eff0ee; --surface: #fbfbfa; --surface-2: #f3f4f1;
+    --ink: #191b1b; --ink-muted: #5b5f5e; --ink-faint: #84887f;
+    --border: #d8d9d5; --border-strong: #b9bbb5;
+    --accent: #c9540e; --accent-ink: #7a3308; --accent-soft: #f4dfce;
+    --success: #2f8558; --success-soft: #e1efe6;
+    --warning: #a6790a; --warning-soft: #f4e9cf;
+    --critical: #b33a24; --critical-soft: #f6e0da;
+    --info: #3b6fa0; --info-soft: #dfe9f2;
+    --shadow: 0 1px 2px rgba(20,20,18,0.06), 0 8px 24px -16px rgba(20,20,18,0.18);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .eyebrow {
+    font-weight: 800;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+  }
+
+  h1, h2, h3 {
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  code, .mono, .tag, td.num, th.num {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  .tag {
+    display: inline-block;
+    font-size: 0.72rem;
+    padding: 0.12em 0.55em;
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    color: var(--ink-muted);
+    background: var(--surface-2);
+    letter-spacing: 0.01em;
+  }
+
+  /* ---------- Title block (blueprint drawing header) ---------- */
+  .titleblock {
+    border-bottom: 3px solid var(--ink);
+    background: var(--surface);
+  }
+  .titleblock-inner {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px clamp(20px, 4vw, 48px) 22px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 16px 32px;
+    align-items: end;
+  }
+  .titleblock h1 {
+    font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+    line-height: 1.08;
+    margin: 6px 0 8px;
+  }
+  .titleblock .sub {
+    color: var(--ink-muted);
+    font-size: 1.02rem;
+    max-width: 56ch;
+  }
+  .stampgrid {
+    display: grid;
+    grid-template-columns: repeat(4, auto);
+    border: 1px solid var(--border-strong);
+    font-size: 0.78rem;
+  }
+  .stampgrid div {
+    padding: 7px 14px;
+    border-left: 1px solid var(--border-strong);
+    white-space: nowrap;
+  }
+  .stampgrid div:first-child { border-left: none; }
+  .stampgrid .k {
+    display: block;
+    color: var(--ink-faint);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .stampgrid .v { font-weight: 700; }
+  .stampgrid .v.status { color: var(--success); }
+
+  /* ---------- Page shell ---------- */
+  .shell {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 clamp(20px, 4vw, 48px);
+    display: grid;
+    grid-template-columns: 220px minmax(0, 760px);
+    gap: 56px;
+    align-items: start;
+  }
+  @media (max-width: 880px) {
+    .shell { grid-template-columns: 1fr; }
+    nav.toc { display: none; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 24px;
+    padding-top: 40px;
+    font-size: 0.85rem;
+  }
+  nav.toc .eyebrow { display: block; margin-bottom: 12px; }
+  nav.toc ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: toc;
+    border-left: 1px solid var(--border);
+  }
+  nav.toc li { counter-increment: toc; }
+  nav.toc a {
+    display: block;
+    padding: 5px 0 5px 14px;
+    margin-left: -1px;
+    border-left: 1px solid transparent;
+    color: var(--ink-muted);
+    text-decoration: none;
+  }
+  nav.toc a::before {
+    content: counter(toc, decimal-leading-zero) " ";
+    color: var(--ink-faint);
+    font-family: ui-monospace, monospace;
+    font-size: 0.78em;
+    margin-right: 2px;
+  }
+  nav.toc a:hover { color: var(--accent-ink); border-left-color: var(--accent); }
+
+  main { min-width: 0; padding: 40px 0 30px; }
+
+  section { padding: 30px 0 6px; border-top: 1px solid var(--border); }
+  section:first-of-type { border-top: none; padding-top: 8px; }
+
+  .secnum {
+    font-family: ui-monospace, monospace;
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 700;
+  }
+  h2 {
+    font-size: 1.5rem;
+    margin: 4px 0 6px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  h3 {
+    font-size: 1.05rem;
+    margin: 26px 0 8px;
+  }
+  section > p.lede {
+    color: var(--ink-muted);
+    font-size: 1rem;
+    max-width: 66ch;
+    margin-top: 0;
+  }
+  p, li { max-width: 66ch; }
+  p { margin: 0.9em 0; }
+  ul, ol.plain { padding-left: 1.3em; margin: 0.8em 0; }
+  li { margin: 0.35em 0; }
+  strong { font-weight: 700; }
+  a { color: var(--accent-ink); }
+
+  .lede-wide { max-width: none; }
+
+  /* ---------- Cards / grids ---------- */
+  .cardgrid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+  }
+  @media (max-width: 620px) { .cardgrid { grid-template-columns: 1fr; } }
+  .card {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 4px;
+    padding: 14px 16px;
+  }
+  .card h4 {
+    margin: 0 0 4px;
+    font-size: 0.95rem;
+    font-weight: 800;
+  }
+  .card p { margin: 0; font-size: 0.9rem; color: var(--ink-muted); }
+
+  /* ---------- Tables ---------- */
+  .tablewrap { overflow-x: auto; margin: 14px 0 22px; border: 1px solid var(--border); border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; min-width: 480px; }
+  thead th {
+    text-align: left;
+    font-size: 0.68rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: var(--surface-2);
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border-strong);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+  td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
+  td.center { text-align: center; }
+
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+  .dot.full { background: var(--success); }
+  .dot.partial { background: var(--warning); }
+  .dot.none { background: var(--border-strong); }
+
+  /* ---------- Status chips ---------- */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 9px 3px 7px;
+    border-radius: 20px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
+  .chip.shipped { background: var(--success-soft); color: var(--success); }
+  .chip.shipped::before { background: var(--success); }
+  .chip.progress { background: var(--warning-soft); color: var(--warning); }
+  .chip.progress::before { background: var(--warning); }
+  .chip.planned { background: var(--info-soft); color: var(--info); }
+  .chip.planned::before { background: var(--info); }
+  .chip.risk { background: var(--critical-soft); color: var(--critical); }
+  .chip.risk::before { background: var(--critical); }
+  .chip.out { background: var(--surface-2); color: var(--ink-faint); }
+  .chip.out::before { background: var(--ink-faint); }
+
+  /* ---------- Roadmap phases ---------- */
+  .phase {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--info);
+    background: var(--surface);
+    border-radius: 4px;
+    padding: 16px 18px;
+    margin: 14px 0;
+  }
+  .phase.risk-border { border-left-color: var(--warning); }
+  .phase-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .phase-head h4 { margin: 0; font-size: 1rem; font-weight: 800; }
+  .phase ul { margin: 10px 0 2px; }
+  .phase ul li { font-size: 0.92rem; }
+
+  /* ---------- Callouts ---------- */
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--ink-faint);
+    background: var(--surface);
+    padding: 12px 16px;
+    border-radius: 3px;
+    font-size: 0.92rem;
+    color: var(--ink-muted);
+    margin: 16px 0;
+  }
+  .callout.warn { border-left-color: var(--warning); }
+  .callout.warn strong { color: var(--warning); }
+  .callout strong { color: var(--ink); }
+
+  /* ---------- Glossary ---------- */
+  dl.glossary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; margin: 14px 0; }
+  dl.glossary dt { font-weight: 700; font-family: ui-monospace, monospace; font-size: 0.86rem; white-space: nowrap; }
+  dl.glossary dd { margin: 0; color: var(--ink-muted); font-size: 0.92rem; }
+
+  /* ---------- Footer title block ---------- */
+  footer {
+    border-top: 3px solid var(--ink);
+    background: var(--surface);
+    margin-top: 30px;
+  }
+  .footer-inner {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 18px clamp(20px, 4vw, 48px);
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 0.76rem;
+    color: var(--ink-faint);
+  }
+  .footer-inner .mono { letter-spacing: 0.02em; }
+</style>
+</head>
+<body>
+
+<header class="titleblock">
+  <div class="titleblock-inner">
+    <div>
+      <span class="eyebrow">Product Requirements Document</span>
+      <h1>Roastery Manager Pro</h1>
+      <p class="sub">Production management system for coffee roasteries — green bean intake through roasting, packing, and sales dispatch, in one shared system.</p>
+    </div>
+    <div class="stampgrid">
+      <div><span class="k">Doc</span><span class="v mono">PRD&nbsp;1.0</span></div>
+      <div><span class="k">Date</span><span class="v mono">2026&#8209;07&#8209;14</span></div>
+      <div><span class="k">Stage</span><span class="v mono">V1 live&nbsp;/&nbsp;V2 planning</span></div>
+      <div><span class="k">Status</span><span class="v status">● Living document</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="toc" aria-label="Table of contents">
+    <span class="eyebrow">On this page</span>
+    <ol>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#problem">Problem &amp; context</a></li>
+      <li><a href="#goals">Goals &amp; non-goals</a></li>
+      <li><a href="#users">Users &amp; roles</a></li>
+      <li><a href="#scope">Feature scope</a></li>
+      <li><a href="#crosscutting">Cross-cutting requirements</a></li>
+      <li><a href="#architecture">System architecture</a></li>
+      <li><a href="#data">Data model</a></li>
+      <li><a href="#status">Current status</a></li>
+      <li><a href="#roadmap">Roadmap — V2</a></li>
+      <li><a href="#outofscope">Out of scope</a></li>
+      <li><a href="#risks">Risks &amp; open questions</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section id="overview">
+      <h2><span class="secnum">01</span> Overview</h2>
+      <p class="lede">What the system is, who runs their day through it, and where it stands today.</p>
+      <p><strong>Roastery Manager Pro</strong> is a web application that runs the full production lifecycle of a coffee roastery: green coffee arrives and is logged into inventory, a roasting plan converts green stock into roasted batches on a specific machine, packing turns bulk roasted coffee into sellable bagged sizes, and sales staff take orders that a production leader approves before dispatch. Barcode scanning ties the physical floor — bags, lots, machines — to the records in the system.</p>
+      <p>It is built and used by one team today, with a second, independent deployment planned for a client (see <a href="#risks">Risks</a>). The system is live in daily production use, not a prototype: <a href="https://roasterymanagerv2.vercel.app">roasterymanagerv2.vercel.app</a>.</p>
+      <div class="cardgrid">
+        <div class="card"><h4>Primary users</h4><p>Roasters, packing team, sales agents, production leaders, and admins — six roles in total, see §4.</p></div>
+        <div class="card"><h4>Core loop</h4><p>Green bean → roast batch → bulk roasted coffee → packed coffee → dispatch, with inventory decremented at each step.</p></div>
+        <div class="card"><h4>Platform</h4><p>Responsive web app, plus a lightweight companion Android app for leader approvals.</p></div>
+        <div class="card"><h4>Data</h4><p>Single shared Supabase project — every device and browser reads and writes the same live data, no per-device setup.</p></div>
+      </div>
+    </section>
+
+    <section id="problem">
+      <h2><span class="secnum">02</span> Problem &amp; context</h2>
+      <p class="lede">Why a roastery needs this instead of a spreadsheet.</p>
+      <p>A roastery's production chain has several handoffs — buying green coffee, roasting it on one of several machines, packing it into different bag sizes, and dispatching it to customers — and each handoff is a place stock can be miscounted, a batch can be mislabeled, or an order can go out without approval. Spreadsheets and paper logs don't enforce any of that, and don't give different roles (a roaster on the floor vs. a sales agent vs. an owner) a view scoped to what they actually need to see or touch.</p>
+      <p>The system replaces that with one shared record: inventory quantities move automatically as batches are logged and orders are packed, barcode labels make each roast batch and packed lot scannable instead of hand-written, and a role/permission model means a Packing Team account simply doesn't have a delete button to worry about.</p>
+    </section>
+
+    <section id="goals">
+      <h2><span class="secnum">03</span> Goals &amp; non-goals</h2>
+      <div class="cardgrid">
+        <div class="card"><h4>Accurate, live inventory</h4><p>Green, bulk-roasted, and packed stock levels reflect reality at every step, without manual reconciliation.</p></div>
+        <div class="card"><h4>Traceability</h4><p>Every roasted batch and packed lot is scannable and attributable to a machine, a date, and (in V2) a specific green coffee lot.</p></div>
+        <div class="card"><h4>Role-appropriate access</h4><p>Each of the six roles sees only the sections and actions relevant to their job.</p></div>
+        <div class="card"><h4>Runs anywhere, in two languages</h4><p>Same data on any device, full English/Arabic support with RTL layout, no installation for the main app.</p></div>
+      </div>
+      <h3>Non-goals</h3>
+      <ul>
+        <li>Not an accounting system — it tracks production and stock movement, not general ledger bookkeeping.</li>
+        <li>Not a B2B customer self-service portal (deferred to V3, see §11).</li>
+        <li>Not a point-of-sale system for walk-in retail.</li>
+        <li>Not multi-tenant — each deployment (this sandbox, and the future client instance) is its own isolated Supabase project.</li>
+      </ul>
+    </section>
+
+    <section id="users">
+      <h2><span class="secnum">04</span> Users &amp; roles</h2>
+      <p class="lede">Access is enforced by ~40 granular permission keys, grouped into six default roles. Custom roles can be composed from the same permission set.</p>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Role</th><th>Dashboard</th><th>Inventory</th><th>Production</th><th>Packing</th><th>Sales</th><th>Reports</th><th>Settings</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Developer</strong></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td>All + debug tools</td></tr>
+            <tr><td><strong>Admin</strong></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td>All</td></tr>
+            <tr><td><strong>Production Leader</strong></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td>View only</td><td class="center"><span class="dot full"></span></td><td>Production only</td></tr>
+            <tr><td><strong>Roaster</strong></td><td class="center"><span class="dot full"></span></td><td>View only</td><td>Batches (add only)</td><td class="center"><span class="dot none"></span></td><td class="center"><span class="dot none"></span></td><td class="center"><span class="dot none"></span></td><td class="center"><span class="dot none"></span></td></tr>
+            <tr><td><strong>Packing Team</strong></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot none"></span></td><td class="center"><span class="dot none"></span></td><td class="center"><span class="dot full"></span></td><td>Request view only</td><td class="center"><span class="dot none"></span></td><td class="center"><span class="dot none"></span></td></tr>
+            <tr><td><strong>Sales Agent</strong></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot none"></span></td><td class="center"><span class="dot none"></span></td><td class="center"><span class="dot none"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot full"></span></td><td class="center"><span class="dot none"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:0.85rem; color:var(--ink-faint);">Permissions gate the interface, not the database — Supabase row-level security is coarse (table-level), so the granular ~40-key model is enforced client-side. See §7 for the security implication of that.</p>
+      <h3>A day in each role's life</h3>
+      <ul>
+        <li><strong>Roaster</strong> — scans a green coffee or machine barcode to open the quick-log form, records a roast batch, moves on.</li>
+        <li><strong>Packing Team</strong> — sees which sales requests need bags prepared, packs bulk roasted coffee into sized units, prints lot labels.</li>
+        <li><strong>Sales Agent</strong> — enters a customer order as a request; the order carries their name automatically.</li>
+        <li><strong>Production Leader</strong> — approves or rejects pending sales requests, including from the standalone Leader companion app on their phone.</li>
+        <li><strong>Admin / Developer</strong> — manages users, roles, translations, and system settings; Developer additionally gets debug tooling.</li>
+      </ul>
+    </section>
+
+    <section id="scope">
+      <h2><span class="secnum">05</span> Feature scope</h2>
+      <p class="lede">Shipped functionality, organized by the module a user would open it from.</p>
+
+      <h3>Dashboard</h3>
+      <p>Landing view for every role. Surfaces notification badges for items awaiting the current user's action — pending sales approvals, pending roasting plans — on both the sidebar and the relevant section tabs.</p>
+
+      <h3>Green Coffee Inventory</h3>
+      <ul>
+        <li>Stock table (alphabetically sorted) with quantity, origin, and per-item barcode generation for scan-driven roast logging.</li>
+        <li>Arrival / intake recording, matched to a specific green coffee record by its foreign key — not by text-matching the name — to prevent duplicate-stock bugs when two lots share a similar name.</li>
+        <li>Barcode label printing with selectable label/paper size (A4 multi-up, Letter, and dedicated sticker-roll sizes including 50×25&nbsp;mm), tuned per size so the printed barcode stays within reliable scanner range.</li>
+      </ul>
+
+      <h3>Roasting</h3>
+      <ul>
+        <li>Roasting plans (what to roast, on which machine) and roast batches (the actual execution against a plan), with role-gated approval.</li>
+        <li>Blend recipes, combining multiple green coffees into a named blend that can itself be roasted.</li>
+        <li>Roasting log sticker: a scannable 50×25&nbsp;mm barcode label per batch, with coffee name / machine / coffee code shown underneath per a configurable layout (§5, Settings).</li>
+      </ul>
+
+      <h3>Packing</h3>
+      <ul>
+        <li>Converts bulk roasted coffee into packed units at configured packaging sizes.</li>
+        <li>"Ready to Pack" view surfaces lot codes as scannable badges, tracked through <code>production_lots</code>.</li>
+        <li>Packed coffee lot barcode label (50×25&nbsp;mm): batch/lot code, coffee name, production/expiry dates, and machine name, each independently toggleable in Settings.</li>
+        <li>Packed Coffee Stock table redesigned for row density — one row per coffee, two-row header — so a full inventory fits on screen without excess scrolling.</li>
+      </ul>
+
+      <h3>Sales &amp; Dispatch</h3>
+      <ul>
+        <li>Customer management, sales agents, and request orders (a sales agent's order, itemized).</li>
+        <li>Approval workflow: a request moves to <em>Pending Approval</em> and a Production Leader approves or rejects it — from the main app or the standalone Leader companion app.</li>
+        <li>Dispatch confirmation and waybill/print output for approved, fulfilled orders.</li>
+        <li>Optional WhatsApp notification to the leader when a new request needs approval (see §6, standalone service).</li>
+      </ul>
+
+      <h3>Reports</h3>
+      <p>Chart-based production and sales reporting. <span class="chip progress">In progress</span> — flagged in §9 as needing further work on data binding and date filtering before V2's AI phase builds on top of it.</p>
+
+      <h3>Settings</h3>
+      <ul>
+        <li><strong>Account</strong> — self-service password change for any logged-in user.</li>
+        <li><strong>Users &amp; Roles</strong> — user management, custom role creation with the full ~40-key permission matrix.</li>
+        <li><strong>Production → Label Layout</strong> — two independent checklists controlling which fields print on the roasting log sticker and the packed coffee sticker respectively (the barcode itself always prints; only the surrounding text is optional).</li>
+        <li><strong>Translations</strong> — import/export EN/AR strings via spreadsheet for non-technical editing.</li>
+        <li><strong>Debug tools</strong> — Developer-role only; includes a mock-database reset utility.</li>
+      </ul>
+
+      <h3>Companion surfaces</h3>
+      <div class="cardgrid">
+        <div class="card"><h4>Leader app</h4><p>Minimal standalone page (also packaged as an Android app via Capacitor) that lists pending sales requests for one-tap approve/reject, for a leader who doesn't need the full system.</p></div>
+        <div class="card"><h4>WhatsApp notifier</h4><p>Independent background service that watches for new pending requests and messages the leader's phone — a nudge, not a dependency of the core workflow.</p></div>
+      </div>
+    </section>
+
+    <section id="crosscutting">
+      <h2><span class="secnum">06</span> Cross-cutting requirements</h2>
+      <p class="lede">Constraints that apply across every module, not features of any one of them.</p>
+
+      <h3>Internationalization</h3>
+      <p>Every user-facing string ships in English and Arabic. Arabic triggers a full right-to-left layout, including sidebar mirroring — this is a hard requirement, not a stretch goal, since Arabic-speaking staff use the app daily.</p>
+
+      <h3>Theming</h3>
+      <p>Dark and light mode, driven entirely by CSS custom properties so the two themes can't drift out of sync feature-by-feature.</p>
+
+      <h3>Barcode &amp; label printing</h3>
+      <p>Scannability is a first-class requirement, not a visual nice-to-have: barcode height, module width, and print-driver page sizing have each been a real production defect at least once (a barcode that looks correct on screen but doesn't scan off the printed sticker). The standard is a 50×25&nbsp;mm physical label across roasting, packing, and green coffee stickers, with print CSS that scales the barcode to fill that label without distorting its aspect ratio.</p>
+
+      <h3>Authentication &amp; permissions</h3>
+      <ul>
+        <li>Email/password and Google OAuth sign-in.</li>
+        <li>Self-service password change plus an admin-triggered reset that doesn't require the target user to click an email link, backed by a Supabase Edge Function running under a service-role key that the browser never sees.</li>
+        <li>Permission checks are enforced in the UI layer; the database's own row-level security is table-level only. This is an accepted trade-off today (see §12) rather than an oversight.</li>
+      </ul>
+
+      <h3>Deployment model</h3>
+      <p>No build step for the main app — every script is a plain <code>&lt;script&gt;</code> tag loaded directly by the browser, in a fixed dependency order, sharing one global scope. Vercel auto-deploys from the <code>main</code> branch. This keeps the barrier to shipping a fix low, at the cost of not having module isolation or a bundler-enforced dependency graph — a deliberate trade documented in full in <code>REFACTORING.md</code>.</p>
+    </section>
+
+    <section id="architecture">
+      <h2><span class="secnum">07</span> System architecture</h2>
+      <p class="lede">What it's built with, and how the pieces load.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Choice</th></tr></thead>
+          <tbody>
+            <tr><td>Frontend</td><td>HTML, CSS, vanilla JavaScript — no framework, no bundler</td></tr>
+            <tr><td>Backend</td><td>Supabase (PostgreSQL + Auth + Edge Functions)</td></tr>
+            <tr><td>Hosting</td><td>Vercel, auto-deploy on push to <code>main</code></td></tr>
+            <tr><td>Barcode rendering</td><td>JsBarcode (CODE128), rendered client-side and at print time</td></tr>
+            <tr><td>Charts</td><td>Chart.js</td></tr>
+            <tr><td>Icons</td><td>Lucide</td></tr>
+            <tr><td>Companion mobile app</td><td>Capacitor-wrapped build of the Leader page, targeting Android</td></tr>
+            <tr><td>Notification service</td><td>Standalone Node process (whatsapp-web.js), polls Supabase, runs independently of the web app</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The nine main-app scripts load in a fixed order — <code>db → auth → greenbean → roasting → packing → sales → settings → tracking → app</code> — each in the same global scope, so anything defined earlier is available to everything after it. There is intentionally no ES module system: the plain-script approach was chosen specifically to avoid rewriting ~80 inline event handlers and ~25 mutable global state variables during the V1 modularization.</p>
+      <div class="callout"><strong>Full Supabase mode.</strong> The app always talks to one live Supabase project — there's no local/demo mode toggle for end users. A legacy mock-data layer still exists underneath (seed data + a Developer-only reset tool) but is not a real operating mode.</div>
+    </section>
+
+    <section id="data">
+      <h2><span class="secnum">08</span> Data model</h2>
+      <p class="lede">Twenty tables in production. The ones a reader needs to know to understand the product:</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th class="mono">Table</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">profiles / custom_roles</td><td>Users and the permission sets their role grants.</td></tr>
+            <tr><td class="mono">green_coffee / green_coffee_intake</td><td>Green bean catalog and each arrival/intake event.</td></tr>
+            <tr><td class="mono">blend_recipes / blend_ingredients</td><td>Named blends composed of multiple green coffees.</td></tr>
+            <tr><td class="mono">machines</td><td>Roasting equipment a batch can be assigned to.</td></tr>
+            <tr><td class="mono">roasting_plans / roast_batches</td><td>Planned production runs and their executed batches.</td></tr>
+            <tr><td class="mono">bulk_roasted_coffee / waste_inventory</td><td>Roasted output awaiting packing, and roasting loss.</td></tr>
+            <tr><td class="mono">packaging_sizes / packed_coffee / packing_records</td><td>Bag sizes, resulting packed stock, and the packing events that created it.</td></tr>
+            <tr><td class="mono">customers / sales_agents / request_orders / request_order_items</td><td>The sales &amp; dispatch workflow.</td></tr>
+            <tr><td class="mono">company_settings</td><td>Single-row configuration: branding, and the label-layout checklist from §5.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Two additional tables — <code>green_coffee_lots</code> and <code>packed_coffee_lots</code> — already exist as shadow schema, created ahead of need during V1 specifically to unblock V2 Phase&nbsp;1 (§11) without a further migration.</p>
+      <div class="callout warn"><strong>Schema-drift discipline.</strong> <code>database/supabase_schema.sql</code> is the single source of truth and must be updated in the same change as any live schema edit — six production bugs in one week were traced directly to this file falling out of sync with the real database. Any schema PR that doesn't touch this file alongside the code change should be treated as incomplete.</div>
+    </section>
+
+    <section id="status">
+      <h2><span class="secnum">09</span> Current status</h2>
+      <p class="lede">An honest read on what's solid, what's still being shaken out, and what's known debt.</p>
+      <h3>Working in daily production use</h3>
+      <p>Auth (email/password + Google), role-based access across six roles, dashboard, green coffee inventory, roasting plans &amp; batches, packing, sales requests &amp; dispatch approval, dark/light theme, EN/AR i18n, barcode scan-to-log, customer management, WhatsApp leader notifications.</p>
+      <h3>Needs more testing or completion</h3>
+      <ul>
+        <li>Full end-to-end walkthrough of Green Bean → Roasting → Packing → Sales as one continuous flow.</li>
+        <li>Reports module: chart data binding and date filtering.</li>
+        <li>Print output coverage across all document types (requests, dispatch, waybill, labels).</li>
+        <li>Mobile responsiveness of the main app (the Leader companion app is mobile-first by design; the main app is not yet).</li>
+      </ul>
+      <h3>Known technical debt</h3>
+      <ul>
+        <li>Dead <code>if (isMockMode)</code> branches remain throughout the codebase, kept alive only by the Developer debug reset tool.</li>
+        <li>A stale, pre-refactor copy of the app (<code>dist/js/app.js</code>) sits in the Android build source but isn't actually referenced by the build — safe to delete, not yet done.</li>
+        <li>A handful of leftover scaffold files and folders from earlier refactor passes (empty module stubs, a GitHub Desktop tutorial folder) carry no functional risk but add noise.</li>
+      </ul>
+    </section>
+
+    <section id="roadmap">
+      <h2><span class="secnum">10</span> Roadmap — V2</h2>
+      <p class="lede">Two phases, scoped 2026-07-11. V2 ships into the current sandbox project — it is not part of what forks to the client deployment.</p>
+
+      <div class="phase">
+        <div class="phase-head"><h4>Phase 1 — FIFO lot tracking</h4><span class="chip planned">Planned · foundation in place</span></div>
+        <p style="margin:4px 0 0; font-size:0.92rem; color:var(--ink-muted);">Costing and freshness, driven by the same lot data: cost-of-goods should reflect what a specific batch of green coffee actually cost, and older stock should get used before newer stock sitting next to it.</p>
+        <ul>
+          <li>Populate <code>green_coffee_lots</code> on every intake, one row per arrival batch, ordered by date.</li>
+          <li>Roast batch logic consumes the oldest lot first, decrementing it and recording which lot(s) a batch drew from.</li>
+          <li>Extend cost calculations to a lot-weighted cost instead of one flat green-coffee cost field.</li>
+          <li>Surface remaining lot age and quantity in the Green Bean inventory UI, so rotation is something staff can act on, not just a background computation.</li>
+          <li>Decide whether <code>packed_coffee_lots</code> needs the same treatment on the packing side — not yet confirmed with the business.</li>
+        </ul>
+      </div>
+
+      <div class="phase risk-border">
+        <div class="phase-head"><h4>Phase 2 — AI: forecasting &amp; report insights</h4><span class="chip planned">Planned · blocked on Reports</span></div>
+        <p style="margin:4px 0 0; font-size:0.92rem; color:var(--ink-muted);">Demand/stock forecasting from historical data, plus plain-language insight summaries alongside the existing Reports charts.</p>
+        <ul>
+          <li>Explicitly sequenced after Phase&nbsp;1 — no technical dependency, just priority order.</li>
+          <li>Blocked on the Reports module's own outstanding testing gaps (§9) and a separate set of Reports changes the business has in mind but hasn't finalized — building forecasting on an unstable Reports base would mean redoing it.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="outofscope">
+      <h2><span class="secnum">11</span> Out of scope</h2>
+      <div class="cardgrid">
+        <div class="card"><h4>Work Order <span class="chip out">Not needed</span></h4><p>Confirmed already covered by the existing Roasting Plans → Batches flow. No separate entity is being built unless a concrete gap surfaces later.</p></div>
+        <div class="card"><h4>B2B customer portal <span class="chip out">Deferred to V3</span></h4><p>Self-serve ordering or per-customer contract pricing — direction not yet chosen, and not needed for V2.</p></div>
+      </div>
+    </section>
+
+    <section id="risks">
+      <h2><span class="secnum">12</span> Risks &amp; open questions</h2>
+      <ul>
+        <li><strong>Client handover in flight.</strong> The plan is to fork this codebase onto the client's own Supabase and hosting accounts, while this team keeps access for future updates and continues V2 work on the current sandbox. Web hosting recommendation and domain are not yet finalized.</li>
+        <li><strong>Client-readiness bar.</strong> Everything in this document should be read with an eye toward what a handed-off client needs: clear ownership of credentials, no hardcoded secrets a client can't rotate themselves, and documentation that doesn't assume this team is still in the room.</li>
+        <li><strong>Client-side permission enforcement.</strong> Because Supabase RLS is table-level, the ~40-key permission model is only as strong as the JavaScript enforcing it. Acceptable for a trusted internal team; worth revisiting before any external/B2B surface (§11) is built on the same data.</li>
+        <li><strong>Reports scope is unresolved.</strong> Business-side changes to Reports are known to be coming but haven't been specified — this is the one item actively blocking V2 Phase&nbsp;2 from starting cleanly.</li>
+        <li><strong>packed_coffee_lots decision.</strong> Whether packed-goods rotation/costing matters as much as green coffee lot tracking is an open question for Phase&nbsp;1, not yet put to the business.</li>
+      </ul>
+    </section>
+
+    <section id="glossary">
+      <h2><span class="secnum">13</span> Glossary</h2>
+      <dl class="glossary">
+        <dt>Green coffee</dt><dd>Unroasted coffee beans, tracked from intake as raw inventory.</dd>
+        <dt>Roast batch</dt><dd>One execution of roasting a quantity of green coffee (or a blend) on a specific machine, on a specific date.</dd>
+        <dt>Bulk roasted coffee</dt><dd>Roasted output sitting between the roaster and packing — not yet portioned into sellable units.</dd>
+        <dt>Packed coffee</dt><dd>Roasted coffee portioned into a sized, sellable bag.</dd>
+        <dt>Lot / lot code</dt><dd>A scannable identifier tying a physical batch of stock (green or packed) back to its production record — the unit that V2's FIFO phase costs and rotates by.</dd>
+        <dt>Request order</dt><dd>A sales agent's order for a customer, pending Production Leader approval before it can be dispatched.</dd>
+        <dt>Dispatch</dt><dd>The confirmed handoff of an approved, packed order to the customer.</dd>
+        <dt>RLS</dt><dd>Row-level security — Postgres/Supabase's built-in access control, applied here at the table level rather than per-permission-key.</dd>
+      </dl>
+    </section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <span class="mono">roastery-manager-v2 · main</span>
+    <span class="mono">roasterymanagerv2.vercel.app</span>
+    <span class="mono">PRD 1.0 — 2026-07-14</span>
+  </div>
+</footer>
+
+</body>
+</html>

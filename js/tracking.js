@@ -156,8 +156,27 @@ function resolveLotChain(lotLike, ctx) {
 async function performTrackingSearch(rawCode) {
     const code = rawCode.trim().toUpperCase();
 
-    const { data: lots } = await fetchData('production_lots');
-    const lot = (lots || []).find(l => (l.lot_code || '').toUpperCase() === code);
+    const [{ data: lots }, { data: packedLotsForSearch }] = await Promise.all([
+        fetchData('production_lots'),
+        fetchData('packed_coffee_lots')
+    ]);
+    let lot = (lots || []).find(l => (l.lot_code || '').toUpperCase() === code);
+
+    // V2 FIFO strip code: the short code printed on packed-coffee stickers
+    // (e.g. "10021") isn't itself a production_lots.lot_code — it's a
+    // shorthand for one. If the direct lookup above missed, try resolving
+    // it (or the packed lot's own long-form lot_code) via packed_coffee_lots
+    // and follow that lot's production_lot_id back to the same row the
+    // direct search would have found — same result screen either way, so
+    // whichever code someone has in hand (long or short) finds it.
+    if (!lot) {
+        const matchedPacked = (packedLotsForSearch || []).find(l =>
+            (l.strip_code || '') === rawCode.trim() || (l.lot_code || '').toUpperCase() === code
+        );
+        if (matchedPacked && matchedPacked.production_lot_id) {
+            lot = (lots || []).find(l => l.id === matchedPacked.production_lot_id);
+        }
+    }
 
     if (!lot) {
         setTrackingResultState('notfound');

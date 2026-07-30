@@ -515,23 +515,20 @@ async function loadSalesDispatchRequestsTable() {
         }
     });
 
-    const totalItems = sortedOrders.length;
-    const totalPages = Math.ceil(totalItems / requestPageSize) || 1;
-    if (requestCurrentPage > totalPages) {
-        requestCurrentPage = totalPages;
-    }
-
-    const startIndex = (requestCurrentPage - 1) * requestPageSize;
-    const endIndex = Math.min(startIndex + requestPageSize, totalItems);
-    const paginatedOrders = sortedOrders.slice(startIndex, endIndex);
-
-    // Update stats text
-    const pageInfo = document.getElementById('request-page-info');
-    if (pageInfo) {
-        const startVal = totalItems === 0 ? 0 : startIndex + 1;
-        const template = window.t ? window.t('pagination_info') : 'Show {start} - {end} of {total}';
-        pageInfo.textContent = template.replace('{start}', startVal).replace('{end}', endIndex).replace('{total}', totalItems);
-    }
+    // Registers this table so applyFiltersForTable (js/app.js) filters the
+    // FULL sortedOrders list first, then paginates the filtered result —
+    // fixes the column filter dropdown only ever listing values from
+    // whichever page happened to be open (found 2026-07-29). Every row
+    // below is now rendered unconditionally; renderPaginationControls
+    // (called from applyFiltersForTable at the end of this function)
+    // decides which page of the (possibly filtered) rows to reveal.
+    registerPaginatedFilterTable('tab-dispatch-request', {
+        getPage: () => requestCurrentPage,
+        setPage: (p) => { requestCurrentPage = p; },
+        getPageSize: () => requestPageSize,
+        paginationContainerId: 'request-pagination-pages',
+        infoElId: 'request-page-info'
+    });
 
     // Highlight active page size
     const sizeOpts = document.querySelectorAll('#request-page-size-selector .page-size-opt');
@@ -550,48 +547,8 @@ async function loadSalesDispatchRequestsTable() {
         }
     });
 
-    // Render pagination page buttons
-    const paginationContainer = document.getElementById('request-pagination-pages');
-    if (paginationContainer) {
-        paginationContainer.innerHTML = '';
-        if (totalPages > 1) {
-            const prevBtn = document.createElement('button');
-            prevBtn.className = `pagination-btn ${requestCurrentPage === 1 ? 'disabled' : ''}`;
-            prevBtn.innerHTML = `&lt;`;
-            prevBtn.addEventListener('click', () => {
-                if (requestCurrentPage > 1) {
-                    requestCurrentPage--;
-                    loadSalesDispatchRequestsTable();
-                }
-            });
-            paginationContainer.appendChild(prevBtn);
-
-            for (let i = 1; i <= totalPages; i++) {
-                const pageBtn = document.createElement('button');
-                pageBtn.className = `pagination-btn ${requestCurrentPage === i ? 'active' : ''}`;
-                pageBtn.textContent = i;
-                pageBtn.addEventListener('click', () => {
-                    requestCurrentPage = i;
-                    loadSalesDispatchRequestsTable();
-                });
-                paginationContainer.appendChild(pageBtn);
-            }
-
-            const nextBtn = document.createElement('button');
-            nextBtn.className = `pagination-btn ${requestCurrentPage === totalPages ? 'disabled' : ''}`;
-            nextBtn.innerHTML = `&gt;`;
-            nextBtn.addEventListener('click', () => {
-                if (requestCurrentPage < totalPages) {
-                    requestCurrentPage++;
-                    loadSalesDispatchRequestsTable();
-                }
-            });
-            paginationContainer.appendChild(nextBtn);
-        }
-    }
-
     let tbodyHtml = '';
-    for (const order of paginatedOrders) {
+    for (const order of sortedOrders) {
         let needsRoast = false;
         const items = (orderItems || []).filter(i => i.request_order_id === order.id);
         
@@ -775,23 +732,20 @@ async function loadDispatchApprovalTable() {
     const sortedOrders = [...orders]
         .sort((a, b) => new Date(b.order_date) - new Date(a.order_date) || b.id - a.id);
 
-    const totalItems = sortedOrders.length;
-    const totalPages = Math.ceil(totalItems / approvalPageSize) || 1;
-    if (approvalCurrentPage > totalPages) {
-        approvalCurrentPage = totalPages;
-    }
-
-    const startIndex = (approvalCurrentPage - 1) * approvalPageSize;
-    const endIndex = Math.min(startIndex + approvalPageSize, totalItems);
-    const paginatedOrders = sortedOrders.slice(startIndex, endIndex);
-
-    // Update stats text
-    const pageInfo = document.getElementById('approval-page-info');
-    if (pageInfo) {
-        const startVal = totalItems === 0 ? 0 : startIndex + 1;
-        const template = window.t ? window.t('pagination_info') : 'Show {start} - {end} of {total}';
-        pageInfo.textContent = template.replace('{start}', startVal).replace('{end}', endIndex).replace('{total}', totalItems);
-    }
+    // Registers this table so applyFiltersForTable (js/app.js) filters the
+    // FULL sortedOrders list first, then paginates the filtered result —
+    // fixes the column filter dropdown only ever listing values from
+    // whichever page happened to be open (found 2026-07-29). Every row
+    // below is now rendered unconditionally; renderPaginationControls
+    // (called from applyFiltersForTable at the end of this function)
+    // decides which page of the (possibly filtered) rows to reveal.
+    registerPaginatedFilterTable('tab-dispatch-approval', {
+        getPage: () => approvalCurrentPage,
+        setPage: (p) => { approvalCurrentPage = p; },
+        getPageSize: () => approvalPageSize,
+        paginationContainerId: 'approval-pagination-pages',
+        infoElId: 'approval-page-info'
+    });
 
     // Highlight active page size
     const sizeOpts = document.querySelectorAll('#approval-page-size-selector .page-size-opt');
@@ -810,48 +764,8 @@ async function loadDispatchApprovalTable() {
         }
     });
 
-    // Render pagination page buttons
-    const paginationContainer = document.getElementById('approval-pagination-pages');
-    if (paginationContainer) {
-        paginationContainer.innerHTML = '';
-        if (totalPages > 1) {
-            const prevBtn = document.createElement('button');
-            prevBtn.className = `pagination-btn ${approvalCurrentPage === 1 ? 'disabled' : ''}`;
-            prevBtn.innerHTML = `&lt;`;
-            prevBtn.addEventListener('click', () => {
-                if (approvalCurrentPage > 1) {
-                    approvalCurrentPage--;
-                    loadDispatchApprovalTable();
-                }
-            });
-            paginationContainer.appendChild(prevBtn);
-
-            for (let i = 1; i <= totalPages; i++) {
-                const pageBtn = document.createElement('button');
-                pageBtn.className = `pagination-btn ${approvalCurrentPage === i ? 'active' : ''}`;
-                pageBtn.textContent = i;
-                pageBtn.addEventListener('click', () => {
-                    approvalCurrentPage = i;
-                    loadDispatchApprovalTable();
-                });
-                paginationContainer.appendChild(pageBtn);
-            }
-
-            const nextBtn = document.createElement('button');
-            nextBtn.className = `pagination-btn ${approvalCurrentPage === totalPages ? 'disabled' : ''}`;
-            nextBtn.innerHTML = `&gt;`;
-            nextBtn.addEventListener('click', () => {
-                if (approvalCurrentPage < totalPages) {
-                    approvalCurrentPage++;
-                    loadDispatchApprovalTable();
-                }
-            });
-            paginationContainer.appendChild(nextBtn);
-        }
-    }
-
     let tbodyHtml = '';
-    for (const order of paginatedOrders) {
+    for (const order of sortedOrders) {
         const items = (orderItems || []).filter(i => i.request_order_id === order.id);
 
         // Build card-style items like Sales Dispatch Request

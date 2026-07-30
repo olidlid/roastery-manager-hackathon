@@ -1465,6 +1465,7 @@ async function openDispatchCheckoutModal(orderId) {
             .map(l => ({
                 id: l.id,
                 lotCode: l.lot_code,
+                stripCode: l.strip_code,
                 packedDate: l.packed_date,
                 remaining: parseInt(l.remaining_pcs) || 0,
                 machineId: machineByPackedId.get(l.packed_coffee_id) || null,
@@ -1586,7 +1587,7 @@ async function openDispatchCheckoutModal(orderId) {
             return `
                 <div class="dc-lot${mismatch ? ' dc-lot-mismatch' : ''}${taken > 0 ? ' dc-lot-taken' : ''}" data-item="${itemId}" data-lot="${l.id}">
                     <div class="dc-lot-main">
-                        <span class="dc-lot-code">${l.lotCode}${isFifo ? ' <span class="dc-pill dc-pill-fifo">FIFO</span>' : ''}${mismatch ? ' <span class="dc-pill dc-pill-mismatch">Different machine</span>' : ''}</span>
+                        <span class="dc-lot-code">${l.stripCode ? `<b>${l.stripCode}</b> &middot; ${l.lotCode}` : l.lotCode}${isFifo ? ' <span class="dc-pill dc-pill-fifo">FIFO</span>' : ''}${mismatch ? ' <span class="dc-pill dc-pill-mismatch">Different machine</span>' : ''}</span>
                         <span class="dc-lot-meta">${l.originName}${l.originCode ? ' (' + l.originCode + ')' : ''} &middot; packed ${l.packedDate || '-'}${!item.coffee_code ? '' : ' &middot; ' + machineName(l.machineId)}</span>
                     </div>
                     <span class="dc-lot-stock">${avail}</span>
@@ -2444,19 +2445,28 @@ function printLotBarcodeLabels(lot, requested, machines, rotateOverride) {
     let labelsHtml = '';
     requested.forEach(r => {
         if (!r.packedCoffeeLotId) return; // couldn't resolve/reserve a lot for this size — skip rather than print an unscannable label
-        // V2 barcode label fix: package barcode = RMP:9{packedCoffeeLotId:05d}
-        // {sizeG:04d}{multiplier:02d} — fully numeric after a single type
-        // digit so CODE128 can Code-Set-C compress it (the old text format
-        // `RMP:PackLot:{lot_code}:{sizeG}` produced bars far too thin to
-        // scan reliably on a 50mm label). mult=00 means "no carton
-        // multiplier" (a plain package scan) — never byte-identical to a
-        // carton barcode of the same size, so the POS checkout scanner
-        // still tells them apart.
-        const digits = '9'
-            + String(r.packedCoffeeLotId).padStart(5, '0')
-            + String(r.gram).padStart(4, '0')
-            + String(r.multiplier || 0).padStart(2, '0');
-        const barcodeValue = `RMP:${digits}`;
+
+        // V2 FIFO strip code re-encode: package barcode is now
+        // {sizeDigit}{batchNo:04d}{multiplier:02d} — a pure 6-7 digit
+        // number with no "RMP:9{lotId}" prefix. Dropping the lotId lookup
+        // entirely (not just shortening the prefix) is what actually buys
+        // back scan reliability: fewer digits means CODE128's Code-Set-C
+        // pairing compresses further, so bars come out thicker despite the
+        // 50mm label being unchanged. mult=00 means "no carton multiplier"
+        // (a plain package scan) — never byte-identical to a carton
+        // barcode of the same size/batch, so the POS checkout scanner still
+        // tells them apart. A size with no size_digit configured yet
+        // (Settings > Production > Packaging Sizes) has no strip_code
+        // either — skipped rather than printing an unscannable label, same
+        // as the missing-lot case above.
+        if (!r.stripCode) return;
+        const barcodeValue = `${r.stripCode}${String(r.multiplier || 0).padStart(2, '0')}`;
+        // Human-readable strip text (see barcode-label-strip below): the
+        // multiplier is appended with a hyphen ONLY for a carton print, so
+        // "20021" (plain package) vs "20021-12" (carton of 12) — never
+        // "-00" for a non-carton print, per user request.
+        const stripDisplayText = r.multiplier ? `${r.stripCode}-${r.multiplier}` : r.stripCode;
+
         for (let i = 0; i < r.qty; i++) {
             let linesHtml = '';
             if (showCoffeeName) linesHtml += `<div class="lbl-coffee">${lot.coffee_name}</div>`;
@@ -2465,8 +2475,13 @@ function printLotBarcodeLabels(lot, requested, machines, rotateOverride) {
             if (showDates) linesHtml += `<div class="lbl-dates">${dateRangeStr}</div>`;
             labelsHtml += `
                 <div class="barcode-label-item">
-                    <svg class="lot-barcode-svg" data-value="${barcodeValue}" data-display="${r.lotCode || ''}"></svg>
-                    ${linesHtml}
+                    <div class="barcode-label-row">
+                        <div class="barcode-label-main">
+                            <svg class="lot-barcode-svg" data-value="${barcodeValue}" data-display="${r.lotCode || ''}"></svg>
+                            ${linesHtml}
+                        </div>
+                        <div class="barcode-label-strip"><span>${stripDisplayText}</span></div>
+                    </div>
                 </div>
             `;
         }
@@ -2477,7 +2492,8 @@ function printLotBarcodeLabels(lot, requested, machines, rotateOverride) {
         alert('Could not open the print window — please allow pop-ups for this site and try again.');
         return;
     }
-    printWin.document.write(buildFixedLabelDocument(labelsHtml, showCode, rotateOverride));
+    const barcodeHeightMm = parseFloat((companySettings.label_layout && companySettings.label_layout.packed && companySettings.label_layout.packed.barcode_height_mm)) || 18;
+    printWin.document.write(buildFixedLabelDocument(labelsHtml, showCode, rotateOverride, barcodeHeightMm));
     printWin.document.close();
 }
 
@@ -2506,7 +2522,7 @@ function printLotBarcodeLabels(lot, requested, machines, rotateOverride) {
 // doesn't remove the element from flow) lands it exactly filling the portrait
 // page's content box. See index.html Settings > Production > Label Layout >
 // Print Orientation for the toggle.
-function buildFixedLabelDocument(labelsHtml, showCode, rotateOverride) {
+function buildFixedLabelDocument(labelsHtml, showCode, rotateOverride, packedBarcodeHeightMm) {
     const rotate = (rotateOverride === undefined || rotateOverride === null) ? companySettings.label_rotate_90 === true : rotateOverride === true;
     // Page margin trimmed from 1mm to 0.5mm to reclaim print area — most
     // thermal roll printers can hold 0.5mm reliably. Content box is then
@@ -2542,20 +2558,23 @@ function buildFixedLabelDocument(labelsHtml, showCode, rotateOverride) {
                 padding: 0 1mm;
                 page-break-after: always;
            }`;
-    // Barcode zone is orientation-aware: in portrait/rotated mode, the SVG's
-    // own HEIGHT becomes the label's physical cross-width after the 90°
-    // rotation (see the rotate comment above) — that's the dimension that
-    // was leaving unused margin either side of the bars. Bumped from a
-    // shared 12mm to 14mm for portrait specifically, paid for by tightening
-    // line-height/margins on the text lines below (not font-size — text
-    // stays just as legible). Landscape's barcode already used most of its
-    // available width, so only got a small bump for slightly thicker bars.
-    // 25mm of label height minus 4 text lines leaves little slack — going
-    // taller than ~14mm here would mean either dropping a text line or
-    // shrinking fonts, both a legibility trade-off, not just a CSS tweak.
-    const barcodeCss = rotate
-        ? `.lot-barcode-svg { width: 44mm; height: 14mm; display: block; margin: 0.15mm auto 0; }`
-        : `.lot-barcode-svg { width: 46mm; height: 12mm; display: block; margin: 0.3mm auto 0; }`;
+    // Barcode height: for packed-coffee labels (the only caller that passes
+    // packedBarcodeHeightMm) this is now a Settings-configurable value
+    // (Settings > Production > Label Layout > Packed Coffee, default 18mm)
+    // instead of a fixed number — per user request, since the "right" height
+    // depends on the physical printer/label stock, not something guessable
+    // from here. Width is intentionally NOT a fixed mm value: it's 100% of
+    // whatever space .barcode-label-main (flex:1) has left after
+    // .barcode-label-strip's own fixed width, so it auto-adapts instead of
+    // needing its own setting. Green bean's Kecil stickers (js/greenbean.js)
+    // don't pass this argument at all, so they fall through to their
+    // original fixed rotate-dependent sizing, completely unaffected by this
+    // packed-coffee-specific setting.
+    const barcodeCss = packedBarcodeHeightMm
+        ? `.lot-barcode-svg { width: 100%; height: ${packedBarcodeHeightMm}mm; display: block; margin: 0.15mm auto 0; }`
+        : (rotate
+            ? `.lot-barcode-svg { width: 44mm; height: 14mm; display: block; margin: 0.15mm auto 0; }`
+            : `.lot-barcode-svg { width: 46mm; height: 12mm; display: block; margin: 0.3mm auto 0; }`);
     return `
         <html><head><title>Barcode Labels</title>
         <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
@@ -2564,6 +2583,17 @@ function buildFixedLabelDocument(labelsHtml, showCode, rotateOverride) {
             body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
             ${itemCss}
             .barcode-label-item:last-child { page-break-after: auto; }
+            /* V2 FIFO strip code: packed-coffee labels wrap their content in
+               this row (main column + vertical strip) instead of using
+               .barcode-label-item's own children directly — green bean's
+               Kecil stickers (js/greenbean.js) still put their svg/text as
+               DIRECT children of .barcode-label-item unchanged, so this new
+               row only affects labels that opt into it, not every label
+               sharing this document builder. */
+            .barcode-label-row { width: 100%; height: 100%; display: flex; flex-direction: row; align-items: stretch; }
+            .barcode-label-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
+            .barcode-label-strip { flex: 0 0 6mm; display: flex; align-items: center; justify-content: center; overflow: hidden; border-left: 0.25mm dashed #999; }
+            .barcode-label-strip span { display: inline-block; transform: rotate(-90deg); white-space: nowrap; font-family: monospace; font-weight: 700; font-size: 4mm; }
             /* Barcode zone is a FIXED mm box, set once here — it never
                grows/shrinks based on which optional text lines print below
                it (those are separate sibling divs, not part of this box).
@@ -2707,6 +2737,7 @@ async function openPrintBarcodeModal(bulkId) {
             const packedLot = await getOrCreatePackedCoffeeLot(packedRow.id, 0, lot ? lot.id : null);
             r.packedCoffeeLotId = packedLot ? packedLot.id : null;
             r.lotCode = packedLot ? packedLot.lot_code : null;
+            r.stripCode = packedLot ? packedLot.strip_code : null;
         }
 
         const orientationInput = document.querySelector('input[name="print-orientation"]:checked');
@@ -2905,13 +2936,15 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId) 
         { data: machines },
         { data: greenbeans },
         { data: recipes },
-        { data: productionLots }
+        { data: productionLots },
+        { data: packagingSizes }
     ] = await Promise.all([
         fetchData('packed_coffee'),
         fetchData('machines'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
-        fetchData('production_lots')
+        fetchData('production_lots'),
+        fetchData('packaging_sizes')
     ]);
 
     const sanitize = (s) => (s || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'X';
@@ -2969,7 +3002,7 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId) 
         lotCode = `${coffeeCode}-${machineCode}${mmddyy}-${seq}`;
     }
 
-    const { data: newLot, error } = await saveData('packed_coffee_lots', {
+    const insertPayload = {
         packed_coffee_id: packedCoffeeId,
         roast_batch_id: null,
         lot_code: lotCode,
@@ -2977,8 +3010,34 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId) 
         remaining_pcs: qty,
         packed_date: todayStr,
         production_lot_id: productionLotId
-    });
+    };
+    // V2 FIFO strip code: a production-lot-linked pack copies that lot's
+    // batch_no (every size packed from the same bulk/day shares one number —
+    // see database/fifo_strip_code_migration.sql). A manual/unlinked pack
+    // has no production lot to copy from, so batch_no is left out of the
+    // payload entirely and the column's own DEFAULT (nextval on the shared
+    // sequence) assigns one — atomic, so concurrent manual packs can't
+    // collide the way the old read-then-write lot lookup could (see
+    // packed_coffee_dedup_migration.sql for that exact bug elsewhere).
+    if (productionLot && productionLot.batch_no !== null && productionLot.batch_no !== undefined) {
+        insertPayload.batch_no = productionLot.batch_no;
+    }
+
+    const { data: newLot, error } = await saveData('packed_coffee_lots', insertPayload);
     if (error) { console.error('Failed to create packed_coffee_lots row:', error); return null; }
+
+    // strip_code depends on batch_no, which for a manual/unlinked pack we
+    // only learn AFTER insert (the DB assigned it) — so it's computed and
+    // persisted as a quick follow-up write rather than in the same insert.
+    if (newLot.batch_no !== null && newLot.batch_no !== undefined) {
+        const sizeDef = (packagingSizes || []).find(s => parseInt(s.gram) === parseInt(packedRow ? packedRow.bag_size_g : NaN));
+        if (sizeDef && sizeDef.size_digit !== null && sizeDef.size_digit !== undefined) {
+            const stripCode = `${sizeDef.size_digit}${String(newLot.batch_no).padStart(4, '0')}`;
+            const { error: stripErr } = await saveData('packed_coffee_lots', { id: newLot.id, strip_code: stripCode });
+            if (!stripErr) newLot.strip_code = stripCode;
+        }
+    }
+
     return newLot;
 }
 
@@ -3479,6 +3538,7 @@ async function openPackedLotsModal(coffeeName) {
             const machine = parentPacked && parentPacked.machine_id ? (machines || []).find(m => m.id === parentPacked.machine_id) : null;
             return {
                 lotCode: pl.lot_code,
+                stripCode: pl.strip_code,
                 machineName: machine ? machine.name : 'Unknown',
                 sizeG: parentPacked ? parentPacked.bag_size_g : '-',
                 packedDate: pl.packed_date,
@@ -3522,7 +3582,7 @@ async function openPackedLotsModal(coffeeName) {
             groupTotal += r.remaining;
             currentBlockRows += `
                 <tr>
-                    <td><code>${r.lotCode}</code>${isNewGroup ? ' <span style="font-size:0.68rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px; margin-left:6px;">PICK FIRST</span>' : ''}</td>
+                    <td>${r.stripCode ? `<b>${r.stripCode}</b> &middot; ` : ''}<code>${r.lotCode}</code>${isNewGroup ? ' <span style="font-size:0.68rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px; margin-left:6px;">PICK FIRST</span>' : ''}</td>
                     <td>${r.machineName}</td>
                     <td>${r.sizeG}g</td>
                     <td>${r.packedDate || '-'}</td>

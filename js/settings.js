@@ -808,11 +808,13 @@ document.getElementById('settings-roast-label-form').addEventListener('submit', 
 
 document.getElementById('settings-packed-label-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const barcodeHeightInput = parseFloat(document.getElementById('sett-packed-label-barcode-height').value);
     await saveLabelLayout('packed', {
         code: document.getElementById('sett-packed-label-show-code').checked,
         coffee_name: document.getElementById('sett-packed-label-show-coffee-name').checked,
         dates: document.getElementById('sett-packed-label-show-dates').checked,
         machine: document.getElementById('sett-packed-label-show-machine').checked,
+        barcode_height_mm: (barcodeHeightInput && barcodeHeightInput > 0) ? barcodeHeightInput : 18,
     });
 });
 
@@ -946,7 +948,7 @@ async function loadPackagingSizesTable() {
         console.error('[PackagingSize] Fetch error:', fetchErr);
         // Force direct fetch bypassing cache
         try {
-            const { data: directData } = await window.supabaseClient.from('packaging_sizes').select('id, label, gram, is_visible, carton_multiplier');
+            const { data: directData } = await window.supabaseClient.from('packaging_sizes').select('id, label, gram, is_visible, carton_multiplier, size_digit');
             console.log('[PackagingSize] Direct fetch result:', directData);
             if (directData && directData.length > 0) {
                 renderPackagingSizesRows(tbody, directData);
@@ -956,7 +958,7 @@ async function loadPackagingSizesTable() {
     }
 
     if (!sizes || sizes.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="text-center-muted">No packaging sizes found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">No packaging sizes found.</td></tr>`;
         return;
     }
     
@@ -969,6 +971,7 @@ function renderPackagingSizesRows(tbody, sizes) {
         tr.innerHTML = `
             <td><strong>${s.label}</strong></td>
             <td>${s.gram} g${s.carton_multiplier ? ` <span style="color: var(--text-secondary); font-size: 0.8em;">(&times;${s.carton_multiplier}/carton)</span>` : ''}</td>
+            <td>${s.size_digit !== null && s.size_digit !== undefined ? `<code>${s.size_digit}</code>` : `<span style="color: var(--text-secondary); font-size: 0.85em;">Not set</span>`}</td>
             <td>
                 <label class="switch" style="transform: scale(0.8); transform-origin: left center;">
                     <input type="checkbox" class="toggle-visibility-pack" data-id="${s.id}" ${s.is_visible ? 'checked' : ''} disabled>
@@ -1000,13 +1003,30 @@ function renderPackagingSizesRows(tbody, sizes) {
 }
 
 async function openPackagingSizeModal(id = null) {
-    let size = { label: '', gram: 250, is_visible: true, carton_multiplier: null };
+    let size = { label: '', gram: 250, is_visible: true, carton_multiplier: null, size_digit: null };
+    const { data: allSizes } = await fetchData('packaging_sizes');
     if (id) {
-        const { data: sizes } = await fetchData('packaging_sizes');
-        const found = sizes.find(s => s.id === id);
+        const found = (allSizes || []).find(s => s.id === id);
         if (found) size = found;
     }
-    
+
+    // Auto-assigned, not user-typed (per user request) — same "auto code"
+    // convention as Custom Blend's Bulk Code preview. Only computed for a
+    // NEW size; an existing size keeps whatever digit it was given at
+    // creation, even when editing its other fields. Picks the lowest unused
+    // digit 0-9 across every packaging size (not just visible ones) so two
+    // sizes can never collide; null (shown as "—") if all 10 are taken,
+    // which just means this size won't participate in the FIFO strip/barcode
+    // feature until an old size's digit frees up.
+    let assignedDigit = size.size_digit;
+    if (!id) {
+        const used = new Set((allSizes || []).map(s => s.size_digit).filter(d => d !== null && d !== undefined));
+        assignedDigit = null;
+        for (let d = 0; d <= 9; d++) {
+            if (!used.has(d)) { assignedDigit = d; break; }
+        }
+    }
+
     const html = `
         <div id="modal-pack-size-form">
             <div class="form-group">
@@ -1021,6 +1041,11 @@ async function openPackagingSizeModal(id = null) {
                 <label class="form-label">Pcs per Carton (optional)</label>
                 <input type="number" id="m-ps-carton" class="form-control" value="${size.carton_multiplier ?? ''}" min="1" placeholder="e.g. 10 — leave blank for no carton label option">
             </div>
+            <div class="form-group">
+                <label class="form-label">FIFO Digit (auto)</label>
+                <input type="text" id="m-ps-fifo-digit" class="form-control" value="${assignedDigit === null ? 'None available' : assignedDigit}" disabled style="color:var(--text-muted);">
+                <span style="font-size:0.78rem; color:var(--text-muted);">Leading digit of this size's FIFO strip code/barcode — assigned automatically, can't be changed here.</span>
+            </div>
             <div class="form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 20px;">
                 <label class="switch">
                     <input type="checkbox" id="m-ps-visible" ${size.is_visible ? 'checked' : ''}>
@@ -1031,28 +1056,29 @@ async function openPackagingSizeModal(id = null) {
             <button type="button" id="btn-save-pack-size" class="btn btn-primary" style="width:100%; margin-top:24px;">Save Size</button>
         </div>
     `;
-    
+
     openModal(id ? 'Edit Packaging Size' : 'Add Packaging Size', html);
-    
+
     document.getElementById('btn-save-pack-size').onclick = async () => {
         const labelInput = document.getElementById('m-ps-label').value.trim();
         const gramInput = document.getElementById('m-ps-gram').value;
-        
+
         if (!labelInput || !gramInput) {
             alert("Please fill all required fields.");
             return;
         }
-        
+
         const cartonInput = document.getElementById('m-ps-carton').value;
         const saveDataObj = {
             label: labelInput,
             gram: parseFloat(gramInput),
             is_visible: document.getElementById('m-ps-visible').checked,
-            carton_multiplier: cartonInput ? parseFloat(cartonInput) : null
+            carton_multiplier: cartonInput ? parseFloat(cartonInput) : null,
+            size_digit: assignedDigit
         };
-        
+
         if (id) saveDataObj.id = id;
-        
+
         console.log('[PackagingSize] Saving:', saveDataObj);
         const { error } = await saveData('packaging_sizes', saveDataObj);
         if (error) {
@@ -1060,7 +1086,7 @@ async function openPackagingSizeModal(id = null) {
             alert('Failed to save packaging size: ' + error.message);
             return;
         }
-        
+
         modalContainer.classList.add('hidden');
         loadPackagingSizesTable();
         scheduleDashboardRefresh();

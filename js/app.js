@@ -435,6 +435,7 @@ function applyCompanySettings() {
         document.getElementById('sett-packed-label-show-coffee-name').checked = packedLayout.coffee_name !== false;
         document.getElementById('sett-packed-label-show-dates').checked = packedLayout.dates !== false;
         document.getElementById('sett-packed-label-show-machine').checked = packedLayout.machine !== false;
+        document.getElementById('sett-packed-label-barcode-height').value = packedLayout.barcode_height_mm || 18;
     }
     if (document.getElementById('sett-label-rotate-90')) {
         document.getElementById('sett-label-rotate-90').checked = companySettings.label_rotate_90 === true;
@@ -1851,28 +1852,106 @@ const filterDropdown = document.getElementById('table-filter-dropdown');
 const filterOptionsContainer = document.getElementById('filter-options-container');
 let currentFilterContext = null; // Stores { table, colIndex, filterKey }
 
+// Registry for the handful of tables that paginate client-side (Roasting
+// Batch Logs, Dispatch Request, Dispatch Approval — see registration calls
+// in roasting.js/sales.js). Every OTHER filterable table renders its full
+// dataset into the DOM at once, so the plain show/hide branch below already
+// sees everything; these three used to slice their data to just the current
+// page BEFORE building any HTML, which meant the filter dropdown only ever
+// listed values from whatever page happened to be open, and a match outside
+// that page simply had no row to show at all (found 2026-07-29). Fixed by
+// having these tables render every row unconditionally and register here so
+// applyFiltersForTable can filter the full set FIRST, then paginate the
+// filtered result — pagination becomes a view over "what currently matches",
+// not over "everything, independent of the filter".
+const PAGINATED_FILTER_TABLES = {};
+
+function registerPaginatedFilterTable(tableId, config) {
+    // config: { getPage, setPage, getPageSize, paginationContainerId, infoElId }
+    PAGINATED_FILTER_TABLES[tableId] = config;
+}
+
+// Renders the "Show X-Y of Z" text and prev/numbered/next buttons for a
+// registered table, using totalItems = the FILTERED count (not the raw
+// dataset size) — returns the (possibly clamped) current page so the caller
+// knows exactly which slice to reveal. Button clicks just re-run
+// applyFiltersForTable on the already-rendered rows instead of re-fetching,
+// since every row already exists in the DOM.
+function renderPaginationControls(tableId, totalItems) {
+    const cfg = PAGINATED_FILTER_TABLES[tableId];
+    if (!cfg) return 1;
+    const pageSize = cfg.getPageSize();
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    let currentPage = cfg.getPage();
+    if (currentPage > totalPages) { currentPage = totalPages; cfg.setPage(currentPage); }
+    if (currentPage < 1) { currentPage = 1; cfg.setPage(currentPage); }
+
+    if (cfg.infoElId) {
+        const infoEl = document.getElementById(cfg.infoElId);
+        if (infoEl) {
+            const startVal = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+            const endVal = Math.min(currentPage * pageSize, totalItems);
+            const template = window.t ? window.t('pagination_info') : 'Show {start} - {end} of {total}';
+            infoEl.textContent = template.replace('{start}', startVal).replace('{end}', endVal).replace('{total}', totalItems);
+        }
+    }
+
+    const container = cfg.paginationContainerId ? document.getElementById(cfg.paginationContainerId) : null;
+    if (container) {
+        container.innerHTML = '';
+        if (totalPages > 1) {
+            const rerun = () => applyFiltersForTable(document.querySelector(`#${tableId} table`));
+
+            const prevBtn = document.createElement('button');
+            prevBtn.className = `pagination-btn ${currentPage === 1 ? 'disabled' : ''}`;
+            prevBtn.innerHTML = `&lt;`;
+            prevBtn.addEventListener('click', () => {
+                if (cfg.getPage() > 1) { cfg.setPage(cfg.getPage() - 1); rerun(); }
+            });
+            container.appendChild(prevBtn);
+
+            for (let i = 1; i <= totalPages; i++) {
+                const pageBtn = document.createElement('button');
+                pageBtn.className = `pagination-btn ${currentPage === i ? 'active' : ''}`;
+                pageBtn.textContent = i;
+                pageBtn.addEventListener('click', () => { cfg.setPage(i); rerun(); });
+                container.appendChild(pageBtn);
+            }
+
+            const nextBtn = document.createElement('button');
+            nextBtn.className = `pagination-btn ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextBtn.innerHTML = `&gt;`;
+            nextBtn.addEventListener('click', () => {
+                if (cfg.getPage() < totalPages) { cfg.setPage(cfg.getPage() + 1); rerun(); }
+            });
+            container.appendChild(nextBtn);
+        }
+    }
+    return currentPage;
+}
+
 // --- COLUMN-SPECIFIC MULTI-SELECT CHECKBOX FILTERS ---
 function applyFiltersForTable(table) {
     if (!table) return;
     const tbody = table.querySelector('tbody');
     if (!tbody) return;
-    const rows = tbody.querySelectorAll('tr');
-    
+    const allRows = Array.from(tbody.querySelectorAll('tr'));
+
     const ths = table.querySelectorAll('.filterable-th');
     const tabContent = table.closest('.tab-content') || table.closest('.packing-tab-content');
     if (!tabContent) return;
     const tableId = tabContent.id;
-    
-    rows.forEach(row => {
-        // Skip warning or "no items" rows
-        if (row.cells.length <= 1 && row.querySelector('td[colspan]')) return;
 
+    // Skip warning/"no items" placeholder rows from both filtering and pagination math.
+    const dataRows = allRows.filter(row => !(row.cells.length <= 1 && row.querySelector('td[colspan]')));
+
+    const rowMatches = (row) => {
         let matches = true;
         ths.forEach(th => {
             const colIndex = parseInt(th.getAttribute('data-col'));
             const filterKey = `${tableId}_${colIndex}`;
             const activeSet = ACTIVE_FILTERS[filterKey];
-            
+
             // If we have active checked values, the cell value must be inside that set!
             if (activeSet && activeSet.size > 0) {
                 const cell = row.cells[colIndex];
@@ -1884,10 +1963,22 @@ function applyFiltersForTable(table) {
                 }
             }
         });
+        return matches;
+    };
 
-        row.style.display = matches ? '' : 'none';
-    });
-    
+    const pagCfg = PAGINATED_FILTER_TABLES[tableId];
+    if (pagCfg) {
+        const matchingRows = dataRows.filter(rowMatches);
+        const currentPage = renderPaginationControls(tableId, matchingRows.length);
+        const pageSize = pagCfg.getPageSize();
+        const startIndex = (currentPage - 1) * pageSize;
+        const endIndex = Math.min(startIndex + pageSize, matchingRows.length);
+        const visibleSet = new Set(matchingRows.slice(startIndex, endIndex));
+        dataRows.forEach(row => { row.style.display = visibleSet.has(row) ? '' : 'none'; });
+    } else {
+        dataRows.forEach(row => { row.style.display = rowMatches(row) ? '' : 'none'; });
+    }
+
     // Highlight trigger buttons if they have active filters
     ths.forEach(th => {
         const colIndex = parseInt(th.getAttribute('data-col'));

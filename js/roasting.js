@@ -1313,25 +1313,21 @@ async function loadRoastingBatches() {
     }
 
     const sortedBatches = [...batches].sort((a, b) => new Date(b.roast_date) - new Date(a.roast_date) || b.id - a.id);
-    const totalItems = sortedBatches.length;
 
-    // Slicing logic for pagination
-    const totalPages = Math.ceil(totalItems / batchPageSize) || 1;
-    if (batchCurrentPage > totalPages) {
-        batchCurrentPage = totalPages;
-    }
-
-    const startIndex = (batchCurrentPage - 1) * batchPageSize;
-    const endIndex = Math.min(startIndex + batchPageSize, totalItems);
-    const paginatedBatches = sortedBatches.slice(startIndex, endIndex);
-
-    // Update Show text
-    const pageInfo = document.getElementById('batch-page-info');
-    if (pageInfo) {
-        const startVal = totalItems === 0 ? 0 : startIndex + 1;
-        const template = window.t ? window.t('pagination_info') : 'Show {start} - {end} of {total}';
-        pageInfo.textContent = template.replace('{start}', startVal).replace('{end}', endIndex).replace('{total}', totalItems);
-    }
+    // Registers this table so applyFiltersForTable (js/app.js) filters the
+    // FULL sortedBatches list first, then paginates the filtered result —
+    // fixes the filter dropdown only ever listing values from whichever
+    // page happened to be open (found 2026-07-29). Every row below is now
+    // rendered unconditionally; renderPaginationControls (called from
+    // applyFiltersForTable at the end of this function) decides which page
+    // of the (possibly filtered) rows to actually reveal.
+    registerPaginatedFilterTable('tab-roast-logs', {
+        getPage: () => batchCurrentPage,
+        setPage: (p) => { batchCurrentPage = p; },
+        getPageSize: () => batchPageSize,
+        paginationContainerId: 'batch-pagination-pages',
+        infoElId: 'batch-page-info'
+    });
 
     // Highlight active page size
     const sizeOpts = document.querySelectorAll('#batch-page-size-selector .page-size-opt');
@@ -1350,50 +1346,7 @@ async function loadRoastingBatches() {
         }
     });
 
-    // Render pagination page buttons
-    const paginationContainer = document.getElementById('batch-pagination-pages');
-    if (paginationContainer) {
-        paginationContainer.innerHTML = '';
-        if (totalPages > 1) {
-            // Prev button
-            const prevBtn = document.createElement('button');
-            prevBtn.className = `pagination-btn ${batchCurrentPage === 1 ? 'disabled' : ''}`;
-            prevBtn.innerHTML = `&lt;`;
-            prevBtn.addEventListener('click', () => {
-                if (batchCurrentPage > 1) {
-                    batchCurrentPage--;
-                    loadRoastingBatches();
-                }
-            });
-            paginationContainer.appendChild(prevBtn);
-
-            // Page numbers
-            for (let i = 1; i <= totalPages; i++) {
-                const pageBtn = document.createElement('button');
-                pageBtn.className = `pagination-btn ${batchCurrentPage === i ? 'active' : ''}`;
-                pageBtn.textContent = i;
-                pageBtn.addEventListener('click', () => {
-                    batchCurrentPage = i;
-                    loadRoastingBatches();
-                });
-                paginationContainer.appendChild(pageBtn);
-            }
-
-            // Next button
-            const nextBtn = document.createElement('button');
-            nextBtn.className = `pagination-btn ${batchCurrentPage === totalPages ? 'disabled' : ''}`;
-            nextBtn.innerHTML = `&gt;`;
-            nextBtn.addEventListener('click', () => {
-                if (batchCurrentPage < totalPages) {
-                    batchCurrentPage++;
-                    loadRoastingBatches();
-                }
-            });
-            paginationContainer.appendChild(nextBtn);
-        }
-    }
-
-    paginatedBatches.forEach(batch => {
+    sortedBatches.forEach(batch => {
         let coffeeName = '';
         if (batch.coffee_type === 'Single') {
             const gb = greenbeans.find(g => g.id === batch.single_coffee_id);
@@ -3509,31 +3462,56 @@ async function recordRoastBatchGreenLots(roastBatchId, draws) {
 
 async function handleBarcodeScan(barcode) {
     // Parse barcode: RMP:Single:5:2 or RMP:Blend:3:1 or RMP:Lot:{green_coffee_lot_id}:2
-    // (V2 1B, sack sticker printed by 1A) or RMP:9{lotId:05d}{sizeG:04d}{mult:02d}
-    // (V2 1G, packed lot sticker printed by Ready to Pack). PackLot is fully
-    // numeric after a single "9" type digit — not colon-delimited text like
-    // the other three types — because CODE128 packs digit-pairs far denser
-    // than text (barcode-label-fix pass: the old `RMP:PackLot:{lot_code}:
-    // {sizeG}` text format produced bars too thin (~0.13mm) to scan
-    // reliably on a 50mm label; this numeric form gets modules to ~0.3mm).
-    // mult=00 means "no carton multiplier" (a plain package scan).
+    // (V2 1B, sack sticker printed by 1A) or a bare 7-digit
+    // {sizeDigit}{batchNo:04d}{multiplier:02d} (V2 FIFO strip code, packed
+    // lot sticker printed by Ready to Pack). No "RMP:" prefix at all this
+    // time (not even the single-letter prefix an earlier draft of this
+    // feature used) — dropping it entirely, not just shortening it, is what
+    // let CODE128 pack the payload dense enough to fix the original
+    // scan-reliability complaint (module width went from ~0.28mm to
+    // ~0.53mm). The tradeoff: a bare digit string can't self-identify as
+    // "one of ours" the way the colon-delimited types can, so a garbage
+    // 7-digit scan could theoretically match a real strip_code — mitigated
+    // by activeDispatchCheckoutHandler's own "not part of this order" check
+    // below, which rejects anything that isn't already a line on the open
+    // order regardless of how it got resolved.
     const parts = barcode.split(':');
-    const isPackLot = parts.length === 2 && parts[0] === 'RMP' && /^9\d{11}$/.test(parts[1]);
+    const isFifoStripBarcode = /^\d{7}$/.test(barcode);
 
-    if (isPackLot) {
-        // V2 1G: only meaningful while a dispatch checkout modal is open —
-        // it registers itself as the active handler (see
+    if (isFifoStripBarcode) {
+        // V2 FIFO strip code: only meaningful while a dispatch checkout
+        // modal is open — it registers itself as the active handler (see
         // js/packing.js openDispatchCheckoutModal) so scans land in the
         // right cart instead of silently doing nothing.
-        const digits = parts[1];
-        const lotId = parseInt(digits.slice(1, 6), 10);
-        const sizeG = parseInt(digits.slice(6, 10), 10);
-        const multRaw = parseInt(digits.slice(10, 12), 10);
         if (typeof window.activeDispatchCheckoutHandler !== 'function') {
             await showWarningModal('Scan this inside an order\'s Checkout screen (Packing → Order Requests → Prepare) — no checkout is open right now.', false);
             return;
         }
-        await window.activeDispatchCheckoutHandler(lotId, sizeG, multRaw > 0 ? multRaw : null);
+
+        const sizeDigit = parseInt(barcode.charAt(0), 10);
+        const stripCode = barcode.slice(0, 5);
+        const multRaw = parseInt(barcode.slice(5, 7), 10);
+
+        const [{ data: packagingSizes }, { data: packedLots }] = await Promise.all([
+            fetchData('packaging_sizes'),
+            fetchData('packed_coffee_lots')
+        ]);
+        const sizeDef = (packagingSizes || []).find(s => s.size_digit === sizeDigit);
+        if (!sizeDef) {
+            await showWarningModal(`No packaging size is configured for FIFO digit ${sizeDigit} (Settings → Production → Packaging Sizes).`, false);
+            return;
+        }
+        // Matches the DB's own live-uniqueness guarantee (strip_code is only
+        // unique among lots with remaining_pcs > 0 — see
+        // packed_coffee_lots_strip_code_live_uniq) — filtering the same way
+        // here means this lookup can never find more than one candidate.
+        const matchedLot = (packedLots || []).find(l => l.strip_code === stripCode && (parseInt(l.remaining_pcs) || 0) > 0);
+        if (!matchedLot) {
+            await showWarningModal(`No lot found for strip code ${stripCode} with stock remaining — it may already be fully used or the code was misread.`, false);
+            return;
+        }
+
+        await window.activeDispatchCheckoutHandler(matchedLot.id, sizeDef.gram, multRaw > 0 ? multRaw : null);
         return;
     }
 

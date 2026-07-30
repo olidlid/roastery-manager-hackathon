@@ -2132,6 +2132,7 @@
                                                     <tr>
                                                         <th data-i18n="col_size_label">Label / Size Name</th>
                                                         <th data-i18n="col_size_weight">Weight (grams)</th>
+                                                        <th data-i18n="col_size_fifo_digit">FIFO Digit</th>
                                                         <th data-i18n="col_size_show">Show in Packing UI</th>
                                                         <th data-i18n="col_action">Actions</th>
                                                     </tr>
@@ -2251,6 +2252,11 @@
                                                 <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
                                                     <input type="checkbox" id="sett-packed-label-show-machine" checked> <span data-i18n="lbl_machine_name_chk">Machine Name</span>
                                                 </label>
+                                            </div>
+                                            <div class="form-group" style="max-width:220px; margin-top:12px;">
+                                                <label class="form-label" data-i18n="lbl_packed_barcode_height">Barcode Height (mm)</label>
+                                                <input type="number" id="sett-packed-label-barcode-height" class="form-control" min="8" max="24" step="0.5" value="18">
+                                                <span style="font-size:0.75rem; color:var(--text-muted);" data-i18n="hint_packed_barcode_height">Width fills whatever space is left automatically — only height needs tuning per printer. Label is 25mm tall total, so leave room for the text lines below.</span>
                                             </div>
                                             <div style="display: flex; justify-content: flex-end; margin-top: 15px;">
                                                 <button type="submit" class="btn btn-primary btn-sm" data-i18n="btn_save_label">Save Label Settings</button>
@@ -2539,18 +2545,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=19"></script>
+    <script src="js/translations.js?v=21"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
     <script src="js/auth.js?v=9"></script>
     <script src="js/greenbean.js?v=12"></script>
-    <script src="js/roasting.js?v=19"></script>
-    <script src="js/packing.js?v=54"></script>
-    <script src="js/sales.js?v=16"></script>
-    <script src="js/settings.js?v=12"></script>
-    <script src="js/tracking.js?v=6"></script>
-    <script src="js/app.js?v=71"></script>
+    <script src="js/roasting.js?v=21"></script>
+    <script src="js/packing.js?v=58"></script>
+    <script src="js/sales.js?v=17"></script>
+    <script src="js/settings.js?v=15"></script>
+    <script src="js/tracking.js?v=7"></script>
+    <script src="js/app.js?v=73"></script>
 </body>
 </html>

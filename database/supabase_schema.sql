@@ -314,8 +314,13 @@ CREATE TABLE IF NOT EXISTS public.packaging_sizes (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     gram NUMERIC DEFAULT 250,
     is_visible BOOLEAN DEFAULT TRUE,
-    carton_multiplier NUMERIC                   -- V2 1G: pcs per carton for this size; NULL = no carton label option configured
+    carton_multiplier NUMERIC,                  -- V2 1G: pcs per carton for this size; NULL = no carton label option configured
+    size_digit SMALLINT                         -- V2 FIFO strip code: single digit prefixing strip_code/barcode (Settings > Production > Packaging Sizes); NULL = size not yet wired into the feature
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS packaging_sizes_size_digit_uniq
+ON public.packaging_sizes (size_digit)
+WHERE size_digit IS NOT NULL;
 
 -- 14. Packed coffee stock (finished goods)
 CREATE TABLE IF NOT EXISTS public.packed_coffee (
@@ -498,6 +503,18 @@ CREATE TABLE IF NOT EXISTS public.green_coffee_lots (
     purchase_price_per_kg NUMERIC  -- V2 1·CHAIN: per-lot price, data captured for future costing (1C, not built yet)
 );
 
+-- V2 FIFO strip code (see database/fifo_strip_code_migration.sql +
+-- fifo_batch_no_cycle_adjustment.sql): shared by production_lots.batch_no
+-- and packed_coffee_lots.batch_no (the latter only for lots with no
+-- production_lot_id, i.e. manual/custom packing). Cycles at 9999 per
+-- explicit user request — the client wants the number to wrap rather than
+-- grow unbounded. Because production_lots is a permanent history table
+-- (never deleted), batch_no is NOT unique on that table once the sequence
+-- wraps; the constraint that actually matters is
+-- packed_coffee_lots_strip_code_live_uniq below, scoped to lots that still
+-- have stock.
+CREATE SEQUENCE IF NOT EXISTS public.fifo_batch_no_seq MAXVALUE 9999 CYCLE;
+
 -- 24. Packed coffee lots (shadow schema for V2 packed lot tracking)
 CREATE TABLE IF NOT EXISTS public.packed_coffee_lots (
     id SERIAL PRIMARY KEY,
@@ -508,8 +525,28 @@ CREATE TABLE IF NOT EXISTS public.packed_coffee_lots (
     remaining_pcs INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     packed_date DATE DEFAULT CURRENT_DATE,
-    production_lot_id INTEGER REFERENCES public.production_lots(id) ON DELETE SET NULL  -- V2 1·CHAIN: which production lot this was packed from (populated starting 1G-1)
+    production_lot_id INTEGER REFERENCES public.production_lots(id) ON DELETE SET NULL,  -- V2 1·CHAIN: which production lot this was packed from (populated starting 1G-1)
+    batch_no INTEGER,                           -- V2 FIFO strip code: copied from production_lots.batch_no when linked, else a fresh nextval() for manual/unlinked lots
+    strip_code TEXT                              -- V2 FIFO strip code: size_digit || lpad(batch_no, 4, '0'), e.g. "10021"
 );
+
+-- Guards against the exact race found+fixed in production 2026-07-28: two
+-- concurrent Pack submissions for the same (packed_coffee, production_lot)
+-- both finding no existing row and both inserting one. getOrCreatePackedCoffeeLot
+-- already treats this pair as the merge key, so the app never intends more
+-- than one row per pairing regardless of remaining stock.
+CREATE UNIQUE INDEX IF NOT EXISTS packed_coffee_lots_packed_production_uniq
+ON public.packed_coffee_lots (packed_coffee_id, production_lot_id)
+WHERE production_lot_id IS NOT NULL;
+
+-- Guarantees a strip_code search always resolves to exactly one rack among
+-- CURRENT stock — not forever, since batch_no cycles (see fifo_batch_no_seq
+-- above). A collision with an old, already-sold-through lot is the accepted
+-- tradeoff of cycling; this only blocks a collision with something still on
+-- the shelf.
+CREATE UNIQUE INDEX IF NOT EXISTS packed_coffee_lots_strip_code_live_uniq
+ON public.packed_coffee_lots (strip_code)
+WHERE remaining_pcs > 0 AND strip_code IS NOT NULL;
 
 -- 25. Production lots (traceability for "Ready to Pack" barcode workflow —
 -- see database/production_lots_migration.sql for the migration + full notes).
@@ -526,7 +563,8 @@ CREATE TABLE IF NOT EXISTS public.production_lots (
     coffee_name TEXT,
     production_date DATE NOT NULL DEFAULT CURRENT_DATE,
     latest_roast_batch_id INTEGER REFERENCES public.roast_batches(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    batch_no INTEGER NOT NULL DEFAULT nextval('public.fifo_batch_no_seq')  -- V2 FIFO strip code: identifies one roast day for one bulk item; shared across every size it gets packed into
 );
 
 -- 26. Roast batch → green lot consumption (V2 1·CHAIN / 1B — see
