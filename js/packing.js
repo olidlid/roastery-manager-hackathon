@@ -44,9 +44,18 @@ async function loadPackingSection() {
                     loadPackingRecordsTable();
                 } else if (btn.getAttribute('data-target') === 'tab-waste-inventory') {
                     loadWasteInventorySection();
+                } else if (btn.getAttribute('data-target') === 'tab-repack') {
+                    loadRepackHistorySection();
                 }
             });
         });
+    }
+
+    const btnNewRepack = document.getElementById('btn-new-repack');
+    if (btnNewRepack && !btnNewRepack.hasAttribute('data-init')) {
+        btnNewRepack.setAttribute('data-init', 'true');
+        btnNewRepack.addEventListener('click', () => openNewRepackModal());
+        btnNewRepack.style.display = hasPermission('packing_repack') ? '' : 'none';
     }
 
     const [
@@ -57,7 +66,8 @@ async function loadPackingSection() {
         { data: postBlendComponents },
         { data: packedLots },
         { data: packedList },
-        { data: roastingPlans }
+        { data: roastingPlans },
+        { data: repackSources }
     ] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
         fetchData('machines'),
@@ -66,10 +76,11 @@ async function loadPackingSection() {
         fetchData('post_blend_components'),
         fetchData('packed_coffee_lots'),
         fetchData('packed_coffee'),
-        fetchData('roasting_plans')
+        fetchData('roasting_plans'),
+        fetchData('repack_sources')
     ]);
 
-    renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans);
+    renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources);
     // btn-custom-packing's click handler (openCustomPackingModal) is already
     // wired once at parse time in roasting.js — not re-wired here to avoid
     // attaching a second listener that would fire the modal twice per click.
@@ -83,7 +94,7 @@ async function loadPackingSection() {
 // showing the combined kg plus an expandable list of its dates, oldest first
 // (FIFO order). Print Barcode / Pack stay per roast date either way — each
 // date is its own lot and must never be conflated.
-function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans) {
+function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources) {
     const container = document.getElementById('ready-to-pack-cards');
     const emptyEl = document.getElementById('ready-to-pack-empty');
     if (!container) return;
@@ -101,13 +112,15 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     }
     if (emptyEl) emptyEl.classList.add('hidden');
 
-    // Post-blends are deliberately never grouped: machine_id is null and each
-    // carries its own custom_blend_code (CB-/PB-), so merging two of them
-    // would misrepresent them as one pool.
+    // Post-blends and repacks are deliberately never grouped: a post-blend
+    // carries its own custom_blend_code (CB-/PB-) and a repack's identity is
+    // "this specific opening event" (see repack_sources), so merging two of
+    // either into one pool would misrepresent separate events as one lot —
+    // same reasoning, same `type:${id}` key shape for both.
     const groups = [];
     const groupPos = new Map();
     activeBulk.forEach(b => {
-        const k = b.is_post_blend ? `postblend:${b.id}` : groupKey(b);
+        const k = b.is_post_blend ? `postblend:${b.id}` : (b.is_repack ? `repack:${b.id}` : groupKey(b));
         if (!groupPos.has(k)) { groupPos.set(k, groups.length); groups.push([]); }
         groups[groupPos.get(k)].push(b);
     });
@@ -194,18 +207,54 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     const postBlendBadge = (bulk) => bulk.is_post_blend
         ? ' <span style="font-size:0.65rem; font-weight:700; text-transform:uppercase; color:var(--primary); background:var(--primary-glow); border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>'
         : '';
+    // V2 Repack: rose badge — see css/styles.css .badge-repack, deliberately
+    // the one hue not already used by any other badge in this app (single,
+    // blend, pre-blend, post-blend), and reused as-is for the New Repack
+    // modal's accent so a repack reads as one consistent visual thread from
+    // card to modal (explicit user request).
+    const repackBadge = (bulk) => bulk.is_repack
+        ? ` <span class="badge-repack" style="font-size:0.65rem; font-weight:700; text-transform:uppercase; border-radius:4px; padding:1px 6px; vertical-align:middle;" data-i18n="badge_repack">Repack</span>`
+        : '';
+    // "dari 2·0037 ×2 · 1·0041 ×4" — which source lots this bulk was opened
+    // from, so the team can see provenance without opening the Repack tab's
+    // history. Reads strip_code (short FIFO code) when the source lot has
+    // one, else falls back to its long-form lot_code — same fallback a size
+    // with no size_digit configured yet would need elsewhere in this file.
+    // No data-i18n here on purpose: this div's content is dynamic (the
+    // strip-code list), and translatePage() replaces an element's full
+    // textContent by key (js/i18n.js:43) — tagging it would wipe that list
+    // out on every language switch. This whole card is rebuilt fresh on
+    // every render call anyway, so the label is just resolved inline below.
+    const repackProvenanceHtmlFor = (bulk) => {
+        if (!bulk.is_repack) return '';
+        const sources = (repackSources || []).filter(s => s.repack_bulk_id === bulk.id);
+        if (sources.length === 0) return '';
+        const parts = sources.map(s => {
+            const srcLot = (packedLots || []).find(l => l.id === s.source_packed_lot_id);
+            const code = srcLot ? (srcLot.strip_code || srcLot.lot_code) : '?';
+            return `${code} &times;${s.pcs}`;
+        });
+        const prefix = window.t ? window.t('lbl_repack_from_prefix') : 'from';
+        return `<div class="text-repack" style="font-family: monospace; font-size: 0.72rem; margin-top: 2px;">${prefix} ${parts.join(' &middot; ')}</div>`;
+    };
     // Print/Pack keep the full-width row they've always had; Close Lot goes on
     // its own line as a quiet text button — it's an occasional end-of-lot
     // tidy-up for leftover grams, so it shouldn't crowd the two primary
     // actions (squeezing three buttons onto one row wrapped "Print Barcode"
     // onto two lines).
+    // Icons are siblings of a <span data-i18n>, never children of it: i18n.js
+    // translates via `el.textContent = t(key)` (js/i18n.js:43), which wipes
+    // every child node — an <i> placed inside the data-i18n element would
+    // vanish the moment a language is applied. Same wrap-the-text pattern as
+    // index.html's sidebar/scan buttons. Classes are `icon-*` (the
+    // lucide-static webfont's real prefix), not `lucide-*`.
     const actionButtons = (bulk) => `
         <div style="display: flex; gap: 8px;">
-            <button type="button" class="btn btn-secondary btn-sm btn-print-lot-barcode" data-bulk-id="${bulk.id}" style="flex: 1;" data-i18n="btn_print_barcode">Barcode</button>
-            <button type="button" class="btn btn-primary btn-sm btn-pack-bulk" data-bulk-id="${bulk.id}" style="flex: 1;" data-i18n="btn_pack">Pack</button>
+            <button type="button" class="btn btn-secondary btn-sm btn-print-lot-barcode" data-bulk-id="${bulk.id}" style="flex: 1;"><i class="icon-barcode va-middle-mr-1"></i><span data-i18n="btn_print_barcode">Barcode</span></button>
+            <button type="button" class="btn btn-primary btn-sm btn-pack-bulk" data-bulk-id="${bulk.id}" style="flex: 1;"><i class="icon-package va-middle-mr-1"></i><span data-i18n="btn_pack">Pack</span></button>
         </div>
         <button type="button" class="btn-close-lot" data-bulk-id="${bulk.id}"
-            style="align-self: flex-end; background: none; border: none; padding: 2px 0; cursor: pointer; color: var(--text-muted); font-size: 0.74rem; text-decoration: underline; font-family: inherit;" data-i18n="btn_close_lot">Close Lot</button>
+            style="align-self: flex-end; background: none; border: none; padding: 2px 0; cursor: pointer; color: var(--text-muted); font-size: 0.74rem; text-decoration: underline; font-family: inherit;"><i class="icon-archive va-middle-mr-1"></i><span data-i18n="btn_close_lot">Close Lot</span></button>
     `;
 
     // One roast date in this coffee+machine group — unchanged from before the
@@ -214,9 +263,10 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         return `
             <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
                 <div>
-                    <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}${postBlendBadge(bulk)}</div>
+                    <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}${postBlendBadge(bulk)}${repackBadge(bulk)}</div>
                     <div style="font-size: 0.8rem; color: var(--text-muted);">${machineLabel(bulk)}</div>
                     <div style="font-size: 0.8rem; color: var(--text-muted);">${bulk.production_date || '-'}</div>
+                    ${repackProvenanceHtmlFor(bulk)}
                 </div>
                 ${codeBadgeHtmlFor(bulk)}
             </div>
@@ -280,7 +330,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
 
     groups.forEach(rows => {
         const card = document.createElement('div');
-        card.className = 'card';
+        card.className = rows[0].is_repack ? 'card card-repack' : 'card';
         card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px;';
         card.innerHTML = rows.length === 1 ? buildSingleCard(rows[0]) : buildGroupedCard(rows);
         container.appendChild(card);
@@ -2409,7 +2459,7 @@ async function syncProductionLotBatches(lot, bulk, roastBatches) {
     }
 }
 
-function printLotBarcodeLabels(lot, requested, machines, rotateOverride) {
+function printLotBarcodeLabels(lot, requested, machines) {
     // Production date = the lot's roast/pack date (production_date). Expiry
     // is a fixed 1-year shelf life from that date — no separate field to
     // track, just computed at print time. dd-mm-yyyy per the label spec
@@ -2493,7 +2543,7 @@ function printLotBarcodeLabels(lot, requested, machines, rotateOverride) {
         return;
     }
     const barcodeHeightMm = parseFloat((companySettings.label_layout && companySettings.label_layout.packed && companySettings.label_layout.packed.barcode_height_mm)) || 18;
-    printWin.document.write(buildFixedLabelDocument(labelsHtml, showCode, rotateOverride, barcodeHeightMm));
+    printWin.document.write(buildFixedLabelDocument(labelsHtml, showCode, barcodeHeightMm));
     printWin.document.close();
 }
 
@@ -2511,44 +2561,29 @@ function printLotBarcodeLabels(lot, requested, machines, rotateOverride) {
 // old 1.1 to 2.2 (JsBarcode units) — the old value produced sub-0.2mm bars
 // once scaled into the 8mm-tall zone, well under the ~0.33mm minimum most
 // thermal printers can reproduce without dot-gain merging adjacent bars.
-// `rotate` (companySettings.label_rotate_90) is a per-printer workaround: some
-// thermal drivers force their own fixed PORTRAIT media regardless of this
-// page's declared landscape @page size, so a correctly-landscape preview
-// still prints rotated on paper. When on, @page is declared as the printer's
-// forced portrait shape (25x50mm) and .barcode-label-item — still a normal
-// block-flow element so page-break-after keeps working — is drawn at its
-// original landscape size (48x23mm) then rotated 90° and shifted by its own
-// width via `left`, which (relative positioning only offsets the paint, it
-// doesn't remove the element from flow) lands it exactly filling the portrait
-// page's content box. See index.html Settings > Production > Label Layout >
-// Print Orientation for the toggle.
-function buildFixedLabelDocument(labelsHtml, showCode, rotateOverride, packedBarcodeHeightMm) {
-    const rotate = (rotateOverride === undefined || rotateOverride === null) ? companySettings.label_rotate_90 === true : rotateOverride === true;
-    // Page margin trimmed from 1mm to 0.5mm to reclaim print area — most
-    // thermal roll printers can hold 0.5mm reliably. Content box is then
-    // 49mm x 24mm either way (50/25mm minus 2x0.5mm), so the rotated item's
-    // width/height/left below are sized to match (were 48/23/23 at 1mm).
-    const pageCss = rotate
-        ? `@page { size: 25mm 50mm; margin: 0.5mm; }`
-        : `@page { size: 50mm 25mm; margin: 0.5mm; }`;
-    const itemCss = rotate
-        ? `.barcode-label-item {
-                width: 49mm;
-                height: 24mm;
-                box-sizing: border-box;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                text-align: center;
-                padding: 0 1mm;
-                page-break-after: always;
-                position: relative;
-                left: 24mm;
-                top: 0;
-                transform: rotate(90deg);
-                transform-origin: top left;
-           }`
-        : `.barcode-label-item {
+// Orientation is the BROWSER's job here, not the app's (changed 2026-07-30
+// per explicit user request — the old companySettings.label_rotate_90
+// setting and the per-print Landscape/Portrait radios are both gone).
+// Two things are needed to make Chrome's own control work:
+//   1. @page declares NO size. Chrome only offers its "Layout:
+//      Portrait/Landscape" control when the page has no explicit @page
+//      size — declaring one pins "Paper size: User defined" and REMOVES the
+//      layout dropdown entirely, which is precisely why this app had to
+//      carry its own toggle before. Paper size now comes from the printer
+//      driver's selected media, which Chrome remembers per destination.
+//   2. Chrome's Layout control rotates the PAPER, not the content. Left
+//      alone it would reflow this label into a ~25mm-wide column and
+//      squeeze the barcode to unscannable module widths (see the module
+//      width note below). The `@media print and (orientation: portrait)`
+//      block rotates the content back 90° so the barcode always runs along
+//      the label's LONG edge either way. Sized in vh/vw (which resolve to
+//      the page box) instead of hardcoded mm, so it adapts to whatever
+//      media the driver is set to rather than assuming 50x25mm.
+function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
+    // 0.5mm page margin (was 1mm) to reclaim print area — most thermal roll
+    // printers can hold 0.5mm reliably.
+    const pageCss = `@page { margin: 0.5mm; }`;
+    const itemCss = `.barcode-label-item {
                 width: 100%;
                 box-sizing: border-box;
                 display: flex;
@@ -2557,6 +2592,24 @@ function buildFixedLabelDocument(labelsHtml, showCode, rotateOverride, packedBar
                 text-align: center;
                 padding: 0 1mm;
                 page-break-after: always;
+           }
+           /* Portrait media selected in Chrome's print dialog: draw the label
+              at landscape proportions — 100vh wide x 100vw tall, i.e. the
+              page box with its axes swapped — then rotate 90 degrees about
+              its own top-left corner and shift right by the page's width so
+              it lands exactly filling the portrait page. Relative positioning
+              only offsets the paint (the element stays in normal block flow),
+              so page-break-after keeps working across multiple labels. */
+           @media print and (orientation: portrait) {
+               .barcode-label-item {
+                   width: 100vh;
+                   height: 100vw;
+                   position: relative;
+                   left: 100vw;
+                   top: 0;
+                   transform: rotate(90deg);
+                   transform-origin: top left;
+               }
            }`;
     // Barcode height: for packed-coffee labels (the only caller that passes
     // packedBarcodeHeightMm) this is now a Settings-configurable value
@@ -2567,14 +2620,14 @@ function buildFixedLabelDocument(labelsHtml, showCode, rotateOverride, packedBar
     // whatever space .barcode-label-main (flex:1) has left after
     // .barcode-label-strip's own fixed width, so it auto-adapts instead of
     // needing its own setting. Green bean's Kecil stickers (js/greenbean.js)
-    // don't pass this argument at all, so they fall through to their
-    // original fixed rotate-dependent sizing, completely unaffected by this
+    // don't pass this argument at all, so they keep the fixed 46x12mm sizing
+    // they were already effectively getting (the old rotate-dependent
+    // 44x14mm variant went away with the orientation toggle, which defaulted
+    // to landscape anyway) — completely unaffected by this
     // packed-coffee-specific setting.
     const barcodeCss = packedBarcodeHeightMm
         ? `.lot-barcode-svg { width: 100%; height: ${packedBarcodeHeightMm}mm; display: block; margin: 0.15mm auto 0; }`
-        : (rotate
-            ? `.lot-barcode-svg { width: 44mm; height: 14mm; display: block; margin: 0.15mm auto 0; }`
-            : `.lot-barcode-svg { width: 46mm; height: 12mm; display: block; margin: 0.3mm auto 0; }`);
+        : `.lot-barcode-svg { width: 46mm; height: 12mm; display: block; margin: 0.3mm auto 0; }`;
     return `
         <html><head><title>Barcode Labels</title>
         <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>
@@ -2680,19 +2733,10 @@ async function openPrintBarcodeModal(bulkId) {
                 <label class="form-label">Coffee</label>
                 <input type="text" class="form-control" value="${bulk.coffee_name} (${parseFloat(bulk.bulk_available).toFixed(2)} kg available)" readonly>
             </div>
-            <div style="margin-top: 16px;">
-                <label class="form-label">Label Orientation</label>
-                <div style="display: flex; gap: 8px;">
-                    <label style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 0.88rem;">
-                        <input type="radio" name="print-orientation" value="landscape" ${companySettings.label_rotate_90 !== true ? 'checked' : ''}>
-                        Landscape
-                    </label>
-                    <label style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 0.88rem;">
-                        <input type="radio" name="print-orientation" value="portrait" ${companySettings.label_rotate_90 === true ? 'checked' : ''}>
-                        Portrait
-                    </label>
-                </div>
-            </div>
+            <!-- Orientation is chosen in the browser's own print dialog
+                 (Layout: Portrait/Landscape) rather than here — see
+                 buildFixedLabelDocument for why the app no longer carries
+                 its own control. -->
             <div style="margin-top: 16px;">
                 <label class="form-label">Number of labels to print per size</label>
                 <div style="display: flex; gap: 12px; flex-wrap: wrap;">
@@ -2740,10 +2784,7 @@ async function openPrintBarcodeModal(bulkId) {
             r.stripCode = packedLot ? packedLot.strip_code : null;
         }
 
-        const orientationInput = document.querySelector('input[name="print-orientation"]:checked');
-        const rotateOverride = orientationInput ? orientationInput.value === 'portrait' : undefined;
-
-        printLotBarcodeLabels(lot, requested, machines, rotateOverride);
+        printLotBarcodeLabels(lot, requested, machines);
         document.getElementById('btn-close-modal').click();
     });
 }
@@ -4175,8 +4216,420 @@ async function printWaybill(orderId) {
     <script>window.onload = function() { window.print(); }<\/script>
 </body>
 </html>`;
-    
+
     const printWindow = window.open('', '_blank');
     printWindow.document.write(printContent);
     printWindow.document.close();
+}
+
+// ============================================================================
+// V2 REPACK — open finished packed stock (e.g. 2x1KG) back into loose bulk so
+// the team packs it back down (e.g. 8x250G) through the SAME Print Barcode /
+// Pack pipeline used for a fresh roast, per explicit user design choice — no
+// parallel pack path. See database/repack_migration.sql (bulk_roasted_coffee
+// .is_repack, repack_sources) — NOT YET APPLIED to production as of writing.
+// ============================================================================
+
+async function loadRepackHistorySection() {
+    const [
+        { data: bulkList },
+        { data: repackSources },
+        { data: packedLots }
+    ] = await Promise.all([
+        fetchData('bulk_roasted_coffee'),
+        fetchData('repack_sources'),
+        fetchData('packed_coffee_lots')
+    ]);
+
+    const tbody = document.getElementById('repack-history-tbody');
+    const emptyEl = document.getElementById('repack-history-empty');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const repackBulks = (bulkList || [])
+        .filter(b => b.is_repack)
+        .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+    if (emptyEl) emptyEl.classList.toggle('hidden', repackBulks.length > 0);
+
+    tbody.innerHTML = repackBulks.map(bulk => {
+        const sources = (repackSources || []).filter(s => s.repack_bulk_id === bulk.id);
+        const openedText = sources.map(s => {
+            const srcLot = (packedLots || []).find(l => l.id === s.source_packed_lot_id);
+            const code = srcLot ? (srcLot.strip_code || srcLot.lot_code) : '?';
+            return `${code} &times;${s.pcs}`;
+        }).join(' &middot; ') || '-';
+        // "Became Bulk" is the historical total at repack time (sum of source
+        // rows' kg), not bulk.bulk_available — that number drains as the
+        // repack bulk gets packed down, so it would misreport an old repack
+        // as if it produced less than it actually did.
+        const becameKg = sources.reduce((s, r) => s + (parseFloat(r.kg) || 0), 0);
+        return `
+            <tr>
+                <td>${bulk.production_date || '-'}</td>
+                <td>${bulk.coffee_name}</td>
+                <td style="font-family: monospace; font-size: 0.8rem;">${openedText}</td>
+                <td style="text-align:right; font-weight:700;">${becameKg.toFixed(2)} kg</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Coffee dropdown + FIFO-sorted lot list, mirroring openPackedLotsModal's own
+// identity resolution (custom name vs. roast_batch_id-backed Single/Blend) so
+// the "Coffee" list here matches what's shown everywhere else in Packing —
+// grouped here (not per-item) since one coffee can have several packed_coffee
+// rows (one per size), and repack needs to pick across all of them at once.
+async function openNewRepackModal() {
+    const [
+        { data: packedList },
+        { data: packedLots },
+        { data: roastBatches },
+        { data: greenbeans },
+        { data: recipes }
+    ] = await Promise.all([
+        fetchData('packed_coffee'),
+        fetchData('packed_coffee_lots'),
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
+    ]);
+
+    const resolved = (packedList || []).map(item => {
+        let name = item.custom_coffee_name || 'Roasted Coffee';
+        let coffeeType = item.single_coffee_id ? 'Single' : (item.blend_recipe_id ? 'Blend' : null);
+        let singleId = item.single_coffee_id || null;
+        let blendId = item.blend_recipe_id || null;
+        if (item.roast_batch_id) {
+            const b = (roastBatches || []).find(x => x.id === item.roast_batch_id);
+            if (b) {
+                coffeeType = b.coffee_type;
+                singleId = b.single_coffee_id;
+                blendId = b.blend_recipe_id;
+                if (b.coffee_type === 'Single') {
+                    const gb = (greenbeans || []).find(g => g.id === b.single_coffee_id);
+                    if (gb) name = gb.name;
+                } else {
+                    const r = (recipes || []).find(rec => rec.id === b.blend_recipe_id);
+                    if (r) name = r.name;
+                }
+            }
+        }
+        name = name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+        return { ...item, resolvedName: name, coffeeType, singleId, blendId };
+    });
+
+    // V2 Repack must never rename a coffee — the group's identity
+    // (coffeeType/singleId/blendId/coffeeName) is captured ONCE here and
+    // copied verbatim onto the new bulk row in submitRepack, regardless of
+    // which specific lot within the group gets opened.
+    const groupMap = new Map();
+    resolved.forEach(item => {
+        const lotsForItem = (packedLots || []).filter(l => l.packed_coffee_id === item.id && (parseInt(l.remaining_pcs) || 0) > 0);
+        if (lotsForItem.length === 0) return;
+        if (!groupMap.has(item.resolvedName)) {
+            groupMap.set(item.resolvedName, {
+                coffeeName: item.resolvedName,
+                coffeeType: item.coffeeType,
+                singleId: item.singleId,
+                blendId: item.blendId,
+                lots: []
+            });
+        }
+        const group = groupMap.get(item.resolvedName);
+        lotsForItem.forEach(l => {
+            group.lots.push({
+                lotId: l.id,
+                lotCode: l.lot_code,
+                stripCode: l.strip_code,
+                sizeG: parseInt(item.bag_size_g) || 0,
+                packedDate: l.packed_date,
+                remaining: parseInt(l.remaining_pcs) || 0,
+                packedCoffeeId: item.id,
+                machineId: item.machine_id
+            });
+        });
+    });
+
+    const groups = [...groupMap.values()].filter(g => g.lots.length > 0);
+    if (groups.length === 0) {
+        await showWarningModal('No packed stock with remaining lots is available to repack.', false);
+        return;
+    }
+    groups.forEach(g => g.lots.sort((a, b) => (a.packedDate || '').localeCompare(b.packedDate || '') || a.lotId - b.lotId));
+
+    const coffeeOptionsHtml = groups.map((g, idx) => `<option value="${idx}">${g.coffeeName}</option>`).join('');
+
+    const html = `
+        <form id="modal-new-repack-form">
+            <div class="form-group">
+                <label class="form-label" data-i18n="lbl_repack_coffee">Coffee</label>
+                <select id="repack-coffee-select" class="form-control">${coffeeOptionsHtml}</select>
+            </div>
+            <div style="margin: 14px 0 6px; display:flex; align-items:center; gap:8px;">
+                <span style="font-size:0.78rem; color:var(--text-secondary);" data-i18n="lbl_repack_scan_hint">Scan or type strip code, then Enter</span>
+            </div>
+            <input type="text" id="repack-scan-input" class="form-control" placeholder="20037" style="margin-bottom:10px;">
+            <div id="repack-lots-list" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:14px;"></div>
+            <div id="repack-roastdate-panel" class="hidden card-repack" style="border-radius:8px; padding:10px 11px; margin-bottom:14px;">
+                <div style="font-size:0.78rem; margin-bottom:7px;" class="text-repack" data-i18n="lbl_repack_roastdate_conflict">New bulk's roast date — selected lots have different dates</div>
+                <div id="repack-roastdate-options" style="display:flex; flex-direction:column; gap:5px;"></div>
+            </div>
+            <div style="display:flex; align-items:baseline; justify-content:space-between; border-top:1px solid var(--border); padding-top:12px;">
+                <span style="font-size:0.8rem; color:var(--text-secondary);" data-i18n="lbl_repack_total">Total becomes bulk</span>
+                <span id="repack-total-kg" class="text-repack" style="font-size:1.5rem; font-weight:700;">0.00 kg</span>
+            </div>
+            <div class="modal-footer-actions-lg">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                <button type="submit" class="btn btn-repack-accent" data-i18n="btn_create_repack_bulk">Create Repack Bulk</button>
+            </div>
+        </form>
+    `;
+
+    openModal(window.t ? window.t('title_new_repack') : 'New Repack', html, '620px');
+
+    // The shared #modal-container is reused by every modal in the app, so
+    // the rose header accent (user's explicit "modal matches card" request)
+    // is added/removed around just this modal's lifetime, never left as a
+    // permanent restyle of the shared shell.
+    const modalHeaderEl = document.getElementById('modal-title') ? document.getElementById('modal-title').parentElement : null;
+    if (modalHeaderEl) modalHeaderEl.classList.add('modal-repack-header');
+    const cleanup = () => {
+        if (modalHeaderEl) modalHeaderEl.classList.remove('modal-repack-header');
+        window.activeRepackScanHandler = null;
+    };
+    document.getElementById('btn-close-modal').addEventListener('click', cleanup, { once: true });
+
+    const listEl = document.getElementById('repack-lots-list');
+    const totalEl = document.getElementById('repack-total-kg');
+    const roastPanel = document.getElementById('repack-roastdate-panel');
+    const roastOptionsEl = document.getElementById('repack-roastdate-options');
+    const selectEl = document.getElementById('repack-coffee-select');
+
+    function currentGroup() {
+        return groups[parseInt(selectEl.value) || 0];
+    }
+
+    function recomputeTotals() {
+        let totalKg = 0;
+        listEl.querySelectorAll('.repack-lot-row').forEach(row => {
+            const pcs = parseInt(row.querySelector('.repack-lot-pcs').value) || 0;
+            const sizeG = parseFloat(row.getAttribute('data-size-g')) || 0;
+            const kg = (pcs * sizeG) / 1000;
+            row.querySelector('.repack-lot-kg').textContent = kg.toFixed(2) + ' kg';
+            totalKg += kg;
+        });
+        totalEl.textContent = totalKg.toFixed(2) + ' kg';
+
+        // Roast date conflict panel: only shown when the CURRENTLY SELECTED
+        // (pcs > 0) rows actually span more than one date — a group that
+        // happens to contain older stock the user isn't opening this time
+        // must not force a decision that doesn't apply to this repack.
+        const selectedDates = [...listEl.querySelectorAll('.repack-lot-row')]
+            .filter(row => (parseInt(row.querySelector('.repack-lot-pcs').value) || 0) > 0)
+            .map(row => row.getAttribute('data-packed-date'))
+            .filter(Boolean);
+        const distinctDates = [...new Set(selectedDates)].sort();
+
+        if (distinctDates.length > 1) {
+            const oldest = distinctDates[0];
+            const newest = distinctDates[distinctDates.length - 1];
+            const todayStr = new Date().toISOString().split('T')[0];
+            const oldestLbl = window.t ? window.t('opt_repack_roastdate_oldest') : 'Oldest';
+            const newestLbl = window.t ? window.t('opt_repack_roastdate_newest') : 'Newest';
+            const todayLbl = window.t ? window.t('opt_repack_roastdate_today') : 'Today';
+            roastOptionsEl.innerHTML = `
+                <label style="display:flex; align-items:center; gap:7px; font-size:0.78rem;" class="text-repack">
+                    <input type="radio" name="repack-roastdate" value="${oldest}" checked> ${oldestLbl} &mdash; <span style="font-family:monospace;">${oldest}</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:7px; font-size:0.78rem;" class="text-repack">
+                    <input type="radio" name="repack-roastdate" value="${newest}"> ${newestLbl} &mdash; <span style="font-family:monospace;">${newest}</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:7px; font-size:0.78rem;" class="text-repack">
+                    <input type="radio" name="repack-roastdate" value="${todayStr}"> ${todayLbl} &mdash; <span style="font-family:monospace;">${todayStr}</span>
+                </label>
+            `;
+            roastPanel.classList.remove('hidden');
+        } else {
+            roastPanel.classList.add('hidden');
+            roastOptionsEl.innerHTML = '';
+        }
+    }
+
+    function renderLotRows() {
+        const group = currentGroup();
+        const pickFirstLabel = window.t ? window.t('badge_pick_first') : 'PICK FIRST';
+        listEl.innerHTML = group.lots.map((lot, idx) => `
+            <div class="repack-lot-row" data-lot-id="${lot.lotId}" data-remaining="${lot.remaining}" data-size-g="${lot.sizeG}" data-packed-date="${lot.packedDate || ''}" data-packed-coffee-id="${lot.packedCoffeeId}" data-machine-id="${lot.machineId || ''}"
+                style="display:flex; align-items:center; gap:10px; padding:9px 11px; ${idx > 0 ? 'border-top:1px solid var(--border);' : ''}">
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:0.78rem;">
+                        <span class="text-repack" style="font-family:monospace; font-weight:700;">${lot.stripCode || lot.lotCode}</span>
+                        <span style="color:var(--text-secondary);"> &middot; ${lot.sizeG}g &middot; roast ${lot.packedDate || '-'}</span>
+                        ${idx === 0 ? `<span class="badge-repack" style="font-size:0.6rem; padding:1px 6px; border-radius:9999px; margin-left:4px;">${pickFirstLabel}</span>` : ''}
+                    </div>
+                    <div style="font-size:0.72rem; color:var(--text-muted);">${(window.t ? window.t('lbl_repack_stock_prefix') : 'stock')} ${lot.remaining} pcs</div>
+                </div>
+                <input type="number" class="form-control repack-lot-pcs" value="0" min="0" max="${lot.remaining}" style="width:56px; height:30px; font-size:0.78rem; text-align:center;">
+                <span class="repack-lot-kg" style="font-size:0.72rem; color:var(--text-secondary); width:50px; text-align:right;">0.00 kg</span>
+            </div>
+        `).join('');
+
+        listEl.querySelectorAll('.repack-lot-pcs').forEach(input => {
+            input.addEventListener('input', () => {
+                const max = parseInt(input.getAttribute('max')) || 0;
+                let val = parseInt(input.value) || 0;
+                if (val < 0) val = 0;
+                if (val > max) val = max;
+                input.value = val;
+                recomputeTotals();
+            });
+        });
+        recomputeTotals();
+    }
+
+    selectEl.addEventListener('change', renderLotRows);
+    renderLotRows();
+
+    // Scan handling has two independent paths, both landing on the same
+    // local matcher: (1) this field's own Enter-key listener — works with
+    // any real USB/BT scanner today, since a scanner just types into
+    // whichever input currently has focus, no dependency on the app's
+    // global 'RMP:'-gated buffer (see app.js GLOBAL BARCODE SCANNER
+    // LISTENER, which doesn't recognize the bare-digit FIFO format at all).
+    // (2) window.activeRepackScanHandler — a dormant hook, forward-
+    // compatible with that global buffer the same way dispatch checkout
+    // already left one in place (js/packing.js openDispatchCheckoutModal),
+    // in case a future change extends it to bare-digit codes too.
+    function matchAndSelectLot(raw) {
+        const code = (raw || '').trim();
+        if (!code) return false;
+        const stripCandidate = /^\d{5,7}$/.test(code) ? code.slice(0, 5) : code;
+        const row = [...listEl.querySelectorAll('.repack-lot-row')].find(r => {
+            const lotId = parseInt(r.getAttribute('data-lot-id'));
+            const lot = currentGroup().lots.find(l => l.lotId === lotId);
+            return lot && (lot.stripCode === stripCandidate || lot.lotCode === code);
+        });
+        if (!row) return false;
+        const pcsInput = row.querySelector('.repack-lot-pcs');
+        const max = parseInt(pcsInput.getAttribute('max')) || 0;
+        const current = parseInt(pcsInput.value) || 0;
+        pcsInput.value = Math.min(current + 1, max);
+        recomputeTotals();
+        row.scrollIntoView({ block: 'nearest' });
+        return true;
+    }
+
+    const scanInput = document.getElementById('repack-scan-input');
+    scanInput.addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const found = matchAndSelectLot(scanInput.value);
+        scanInput.value = '';
+        if (!found) {
+            await showWarningModal('No lot with that code was found for the selected coffee, or it has no stock remaining.', false);
+        }
+    });
+
+    window.activeRepackScanHandler = async function (lotId, sizeG, multiplier) {
+        const row = listEl.querySelector(`.repack-lot-row[data-lot-id="${lotId}"]`);
+        if (!row) {
+            await showWarningModal(`Scanned lot #${lotId} is not part of the currently selected coffee.`, false);
+            return;
+        }
+        const pcsInput = row.querySelector('.repack-lot-pcs');
+        const max = parseInt(pcsInput.getAttribute('max')) || 0;
+        const current = parseInt(pcsInput.value) || 0;
+        pcsInput.value = Math.min(current + (multiplier || 1), max);
+        recomputeTotals();
+    };
+
+    document.getElementById('modal-new-repack-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const group = currentGroup();
+        const rows = [...listEl.querySelectorAll('.repack-lot-row')]
+            .map(row => ({
+                lotId: parseInt(row.getAttribute('data-lot-id')),
+                pcs: parseInt(row.querySelector('.repack-lot-pcs').value) || 0,
+                sizeG: parseFloat(row.getAttribute('data-size-g')) || 0,
+                packedCoffeeId: parseInt(row.getAttribute('data-packed-coffee-id')),
+                machineId: row.getAttribute('data-machine-id') ? parseInt(row.getAttribute('data-machine-id')) : null,
+                packedDate: row.getAttribute('data-packed-date') || null
+            }))
+            .filter(r => r.pcs > 0);
+
+        if (rows.length === 0) {
+            await showWarningModal('Enter a quantity for at least one lot before creating the repack bulk.', false);
+            return;
+        }
+        for (const r of rows) {
+            const lot = group.lots.find(l => l.lotId === r.lotId);
+            if (lot && r.pcs > lot.remaining) {
+                await showWarningModal(`Cannot open ${r.pcs} pcs from lot ${lot.stripCode || lot.lotCode} — only ${lot.remaining} pcs remaining.`, false);
+                return;
+            }
+        }
+
+        const distinctDates = [...new Set(rows.map(r => r.packedDate).filter(Boolean))];
+        let roastDate;
+        if (distinctDates.length > 1) {
+            const picked = document.querySelector('input[name="repack-roastdate"]:checked');
+            roastDate = picked ? picked.value : distinctDates.sort()[0];
+        } else {
+            roastDate = distinctDates[0] || new Date().toISOString().split('T')[0];
+        }
+
+        await submitRepack(group, rows, roastDate);
+        document.getElementById('btn-close-modal').click();
+    });
+}
+
+// Core transaction: decrement each opened source lot, create ONE new
+// is_repack bulk_roasted_coffee row carrying the source coffee's identity
+// UNCHANGED (no renaming — explicit user requirement), and record one
+// repack_sources row per opened lot for traceability (js/tracking.js walks
+// this exactly like it already walks post_blend_components).
+async function submitRepack(group, rows, roastDate) {
+    const totalKg = rows.reduce((sum, r) => sum + (r.pcs * r.sizeG) / 1000, 0);
+
+    const { data: newBulk, error: bulkError } = await saveData('bulk_roasted_coffee', {
+        coffee_name: group.coffeeName,
+        coffee_type: group.coffeeType,
+        single_coffee_id: group.singleId,
+        blend_recipe_id: group.blendId,
+        machine_id: rows[0].machineId,
+        bulk_available: totalKg,
+        production_date: roastDate,
+        is_repack: true
+    });
+    if (bulkError || !newBulk) {
+        alert('Failed to create repack bulk: ' + (bulkError ? bulkError.message : 'unknown error'));
+        return;
+    }
+
+    const { data: freshLots } = await fetchData('packed_coffee_lots');
+    const { data: freshPacked } = await fetchData('packed_coffee');
+
+    for (const r of rows) {
+        const lot = (freshLots || []).find(l => l.id === r.lotId);
+        if (lot) {
+            const newRemaining = Math.max(0, (parseInt(lot.remaining_pcs) || 0) - r.pcs);
+            await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemaining });
+        }
+        const packedRow = (freshPacked || []).find(p => p.id === r.packedCoffeeId);
+        if (packedRow) {
+            const newQty = Math.max(0, (parseInt(packedRow.quantity) || 0) - r.pcs);
+            await saveData('packed_coffee', { id: packedRow.id, quantity: newQty });
+        }
+        await saveData('repack_sources', {
+            repack_bulk_id: newBulk.id,
+            source_packed_lot_id: r.lotId,
+            pcs: r.pcs,
+            kg: (r.pcs * r.sizeG) / 1000
+        });
+    }
+
+    await loadPackingSection();
+    await loadRepackHistorySection();
+    scheduleDashboardRefresh();
 }

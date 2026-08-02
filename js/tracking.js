@@ -196,7 +196,8 @@ async function performTrackingSearch(rawCode) {
         { data: postBlendComponents },
         { data: packedCoffeeLots },
         { data: packedList },
-        { data: roastingPlans }
+        { data: roastingPlans },
+        { data: repackSources }
     ] = await Promise.all([
         fetchData('machines'),
         fetchData('green_coffee'),
@@ -210,7 +211,8 @@ async function performTrackingSearch(rawCode) {
         fetchData('post_blend_components'),
         fetchData('packed_coffee_lots'),
         fetchData('packed_coffee'),
-        fetchData('roasting_plans')
+        fetchData('roasting_plans'),
+        fetchData('repack_sources')
     ]);
 
     const ctx = { greenCoffees, greenCoffeeIntake, blendIngredients, roastBatches, productionLotBatches, roastBatchGreenLots, greenCoffeeLots };
@@ -330,6 +332,43 @@ async function performTrackingSearch(rawCode) {
             compositionEl.innerHTML = `<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
                 <div style="font-weight: 700; margin-bottom: 8px;">Post-Blend Composition</div>
                 <ul style="list-style: none; margin: 0; padding: 0;">${rowsHtml || '<li style="color: var(--text-muted);">No components recorded</li>'}</ul>
+            </div>`;
+            compositionEl.classList.remove('hidden');
+        } else if (bulk && bulk.is_repack) {
+            // V2 Repack: a repacked lot's own chain is meaningless the same
+            // way a post-blend's is (it wasn't roasted, it was opened from
+            // already-finished stock) — mirrors the is_post_blend 'Packed'
+            // branch above exactly, since repack_sources always points at
+            // packed_coffee_lots (repack never opens another bulk directly).
+            // The coffee name is deliberately the SAME at every source (V2
+            // Repack never renames), so each row is labeled by its strip/lot
+            // code instead, to distinguish which physical bag it came from.
+            const sources = (repackSources || []).filter(s => s.repack_bulk_id === bulk.id);
+            const rowsHtml = sources.map(s => {
+                const plLot = (packedCoffeeLots || []).find(l => l.id === s.source_packed_lot_id);
+                const code = plLot ? (plLot.strip_code || plLot.lot_code) : 'Unknown';
+                const originLot = (plLot && plLot.production_lot_id) ? (lots || []).find(l => l.id === plLot.production_lot_id) : null;
+
+                const pcs = parseInt(s.pcs) || 0;
+                const kg = parseFloat(s.kg) || 0;
+                let detailHtml = '<span style="color: var(--text-muted); font-size: 0.8rem;">No further trace available</span>';
+                if (originLot) {
+                    const subChain = resolveLotChain(originLot, ctx);
+                    detailHtml = `<div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
+                        Process: ${subChain.processText} · Supplier: ${subChain.supplierText}<br>
+                        Green arrival: ${subChain.greenbeanDateText} · Roasted: ${subChain.roastDateText}
+                    </div>`;
+                }
+
+                return `<li style="margin-bottom: 10px; padding-left: 12px; border-left: 2px solid var(--border-color);">
+                    <div style="font-weight: 600; font-family: monospace;">${code} <span style="font-weight: 400; color: var(--text-muted); font-family: inherit; font-size: 0.8rem;">— ${pcs} pcs &middot; ${kg.toFixed(2)} kg</span></div>
+                    ${detailHtml}
+                </li>`;
+            }).join('');
+
+            compositionEl.innerHTML = `<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+                <div style="font-weight: 700; margin-bottom: 8px;">Repack Composition — opened from</div>
+                <ul style="list-style: none; margin: 0; padding: 0;">${rowsHtml || '<li style="color: var(--text-muted);">No source lots recorded</li>'}</ul>
             </div>`;
             compositionEl.classList.remove('hidden');
         } else {

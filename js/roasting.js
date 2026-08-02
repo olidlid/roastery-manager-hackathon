@@ -2109,11 +2109,17 @@ async function deleteBatch(id) {
 // see database/bulk_production_date_migration.sql).
 async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, weightKg, roastDate) {
     const { data: bulkList } = await fetchData('bulk_roasted_coffee');
+    // V2 Repack: excludes is_repack rows on purpose — a repack bulk can
+    // share the exact same coffee+machine+production_date key as a fresh
+    // roast (its date is chosen from the opened lots' own roast dates, see
+    // openNewRepackModal), and this match must never merge a real roast's
+    // weight into stock that was only opened/re-pooled, not roasted today.
     const existingBulk = bulkList.find(b =>
         b.coffee_type === type &&
         (type === 'Single' ? b.single_coffee_id === singleId : b.blend_recipe_id === blendId) &&
         b.machine_id === machineId &&
-        b.production_date === roastDate
+        b.production_date === roastDate &&
+        !b.is_repack
     );
 
     if (existingBulk) {
@@ -3256,7 +3262,12 @@ async function printStickerLabel(id) {
     // viewport, where 100vh would mean the whole browser window instead —
     // each context appends its own height rule (100% vs 100vh).
     const stickerStyleBase = `
-        @page { size: 50mm 25mm; margin: 1mm; }
+        /* No @page size on purpose — that's what lets Chrome's print dialog
+           offer its own Layout: Portrait/Landscape control (see
+           buildFixedLabelDocument in packing.js for the full reasoning).
+           Irrelevant to the on-screen preview below, which is sized by its
+           own wrapper div. */
+        @page { margin: 1mm; }
         body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
         .sticker-item {
             width: 100%; box-sizing: border-box;
@@ -3302,25 +3313,25 @@ async function printStickerLabel(id) {
     }
 
     document.getElementById('btn-execute-label-print').addEventListener('click', () => {
-        // Same printer-driver rotation workaround as buildFixedLabelDocument
-        // (packing.js) — see that function's comment for the geometry. The
-        // preview above always stays landscape; only the actual print
-        // window's @page/.sticker-item CSS change when the toggle is on.
-        const rotate = companySettings.label_rotate_90 === true;
-        const printStickerCss = rotate
-            ? `@page { size: 25mm 50mm; margin: 1mm; }
-               body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
-               .sticker-item {
-                   width: 48mm; height: 23mm; box-sizing: border-box;
-                   display: flex; flex-direction: column; align-items: center; justify-content: center;
-                   gap: 0.6mm; text-align: center; padding: 0 1mm;
-                   position: relative; left: 23mm; top: 0;
-                   transform: rotate(90deg); transform-origin: top left;
-               }
-               .sticker-svg { max-width: 100%; max-height: 11mm; width: auto; height: auto; display: block; margin: 0 auto; }
-               .lbl-line { font-size: 11px; font-weight: 700; line-height: 1; }
-               .lbl-line-bold { font-size: 13px; }`
-            : `${stickerStyleBase} .sticker-item { height: 100vh; }`;
+        // Orientation comes from the browser's own print dialog now, not an
+        // app setting — same approach as buildFixedLabelDocument (packing.js);
+        // see that function's comment for why @page carries no size and why
+        // the content has to be rotated back on portrait media. vh/vw resolve
+        // to the page box, so this adapts to whatever media the driver uses.
+        // The on-screen preview above is unaffected (it's not paged media).
+        const printStickerCss = `${stickerStyleBase}
+            .sticker-item { height: 100vh; }
+            @media print and (orientation: portrait) {
+                .sticker-item {
+                    width: 100vh;
+                    height: 100vw;
+                    position: relative;
+                    left: 100vw;
+                    top: 0;
+                    transform: rotate(90deg);
+                    transform-origin: top left;
+                }
+            }`;
 
         const printWin = window.open('', '', 'width=400,height=300');
         printWin.document.write(`
@@ -3479,12 +3490,16 @@ async function handleBarcodeScan(barcode) {
     const isFifoStripBarcode = /^\d{7}$/.test(barcode);
 
     if (isFifoStripBarcode) {
-        // V2 FIFO strip code: only meaningful while a dispatch checkout
-        // modal is open — it registers itself as the active handler (see
-        // js/packing.js openDispatchCheckoutModal) so scans land in the
-        // right cart instead of silently doing nothing.
-        if (typeof window.activeDispatchCheckoutHandler !== 'function') {
-            await showWarningModal('Scan this inside an order\'s Checkout screen (Packing → Order Requests → Prepare) — no checkout is open right now.', false);
+        // V2 FIFO strip code: only meaningful while a screen that consumes a
+        // packed lot by strip code is open — dispatch checkout (see
+        // js/packing.js openDispatchCheckoutModal) or New Repack (see
+        // openNewRepackModal). Whichever registered itself most recently as
+        // the active handler wins; scans do nothing if neither is open.
+        const activeStripCodeHandler = (typeof window.activeRepackScanHandler === 'function')
+            ? window.activeRepackScanHandler
+            : (typeof window.activeDispatchCheckoutHandler === 'function' ? window.activeDispatchCheckoutHandler : null);
+        if (!activeStripCodeHandler) {
+            await showWarningModal('Scan this inside an order\'s Checkout screen (Packing → Order Requests → Prepare) or the New Repack screen (Packing → Repack) — neither is open right now.', false);
             return;
         }
 
@@ -3511,7 +3526,7 @@ async function handleBarcodeScan(barcode) {
             return;
         }
 
-        await window.activeDispatchCheckoutHandler(matchedLot.id, sizeDef.gram, multRaw > 0 ? multRaw : null);
+        await activeStripCodeHandler(matchedLot.id, sizeDef.gram, multRaw > 0 ? multRaw : null);
         return;
     }
 

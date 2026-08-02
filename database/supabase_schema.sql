@@ -86,9 +86,15 @@ CREATE TABLE IF NOT EXISTS public.company_settings (
                                                  -- Replaces the old label_show_* + label_width/label_height
                                                  -- columns above, which are no longer read by the app but were
                                                  -- left in place rather than dropped.
-    label_rotate_90 BOOLEAN DEFAULT FALSE        -- added 2026-07-18: printer-driver workaround, rotates the
-                                                 -- fixed 50x25mm label content 90 degrees for printers that
-                                                 -- force portrait media regardless of the declared @page size.
+    label_rotate_90 BOOLEAN DEFAULT FALSE        -- legacy (added 2026-07-18, retired 2026-07-30): was a
+                                                 -- printer-driver workaround that rotated the 50x25mm label
+                                                 -- content 90 degrees. Label orientation is now chosen in the
+                                                 -- browser's own print dialog (the label documents declare no
+                                                 -- @page size so Chrome exposes its Layout control, and
+                                                 -- auto-rotate their content on portrait media via
+                                                 -- @media print and (orientation: portrait)) — see
+                                                 -- buildFixedLabelDocument in js/packing.js. Nothing reads or
+                                                 -- writes this column anymore; left in place, not dropped.
 );
 
 -- 4. Green bean inventory
@@ -288,7 +294,8 @@ CREATE TABLE IF NOT EXISTS public.bulk_roasted_coffee (
     custom_blend_code TEXT,               -- V2 1I-a/1I-b: date-based identity code for a post-blend
     source_plan_id INTEGER REFERENCES public.roasting_plans(id) ON DELETE SET NULL,  -- V2 1I-b: links a recipe-assembled post-blend back to its parent roasting_plans row, so composition is derived from that parent's sub-plans (parent_plan_id) instead of a components table
     custom_coffee_code TEXT,              -- V2 Custom Blend: user-typed short code for a custom blend (distinct from custom_blend_code, which is the auto-generated date-based bulk/lot code)
-    production_date DATE NOT NULL DEFAULT CURRENT_DATE  -- V2: re-keys bulk pooling by (coffee, machine, roast day) instead of pooling indefinitely — see bulk_production_date_migration.sql
+    production_date DATE NOT NULL DEFAULT CURRENT_DATE,  -- V2: re-keys bulk pooling by (coffee, machine, roast day) instead of pooling indefinitely — see bulk_production_date_migration.sql
+    is_repack BOOLEAN DEFAULT FALSE        -- ⚠️ NOT YET APPLIED TO PRODUCTION — V2 Repack: true for a bulk row created by opening finished packed stock back into loose bulk for re-packing (never renames the coffee — see repack_sources below). Run database/repack_migration.sql first. See "Database Schema" rules at the top of CLAUDE.md.
 );
 
 -- 12. Waste inventory (failed test batches etc.)
@@ -620,6 +627,22 @@ CREATE TABLE IF NOT EXISTS public.post_blend_components (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 30. ⚠️ NOT YET APPLIED TO PRODUCTION — V2 Repack: one row per source
+-- packed_coffee_lots row opened into a repack bulk (bulk_roasted_coffee.
+-- is_repack = true above). Mirrors post_blend_components' role, but always
+-- points at packed_coffee_lots (repack only ever opens FINISHED packed
+-- stock, never another bulk row directly) — js/tracking.js walks this to
+-- resolve a repacked lot's full ancestry. Run database/repack_migration.sql
+-- first; see "Database Schema" rules at the top of CLAUDE.md.
+CREATE TABLE IF NOT EXISTS public.repack_sources (
+    id SERIAL PRIMARY KEY,
+    repack_bulk_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE CASCADE,
+    source_packed_lot_id INTEGER REFERENCES public.packed_coffee_lots(id) ON DELETE SET NULL,
+    pcs INTEGER NOT NULL DEFAULT 0,
+    kg NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ----------------------------------------------------------------------------
@@ -641,7 +664,8 @@ BEGIN
     'stock_takes','stock_take_items',
     'green_coffee_lots','packed_coffee_lots','production_lots',
     'roast_batch_green_lots','production_lot_batches',
-    'dispatch_lot_items','post_blend_components','code_definitions'
+    'dispatch_lot_items','post_blend_components','code_definitions',
+    'repack_sources' -- ⚠️ NOT YET APPLIED — see database/repack_migration.sql
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);

@@ -1382,6 +1382,71 @@ tbody tr:hover {
     color: #fbbf24 !important; /* bright glowing amber for dark mode */
 }
 
+/* V2 Repack: rose is the one hue not already claimed by badge-single (cyan),
+   badge-blend (purple), badge-pre-blend (green), or badge-post-blend
+   (amber) — kept distinct on purpose so a repacked bulk never reads as one
+   of those. The same rose family is reused for the repack card surface AND
+   the New Repack modal accent (border/header/submit button) per explicit
+   user request: one consistent color across card + modal so attention
+   converges on "this is a repack" wherever it appears. */
+.badge-repack {
+    background: rgba(190, 24, 93, 0.12) !important;
+    color: #be185d !important; /* high contrast rose for light mode */
+}
+
+[data-theme="dark"] .badge-repack {
+    background: rgba(244, 114, 182, 0.15) !important;
+    color: #f472b6 !important; /* bright glowing rose for dark mode */
+}
+
+.card-repack {
+    background: rgba(190, 24, 93, 0.06);
+    border: 1px solid rgba(190, 24, 93, 0.35) !important;
+}
+
+[data-theme="dark"] .card-repack {
+    background: rgba(244, 114, 182, 0.08);
+    border-color: rgba(244, 114, 182, 0.35) !important;
+}
+
+.text-repack {
+    color: #be185d;
+}
+
+[data-theme="dark"] .text-repack {
+    color: #f472b6;
+}
+
+.modal-repack-header {
+    border-bottom-color: rgba(190, 24, 93, 0.35) !important;
+}
+
+[data-theme="dark"] .modal-repack-header {
+    border-bottom-color: rgba(244, 114, 182, 0.35) !important;
+}
+
+.btn-repack-accent {
+    background: #be185d !important;
+    border-color: #be185d !important;
+    color: #ffffff !important;
+}
+
+.btn-repack-accent:hover {
+    background: #9d174d !important;
+    border-color: #9d174d !important;
+}
+
+[data-theme="dark"] .btn-repack-accent {
+    background: #f472b6 !important;
+    border-color: #f472b6 !important;
+    color: #4a0d29 !important;
+}
+
+[data-theme="dark"] .btn-repack-accent:hover {
+    background: #f9a8d4 !important;
+    border-color: #f9a8d4 !important;
+}
+
 /* ==========================================================================
    TABLE COLUMN FILTERS (MULTI-SELECT DROPDOWN)
    ========================================================================== */

@@ -91,13 +91,10 @@ let companySettings = {
         roasting: { coffee_name: true, machine: true, coffee_code: true },
         packed: { code: true, coffee_name: true, dates: true, machine: true },
     },
-    // Some thermal printer drivers force their own fixed (portrait) media
-    // orientation regardless of the page's own declared size, so the correct
-    // landscape 50x25mm label preview still comes out rotated on paper. This
-    // is a per-printer quirk, not a bug in every setup, so it's an opt-in
-    // toggle rather than always-on — see buildFixedLabelDocument (packing.js)
-    // and printStickerLabel (roasting.js) for where it's applied.
-    label_rotate_90: false,
+    // label_rotate_90 used to live here as an opt-in printer-orientation
+    // workaround. Removed 2026-07-30 — orientation is chosen in the browser's
+    // own print dialog now (see buildFixedLabelDocument in js/packing.js). The
+    // DB column remains as a legacy no-op; nothing reads or writes it.
 };
 
 // Seed initial offline mock databases (used if not connected to Supabase)
@@ -153,7 +150,7 @@ const MOCK_DB = {
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: true, roasting_batch_delete: true, roasting_batch_approve: true,
                 blend_view: true, blend_add: true, blend_edit: true, blend_delete: true,
                 production_potential_view: true,
-                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true, packing_dispatch_checkout: true,
+                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_repack: true, packing_completed_view: true, packing_dispatch_checkout: true,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
@@ -174,7 +171,7 @@ const MOCK_DB = {
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: true, roasting_batch_delete: true, roasting_batch_approve: true,
                 blend_view: true, blend_add: true, blend_edit: true, blend_delete: true,
                 production_potential_view: true,
-                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true, packing_dispatch_checkout: true,
+                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_repack: true, packing_completed_view: true, packing_dispatch_checkout: true,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
@@ -195,7 +192,7 @@ const MOCK_DB = {
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: true, roasting_batch_delete: true, roasting_batch_approve: true,
                 blend_view: true, blend_add: true, blend_edit: true, blend_delete: true,
                 production_potential_view: true,
-                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true, packing_dispatch_checkout: true,
+                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_repack: true, packing_completed_view: true, packing_dispatch_checkout: true,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: false, customer_edit: false, customer_delete: false,
@@ -216,7 +213,7 @@ const MOCK_DB = {
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
                 blend_view: true, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: true,
-                packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false, packing_dispatch_checkout: false,
+                packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_repack: false, packing_completed_view: false, packing_dispatch_checkout: false,
                 sales_request_view: false, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
@@ -237,7 +234,7 @@ const MOCK_DB = {
                 roasting_batch_view: false, roasting_batch_add: false, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
                 blend_view: false, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: false,
-                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_completed_view: true, packing_dispatch_checkout: true,
+                packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_repack: true, packing_completed_view: true, packing_dispatch_checkout: true,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
@@ -258,7 +255,7 @@ const MOCK_DB = {
                 roasting_batch_view: false, roasting_batch_add: false, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
                 blend_view: false, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: false,
-                packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_completed_view: false, packing_dispatch_checkout: false,
+                packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_repack: false, packing_completed_view: false, packing_dispatch_checkout: false,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: false,
@@ -436,9 +433,6 @@ function applyCompanySettings() {
         document.getElementById('sett-packed-label-show-dates').checked = packedLayout.dates !== false;
         document.getElementById('sett-packed-label-show-machine').checked = packedLayout.machine !== false;
         document.getElementById('sett-packed-label-barcode-height').value = packedLayout.barcode_height_mm || 18;
-    }
-    if (document.getElementById('sett-label-rotate-90')) {
-        document.getElementById('sett-label-rotate-90').checked = companySettings.label_rotate_90 === true;
     }
 }
 

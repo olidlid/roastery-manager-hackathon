@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=16">
+    <link rel="stylesheet" href="css/styles.css?v=17">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -65,7 +65,7 @@
             if (btn) {
                 var icon = btn.querySelector('i');
                 if (icon) {
-                    icon.className = theme === 'dark' ? 'lucide-sun' : 'lucide-moon';
+                    icon.className = theme === 'dark' ? 'icon-sun' : 'icon-moon';
                 }
             }
         }
@@ -109,7 +109,7 @@
     <div id="config-overlay" class="overlay hidden">
         <div class="overlay-card">
             <div class="overlay-header">
-                <i class="lucide-database" style="font-size: 2.5rem; color: var(--primary);"></i>
+                <i class="icon-database" style="font-size: 2.5rem; color: var(--primary);"></i>
                 <h2 class="overlay-title" data-i18n="db_title">Cloud Database Setup</h2>
                 <p class="overlay-subtitle" data-i18n="db_subtitle">Connect to your Supabase project instance</p>
             </div>
@@ -190,7 +190,7 @@
     <div id="onboarding-overlay" class="overlay hidden">
         <div class="overlay-card">
             <div class="overlay-header">
-                <i class="lucide-sliders" style="font-size: 2.5rem; color: var(--primary);"></i>
+                <i class="icon-sliders" style="font-size: 2.5rem; color: var(--primary);"></i>
                 <h2 class="overlay-title" data-i18n="onboard_header">Onboarding Settings</h2>
                 <p class="overlay-subtitle" data-i18n="onboard_subtitle">Configure your default roastery preferences</p>
             </div>
@@ -252,56 +252,56 @@
             
             <ul class="sidebar-menu">
                 <li class="menu-item active" data-target="sec-dashboard">
-                    <i class="lucide-layout-dashboard"></i>
+                    <i class="icon-layout-dashboard"></i>
                     <span data-i18n="nav_dashboard">Dashboard</span>
                 </li>
                 <li class="menu-item has-dropdown" id="menu-inventory">
-                    <i class="lucide-package-open"></i>
+                    <i class="icon-package-open"></i>
                     <span data-i18n="nav_inventory">Inventory</span>
                     <svg class="dropdown-arrow" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </li>
                 <ul class="sidebar-submenu" id="submenu-inventory">
                     <li class="menu-subitem" data-target="sec-greenbean" id="subitem-greenbean">
-                        <i class="lucide-leaf"></i>
+                        <i class="icon-leaf"></i>
                         <span data-i18n="nav_inv_greenbean">Greenbean</span>
                     </li>
                     <li class="menu-subitem" data-target="sec-bulk-roasted" id="subitem-bulk-roasted">
-                        <i class="lucide-coffee"></i>
+                        <i class="icon-coffee"></i>
                         <span data-i18n="nav_inv_bulk">Bulk Roasted</span>
                     </li>
                     <li class="menu-subitem" data-target="sec-packed-coffee" id="subitem-packed-coffee">
-                        <i class="lucide-archive"></i>
+                        <i class="icon-archive"></i>
                         <span data-i18n="nav_inv_packed">Packed Coffee</span>
                     </li>
                 </ul>
                 <li class="menu-item" data-target="sec-roasting">
-                    <i class="lucide-flame"></i>
+                    <i class="icon-flame"></i>
                     <span data-i18n="nav_roasting">Production</span>
                     <span id="badge-nav-roasting" class="nav-notif-badge hidden"></span>
                 </li>
                 <li class="menu-item" data-target="sec-packing">
-                    <i class="lucide-archive"></i>
+                    <i class="icon-archive"></i>
                     <span data-i18n="nav_packing">Packing</span>
                 </li>
                 <li class="menu-item" data-target="sec-customers">
-                    <i class="lucide-users"></i>
+                    <i class="icon-users"></i>
                     <span data-i18n="nav_customers">Customers</span>
                 </li>
                 <li class="menu-item" data-target="sec-handover">
-                    <i class="lucide-truck"></i>
+                    <i class="icon-truck"></i>
                     <span data-i18n="nav_handover">Goods Handover</span>
                     <span id="badge-nav-handover" class="nav-notif-badge hidden"></span>
                 </li>
                 <li class="menu-item" data-target="sec-reports">
-                    <i class="lucide-bar-chart-2"></i>
+                    <i class="icon-bar-chart-2"></i>
                     <span data-i18n="nav_reports">Reports</span>
                 </li>
                 <li class="menu-item" data-target="sec-tracking">
-                    <i class="lucide-search"></i>
+                    <i class="icon-search"></i>
                     <span data-i18n="nav_tracking">Tracking</span>
                 </li>
                 <li class="menu-item" data-target="sec-settings">
-                    <i class="lucide-settings"></i>
+                    <i class="icon-settings"></i>
                     <span data-i18n="nav_settings">Setting</span>
                 </li>
             </ul>
@@ -320,7 +320,7 @@
                     </div>
                 </div>
                 <button id="btn-logout" class="btn btn-secondary btn-sm" style="width: 100%;">
-                    <i class="lucide-log-out"></i> <span data-i18n="btn_logout">Log Out</span>
+                    <i class="icon-log-out"></i> <span data-i18n="btn_logout">Log Out</span>
                 </button>
             </div>
         </aside>
@@ -357,7 +357,7 @@
                     
                     <!-- Dark/Light Theme Toggle -->
                     <button id="theme-toggle" class="theme-toggle-btn" type="button" onclick="if(typeof toggleTheme === 'function') toggleTheme()">
-                        <i class="lucide-sun"></i>
+                        <i class="icon-sun"></i>
                     </button>
                 </div>
             </div>
@@ -370,7 +370,7 @@
                 <div class="metrics-grid">
                     <div class="card metric-card">
                         <div class="metric-icon-box warning">
-                            <i class="lucide-package-open"></i>
+                            <i class="icon-package-open"></i>
                         </div>
                         <div class="metric-info">
                             <span id="stat-greenbean" class="metric-value">0 kg</span>
@@ -379,7 +379,7 @@
                     </div>
                     <div class="card metric-card">
                         <div class="metric-icon-box primary">
-                            <i class="lucide-coffee"></i>
+                            <i class="icon-coffee"></i>
                         </div>
                         <div class="metric-info">
                             <span id="stat-bulk" class="metric-value">0 kg</span>
@@ -388,7 +388,7 @@
                     </div>
                     <div class="card metric-card">
                         <div class="metric-icon-box success">
-                            <i class="lucide-archive"></i>
+                            <i class="icon-archive"></i>
                         </div>
                         <div class="metric-info">
                             <span id="stat-packed" class="metric-value">0 units</span>
@@ -397,7 +397,7 @@
                     </div>
                     <div class="card metric-card">
                         <div class="metric-icon-box danger">
-                            <i class="lucide-shopping-cart"></i>
+                            <i class="icon-shopping-cart"></i>
                         </div>
                         <div class="metric-info">
                             <span id="stat-pending-orders" class="metric-value">0 units</span>
@@ -566,7 +566,7 @@
                                         Export Excel
                                     </button>
                                     <button id="btn-add-lot" class="btn btn-primary btn-sm" data-i18n="btn_add_lot">
-                                        <i class="lucide-plus"></i> Add Lot
+                                        <i class="icon-plus"></i> Add Lot
                                     </button>
                                 </div>
                             </div>
@@ -612,7 +612,7 @@
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                 <h3 class="card-title" style="margin-bottom: 0;" data-i18n="outbound_history_title">Outbound Shipments</h3>
                                 <button id="btn-add-outbound" class="btn btn-primary btn-sm" data-i18n="btn_add_outbound">
-                                    <i class="lucide-plus"></i> Add Shipment
+                                    <i class="icon-plus"></i> Add Shipment
                                 </button>
                             </div>
                             <div class="table-container">
@@ -749,7 +749,7 @@
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                 <h3 class="card-title" style="margin-bottom: 0;" data-i18n="plan_title">Plans</h3>
                                 <button id="btn-add-plan" class="btn btn-primary btn-sm" data-i18n="btn_create_plan">
-                                    <i class="lucide-calendar-plus"></i> Create Roasting Plan
+                                    <i class="icon-calendar-plus"></i> Create Roasting Plan
                                 </button>
                             </div>
                             <div class="table-container">
@@ -797,7 +797,7 @@
                                         Export Excel
                                     </button>
                                     <button id="btn-add-batch" class="btn btn-primary btn-sm" data-i18n="btn_log_batch">
-                                        <i class="lucide-flame"></i> Log Roast Batch
+                                        <i class="icon-flame"></i> Log Roast Batch
                                     </button>
                                 </div>
                             </div>
@@ -890,7 +890,7 @@
                                         Export Excel
                                     </button>
                                     <button id="btn-add-recipe" class="btn btn-primary btn-sm" data-i18n="btn_add_recipe">
-                                        <i class="lucide-plus"></i> Add Blend Recipe
+                                        <i class="icon-plus"></i> Add Blend Recipe
                                     </button>
                                 </div>
                             </div>
@@ -930,7 +930,7 @@
                                     <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="custom_blend_hint">Ad-hoc blends mixed from existing stock — not saved as a reusable recipe.</p>
                                 </div>
                                 <button type="button" id="btn-add-custom-blend" class="btn btn-primary btn-sm" data-i18n="btn_add_custom_blend">
-                                    <i class="lucide-plus"></i> Add Custom Blend
+                                    <i class="icon-plus"></i> Add Custom Blend
                                 </button>
                             </div>
                             <div class="table-container">
@@ -966,7 +966,7 @@
                                     <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="hint_code_definitions">Trade name Sales sees for each coffee code — stock shown is the total across every origin sharing it</p>
                                 </div>
                                 <button id="btn-add-code-def" class="btn btn-primary btn-sm" data-i18n="btn_add_code_def">
-                                    <i class="lucide-plus"></i> Add Code Definition
+                                    <i class="icon-plus"></i> Add Code Definition
                                 </button>
                             </div>
                             <div class="table-container">
@@ -1068,6 +1068,7 @@
                 <div style="margin-bottom: 24px; border-bottom: 1px solid var(--border);">
                     <nav style="display: flex; gap: 24px;" id="packing-tabs-nav">
                         <button class="tab-btn active" data-target="tab-ready-to-pack" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--primary); cursor: pointer; border-bottom: 2px solid var(--primary);" data-i18n="tab_ready_to_pack">Ready to Pack</button>
+                        <button class="tab-btn" data-target="tab-repack" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_repack">Repack</button>
                         <button class="tab-btn" data-target="tab-order-request" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_order_request">Order Requests</button>
                         <button class="tab-btn" data-target="tab-packing-records" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Packing Records</button>
                         <button class="tab-btn" data-target="tab-packing-history" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Completed Order</button>
@@ -1213,6 +1214,36 @@
                     </div>
                 </div>
 
+                <div id="tab-repack" class="packing-tab-content hidden">
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
+                            <div>
+                                <h3 class="card-title" style="font-size: 1.5rem; margin-bottom: 4px; font-weight: 700;" data-i18n="repack_title">Repack</h3>
+                                <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="repack_hint">Open finished packed stock back into bulk, then pack it down again.</p>
+                            </div>
+                            <button type="button" id="btn-new-repack" class="btn btn-sm btn-repack-accent" style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
+                                <i class="icon-recycle va-middle-mr-1"></i><span data-i18n="btn_new_repack">New Repack</span>
+                            </button>
+                        </div>
+                        <div style="overflow-x: auto;">
+                            <table class="table" style="width: 100%;">
+                                <thead>
+                                    <tr>
+                                        <th data-i18n="th_repack_date">Date</th>
+                                        <th data-i18n="th_repack_coffee">Coffee</th>
+                                        <th data-i18n="th_repack_opened">Opened</th>
+                                        <th style="text-align:right;" data-i18n="th_repack_became_bulk">Became Bulk</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="repack-history-tbody">
+                                    <!-- Dynamic repack history rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="repack-history-empty" class="text-center-muted hidden" style="padding: 24px 0;" data-i18n="repack_history_empty">No repacks recorded yet.</div>
+                    </div>
+                </div>
+
                 <div id="tab-order-request" class="packing-tab-content hidden">
                     <div class="card">
                         <h3 class="card-title" data-i18n="pack_req_title">Preparing Sales Orders</h3>
@@ -1290,7 +1321,7 @@
                                 <div style="display: flex; gap: 8px; align-items: center;">
                                     <input type="text" id="request-search" class="form-control" data-i18n-placeholder="ph_search_orders" placeholder="Search orders..." style="width: 200px; height: 32px; font-size: 0.8rem;" oninput="handleRequestSearchInput()">
                                     <button id="btn-create-request" class="btn btn-primary btn-sm" data-i18n="btn_submit_req">
-                                        <i class="lucide-shopping-cart"></i> Submit Sales Request
+                                        <i class="icon-shopping-cart"></i> Submit Sales Request
                                     </button>
                                 </div>
                             </div>
@@ -1833,7 +1864,7 @@
                         <input type="text" id="tracking-search-input" class="form-control" style="flex: 1; min-width: 220px;" data-i18n-placeholder="tracking_search_placeholder" placeholder="e.g. LOT-ETH01-M1-20260711" autocomplete="off">
                         <button type="submit" class="btn btn-primary" data-i18n="btn_tracking_search">Search</button>
                         <button type="button" id="btn-tracking-scan" class="btn btn-secondary" data-i18n="btn_tracking_scan">
-                            <i class="lucide-scan-line" style="vertical-align: middle; margin-right: 4px;"></i><span data-i18n="btn_tracking_scan_label">Scan</span>
+                            <i class="icon-scan-line" style="vertical-align: middle; margin-right: 4px;"></i><span data-i18n="btn_tracking_scan_label">Scan</span>
                         </button>
                     </form>
                 </div>
@@ -1941,7 +1972,7 @@
                                 </div>
                                 <div style="padding-top:16px; border-top:1px solid var(--border); margin-top:12px;">
                                     <button id="btn-change-password" class="btn btn-secondary btn-sm">
-                                        <i class="lucide-key"></i> <span data-i18n="btn_change_password">Change Password</span>
+                                        <i class="icon-key"></i> <span data-i18n="btn_change_password">Change Password</span>
                                     </button>
                                 </div>
                             </div>
@@ -2081,7 +2112,7 @@
                                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                             <h3 class="card-title" style="margin-bottom: 0;" data-i18n="tab_sett_machines">Machine Settings</h3>
                                             <button id="btn-add-machine" class="btn btn-primary btn-sm" data-i18n="btn_add_machine">
-                                                <i class="lucide-plus"></i> Add Machine
+                                                <i class="icon-plus"></i> Add Machine
                                             </button>
                                         </div>
                                         <div class="table-container">
@@ -2123,7 +2154,7 @@
                                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                             <h3 class="card-title" style="margin-bottom: 0;" data-i18n="title_packaging_sizes">Packaging Sizes</h3>
                                             <button id="btn-add-pack-size" class="btn btn-primary btn-sm" data-i18n="btn_add_size">
-                                                <i class="lucide-plus"></i> Add Size
+                                                <i class="icon-plus"></i> Add Size
                                             </button>
                                         </div>
                                         <div class="table-container">
@@ -2263,24 +2294,13 @@
                                             </div>
                                         </form>
 
-                                        <div style="border-top: 1px solid var(--border);"></div>
-
-                                        <!-- Sub-section: printer orientation workaround. Some thermal
-                                             printer drivers force their own fixed (portrait) media
-                                             regardless of this app's declared @page size, so the correct
-                                             landscape 50x25mm preview still prints rotated on paper. This
-                                             rotates the label content 90° so it comes out reading correctly
-                                             on those printers — leave off if labels already print fine. -->
-                                        <form id="settings-label-rotate-form">
-                                            <label class="form-label" style="font-weight: 700;" data-i18n="lbl_label_orientation">Print Orientation</label>
-                                            <p style="margin: 2px 0 8px; font-size:0.75rem; color:var(--text-muted);" data-i18n="lbl_label_rotate_hint">Only enable this if your printer prints these 50×25mm labels rotated (portrait instead of landscape).</p>
-                                            <label class="checkbox-container" style="display:flex; align-items:center; gap:8px;">
-                                                <input type="checkbox" id="sett-label-rotate-90"> <span data-i18n="lbl_label_rotate_chk">Rotate label 90° for printing</span>
-                                            </label>
-                                            <div style="display: flex; justify-content: flex-end; margin-top: 15px;">
-                                                <button type="submit" class="btn btn-primary btn-sm" data-i18n="btn_save_label">Save Label Settings</button>
-                                            </div>
-                                        </form>
+                                        <!-- Print Orientation sub-section removed 2026-07-30 per user
+                                             request: landscape/portrait is now chosen in the browser's
+                                             own print dialog (Layout) instead of here. The label
+                                             documents deliberately declare no @page size so Chrome
+                                             exposes that control, and auto-rotate their content on
+                                             portrait media — see buildFixedLabelDocument in
+                                             js/packing.js. -->
 
                                     </div>
                                 </div>
@@ -2340,7 +2360,7 @@
                                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                             <h3 class="card-title" style="margin-bottom: 0;" data-i18n="users_title">System Account Roles</h3>
                                             <button id="btn-invite-user" class="btn btn-primary btn-sm" data-i18n="btn_invite_user">
-                                                <i class="lucide-user-plus"></i> Invite User
+                                                <i class="icon-user-plus"></i> Invite User
                                             </button>
                                         </div>
                                         <div class="table-container">
@@ -2545,18 +2565,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=21"></script>
+    <script src="js/translations.js?v=22"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
-    <script src="js/auth.js?v=9"></script>
+    <script src="js/auth.js?v=10"></script>
     <script src="js/greenbean.js?v=12"></script>
-    <script src="js/roasting.js?v=21"></script>
-    <script src="js/packing.js?v=58"></script>
+    <script src="js/roasting.js?v=23"></script>
+    <script src="js/packing.js?v=61"></script>
     <script src="js/sales.js?v=17"></script>
-    <script src="js/settings.js?v=15"></script>
-    <script src="js/tracking.js?v=7"></script>
-    <script src="js/app.js?v=73"></script>
+    <script src="js/settings.js?v=17"></script>
+    <script src="js/tracking.js?v=8"></script>
+    <script src="js/app.js?v=75"></script>
 </body>
 </html>

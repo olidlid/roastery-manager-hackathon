@@ -358,6 +358,7 @@ const PERMISSION_GROUPS = [
         { key: 'packing_order_view', label: 'View Order Requests' },
         { key: 'packing_records_view', label: 'View Records' },
         { key: 'packing_unpack', label: 'Unpack' },
+        { key: 'packing_repack', label: 'Repack' },
         { key: 'packing_completed_view', label: 'View Completed Orders' },
         { key: 'packing_dispatch_checkout', label: 'Checkout Order (POS Dispatch)' }
     ]},
@@ -818,27 +819,11 @@ document.getElementById('settings-packed-label-form').addEventListener('submit',
     });
 });
 
-// Printer-driver workaround (see index.html comment above the checkbox) —
-// a single flag applied to every fixed 50x25mm label print (roasting batch
-// log, packed coffee, green bean "Kecil"), not per-sticker-type, since it's
-// the same physical printer/driver causing it either way.
-document.getElementById('settings-label-rotate-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    companySettings.label_rotate_90 = document.getElementById('sett-label-rotate-90').checked;
-
-    if (isMockMode) {
-        localStorage.setItem('mock_company_settings', JSON.stringify(companySettings));
-    } else {
-        const { error } = await upsertData('company_settings', { id: 1, label_rotate_90: companySettings.label_rotate_90 });
-        if (error) {
-            alert("Failed to save label settings: " + error.message);
-            return;
-        }
-    }
-
-    applyCompanySettings();
-    alert(window.t("alert_settings_saved"));
-});
+// The settings-label-rotate-form handler that used to live here is gone
+// (2026-07-30): label orientation is chosen in the browser's print dialog
+// now, so there is no app-side flag left to persist. company_settings
+// .label_rotate_90 stays in the DB as a legacy column but is no longer read
+// or written by anything — see buildFixedLabelDocument in js/packing.js.
 
 // Logo base64 converter
 document.getElementById('sett-logo-upload').addEventListener('change', (e) => {

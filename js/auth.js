@@ -189,6 +189,11 @@ const PERMISSION_FALLBACKS = {
     // per-line "Ready" button in Order Requests — anyone who could already
     // view/prepare order requests keeps doing so by default.
     packing_dispatch_checkout: 'packing_order_view',
+    // Repack (V2) is a brand new action — existing production custom_roles
+    // rows have no packing_repack key yet. Falls back to packing_daily (the
+    // core "can pack from bulk" gate) since repack just feeds that same
+    // pipeline in reverse; admins can restrict it separately later.
+    packing_repack: 'packing_daily',
 };
 
 // Effective permission for a specific role object, honouring PERMISSION_FALLBACKS
