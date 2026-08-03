@@ -4295,13 +4295,15 @@ async function openNewRepackModal() {
         { data: packedLots },
         { data: roastBatches },
         { data: greenbeans },
-        { data: recipes }
+        { data: recipes },
+        { data: productionLots }
     ] = await Promise.all([
         fetchData('packed_coffee'),
         fetchData('packed_coffee_lots'),
         fetchData('roast_batches'),
         fetchData('green_coffee'),
-        fetchData('blend_recipes')
+        fetchData('blend_recipes'),
+        fetchData('production_lots')
     ]);
 
     const resolved = (packedList || []).map(item => {
@@ -4364,12 +4366,29 @@ async function openNewRepackModal() {
         }
         const group = groupMap.get(item.groupKey);
         lotsForItem.forEach(l => {
+            // roastDate is the lot's TRUE roast/production date — pulled from
+            // production_lots.production_date via the lot's own
+            // production_lot_id — NOT packed_date (when it was physically
+            // bagged, which can be days after the roast and is today's date
+            // for anything packed today). Getting this wrong here isn't
+            // cosmetic: it's what the oldest/newest/today picker below
+            // decides between, and what ultimately becomes the new repack
+            // bulk's own production_date (used for the printed exp date AND
+            // FIFO age) — the exact roast-date honesty the user asked for
+            // when this feature was designed. A manual/unlinked lot (no
+            // production_lot_id) has no roast date to draw from, so it falls
+            // back to packed_date — same fallback getOrCreatePackedCoffeeLot
+            // itself uses.
+            const productionLot = l.production_lot_id
+                ? (productionLots || []).find(pl => pl.id === l.production_lot_id)
+                : null;
+            const roastDate = productionLot ? productionLot.production_date : l.packed_date;
             group.lots.push({
                 lotId: l.id,
                 lotCode: l.lot_code,
                 stripCode: l.strip_code,
                 sizeG: parseInt(item.bag_size_g) || 0,
-                packedDate: l.packed_date,
+                roastDate,
                 remaining: parseInt(l.remaining_pcs) || 0,
                 packedCoffeeId: item.id,
                 machineId: item.machine_id
@@ -4382,7 +4401,12 @@ async function openNewRepackModal() {
         await showWarningModal('No packed stock with remaining lots is available to repack.', false);
         return;
     }
-    groups.forEach(g => g.lots.sort((a, b) => (a.packedDate || '').localeCompare(b.packedDate || '') || a.lotId - b.lotId));
+    // Sorted by the TRUE roast date (not packed_date) — this modal's whole
+    // point is picking the oldest ROASTED coffee, unlike Stock by Lot /
+    // dispatch checkout's FIFO elsewhere in the app, which intentionally
+    // sorts by packed_date (see openPackedLotsModal) since those screens are
+    // answering a different question ("which bag was filled first").
+    groups.forEach(g => g.lots.sort((a, b) => (a.roastDate || '').localeCompare(b.roastDate || '') || a.lotId - b.lotId));
 
     const coffeeOptionsHtml = groups.map((g, idx) => `<option value="${idx}">${g.label}</option>`).join('');
 
@@ -4453,7 +4477,7 @@ async function openNewRepackModal() {
         // must not force a decision that doesn't apply to this repack.
         const selectedDates = [...listEl.querySelectorAll('.repack-lot-row')]
             .filter(row => (parseInt(row.querySelector('.repack-lot-pcs').value) || 0) > 0)
-            .map(row => row.getAttribute('data-packed-date'))
+            .map(row => row.getAttribute('data-roast-date'))
             .filter(Boolean);
         const distinctDates = [...new Set(selectedDates)].sort();
 
@@ -4486,12 +4510,12 @@ async function openNewRepackModal() {
         const group = currentGroup();
         const pickFirstLabel = window.t ? window.t('badge_pick_first') : 'PICK FIRST';
         listEl.innerHTML = group.lots.map((lot, idx) => `
-            <div class="repack-lot-row" data-lot-id="${lot.lotId}" data-remaining="${lot.remaining}" data-size-g="${lot.sizeG}" data-packed-date="${lot.packedDate || ''}" data-packed-coffee-id="${lot.packedCoffeeId}" data-machine-id="${lot.machineId || ''}"
+            <div class="repack-lot-row" data-lot-id="${lot.lotId}" data-remaining="${lot.remaining}" data-size-g="${lot.sizeG}" data-roast-date="${lot.roastDate || ''}" data-packed-coffee-id="${lot.packedCoffeeId}" data-machine-id="${lot.machineId || ''}"
                 style="display:flex; align-items:center; gap:10px; padding:9px 11px; ${idx > 0 ? 'border-top:1px solid var(--border);' : ''}">
                 <div style="flex:1; min-width:0;">
                     <div style="font-size:0.78rem;">
                         <span class="text-repack" style="font-family:monospace; font-weight:700;">${lot.stripCode || lot.lotCode}</span>
-                        <span style="color:var(--text-secondary);"> &middot; ${lot.sizeG}g &middot; roast ${lot.packedDate || '-'}</span>
+                        <span style="color:var(--text-secondary);"> &middot; ${lot.sizeG}g &middot; roast ${lot.roastDate || '-'}</span>
                         ${idx === 0 ? `<span class="badge-repack" style="font-size:0.6rem; padding:1px 6px; border-radius:9999px; margin-left:4px;">${pickFirstLabel}</span>` : ''}
                     </div>
                     <div style="font-size:0.72rem; color:var(--text-muted);">${(window.t ? window.t('lbl_repack_stock_prefix') : 'stock')} ${lot.remaining} pcs</div>
@@ -4580,7 +4604,7 @@ async function openNewRepackModal() {
                 sizeG: parseFloat(row.getAttribute('data-size-g')) || 0,
                 packedCoffeeId: parseInt(row.getAttribute('data-packed-coffee-id')),
                 machineId: row.getAttribute('data-machine-id') ? parseInt(row.getAttribute('data-machine-id')) : null,
-                packedDate: row.getAttribute('data-packed-date') || null
+                roastDate: row.getAttribute('data-roast-date') || null
             }))
             .filter(r => r.pcs > 0);
 
@@ -4596,7 +4620,7 @@ async function openNewRepackModal() {
             }
         }
 
-        const distinctDates = [...new Set(rows.map(r => r.packedDate).filter(Boolean))];
+        const distinctDates = [...new Set(rows.map(r => r.roastDate).filter(Boolean))];
         let roastDate;
         if (distinctDates.length > 1) {
             const picked = document.querySelector('input[name="repack-roastdate"]:checked');
