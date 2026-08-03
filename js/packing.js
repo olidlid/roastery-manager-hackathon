@@ -4296,7 +4296,21 @@ async function openNewRepackModal() {
     ]);
 
     const resolved = (packedList || []).map(item => {
-        let name = item.custom_coffee_name || 'Roasted Coffee';
+        // `rawName` is what actually gets copied onto the new bulk row's
+        // coffee_name — kept EXACTLY as stored, suffix and all. A
+        // custom/manual packed_coffee row (no roast_batch_id) stores its
+        // name as "X (Single)"/"X (Blend)", which is also the naming
+        // convention every bulk_roasted_coffee row in this app already uses
+        // (see any Ready to Pack card) — stripping that suffix here would
+        // both violate "repack never renames the coffee" and desync the new
+        // bulk from the packed_coffee row getOrCreatePackedCoffeeRow later
+        // re-derives from bulk.coffee_name when this repack gets packed back
+        // down, silently splitting it into a differently-named stock row.
+        // `groupKey` strips the suffix ONLY for grouping/dropdown-label
+        // purposes (same stripping openPackedLotsModal already does for its
+        // own display), so "X (Single)" and a same-named roast_batch-linked
+        // "X" still group into one dropdown entry.
+        let rawName = item.custom_coffee_name || 'Roasted Coffee';
         let coffeeType = item.single_coffee_id ? 'Single' : (item.blend_recipe_id ? 'Blend' : null);
         let singleId = item.single_coffee_id || null;
         let blendId = item.blend_recipe_id || null;
@@ -4308,35 +4322,38 @@ async function openNewRepackModal() {
                 blendId = b.blend_recipe_id;
                 if (b.coffee_type === 'Single') {
                     const gb = (greenbeans || []).find(g => g.id === b.single_coffee_id);
-                    if (gb) name = gb.name;
+                    if (gb) rawName = gb.name;
                 } else {
                     const r = (recipes || []).find(rec => rec.id === b.blend_recipe_id);
-                    if (r) name = r.name;
+                    if (r) rawName = r.name;
                 }
             }
         }
-        name = name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
-        return { ...item, resolvedName: name, coffeeType, singleId, blendId };
+        const groupKey = rawName.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+        return { ...item, rawName, groupKey, coffeeType, singleId, blendId };
     });
 
     // V2 Repack must never rename a coffee — the group's identity
-    // (coffeeType/singleId/blendId/coffeeName) is captured ONCE here and
-    // copied verbatim onto the new bulk row in submitRepack, regardless of
-    // which specific lot within the group gets opened.
+    // (coffeeType/singleId/blendId/coffeeName) is captured ONCE here, from
+    // whichever item is encountered first for this groupKey, and copied
+    // verbatim onto the new bulk row in submitRepack regardless of which
+    // specific lot within the group gets opened. coffeeName keeps the raw
+    // (suffixed) name; the dropdown label below uses the clean groupKey.
     const groupMap = new Map();
     resolved.forEach(item => {
         const lotsForItem = (packedLots || []).filter(l => l.packed_coffee_id === item.id && (parseInt(l.remaining_pcs) || 0) > 0);
         if (lotsForItem.length === 0) return;
-        if (!groupMap.has(item.resolvedName)) {
-            groupMap.set(item.resolvedName, {
-                coffeeName: item.resolvedName,
+        if (!groupMap.has(item.groupKey)) {
+            groupMap.set(item.groupKey, {
+                label: item.groupKey,
+                coffeeName: item.rawName,
                 coffeeType: item.coffeeType,
                 singleId: item.singleId,
                 blendId: item.blendId,
                 lots: []
             });
         }
-        const group = groupMap.get(item.resolvedName);
+        const group = groupMap.get(item.groupKey);
         lotsForItem.forEach(l => {
             group.lots.push({
                 lotId: l.id,
@@ -4358,7 +4375,7 @@ async function openNewRepackModal() {
     }
     groups.forEach(g => g.lots.sort((a, b) => (a.packedDate || '').localeCompare(b.packedDate || '') || a.lotId - b.lotId));
 
-    const coffeeOptionsHtml = groups.map((g, idx) => `<option value="${idx}">${g.coffeeName}</option>`).join('');
+    const coffeeOptionsHtml = groups.map((g, idx) => `<option value="${idx}">${g.label}</option>`).join('');
 
     const html = `
         <form id="modal-new-repack-form">
