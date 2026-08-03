@@ -46,6 +46,8 @@ async function loadPackingSection() {
                     loadWasteInventorySection();
                 } else if (btn.getAttribute('data-target') === 'tab-repack') {
                     loadRepackHistorySection();
+                } else if (btn.getAttribute('data-target') === 'tab-stock-release') {
+                    loadStockReleaseSection();
                 }
             });
         });
@@ -56,6 +58,13 @@ async function loadPackingSection() {
         btnNewRepack.setAttribute('data-init', 'true');
         btnNewRepack.addEventListener('click', () => openNewRepackModal());
         btnNewRepack.style.display = hasPermission('packing_repack') ? '' : 'none';
+    }
+
+    const btnNewStockRelease = document.getElementById('btn-new-stock-release');
+    if (btnNewStockRelease && !btnNewStockRelease.hasAttribute('data-init')) {
+        btnNewStockRelease.setAttribute('data-init', 'true');
+        btnNewStockRelease.addEventListener('click', () => openNewStockReleaseModal());
+        btnNewStockRelease.style.display = hasPermission('packing_stock_release') ? '' : 'none';
     }
 
     const [
@@ -4648,5 +4657,511 @@ async function submitRepack(group, rows, roastDate) {
 
     await loadPackingSection();
     await loadRepackHistorySection();
+    scheduleDashboardRefresh();
+}
+
+// ============================================================================
+// V2 STOCK RELEASE — finished goods leaving stock WITHOUT a sales order
+// (Packing > Stock Release). The finished-goods sibling of
+// green_coffee_outbound, but header+items and lot-level. Entered directly by
+// the packing team, no approval step (explicit user decision) — the audit
+// trail is stock_releases.released_by + the packing_stock_release permission.
+// See database/stock_release_migration.sql — NOT YET APPLIED to production as
+// of writing.
+//
+// Deliberately NOT a Waste replacement: this records stock leaving in GOOD
+// condition, waste_inventory records damaged/discarded stock. There is no
+// 'Damaged' category on purpose, so one loss can never land in both.
+// ============================================================================
+
+// Category values are stored verbatim in stock_releases.category. 'Sales'
+// additionally requires sales_name, 'Other' additionally requires notes — see
+// stockReleaseCategoryNeeds() and the submit validation.
+const STOCK_RELEASE_CATEGORIES = [
+    { value: 'Sales', i18n: 'sr_cat_sales', fallback: 'Sales' },
+    { value: 'Sample', i18n: 'sr_cat_sample', fallback: 'Sample' },
+    { value: 'Internal', i18n: 'sr_cat_internal', fallback: 'Internal use' },
+    { value: 'Marketing', i18n: 'sr_cat_marketing', fallback: 'Marketing / event' },
+    { value: 'Other', i18n: 'sr_cat_other', fallback: 'Other' }
+];
+
+function stockReleaseCategoryLabel(value) {
+    const def = STOCK_RELEASE_CATEGORIES.find(c => c.value === value);
+    if (!def) return value || '-';
+    return window.t ? window.t(def.i18n) : def.fallback;
+}
+
+function stockReleaseCategoryNeeds(value) {
+    return {
+        salesName: value === 'Sales',
+        notes: value === 'Other'
+    };
+}
+
+async function loadStockReleaseSection() {
+    const [
+        { data: releases },
+        { data: releaseItems }
+    ] = await Promise.all([
+        fetchData('stock_releases'),
+        fetchData('stock_release_items')
+    ]);
+
+    const tbody = document.getElementById('stock-release-history-tbody');
+    const emptyEl = document.getElementById('stock-release-history-empty');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const rows = (releases || []).slice().sort((a, b) =>
+        (b.date || '').localeCompare(a.date || '') || (b.id || 0) - (a.id || 0)
+    );
+
+    if (emptyEl) emptyEl.classList.toggle('hidden', rows.length > 0);
+
+    tbody.innerHTML = rows.map(rel => {
+        const items = (releaseItems || []).filter(i => i.stock_release_id === rel.id);
+        const itemsText = items.length > 0
+            ? items.map(i => `${i.coffee_name || '?'} ${i.bag_size_g ? parseInt(i.bag_size_g) + 'g' : ''} &times;${i.qty}`).join('<br>')
+            : '-';
+        const totalQty = items.reduce((s, i) => s + (parseInt(i.qty) || 0), 0);
+        // "For / Notes" collapses the two category-specific fields into one
+        // readable column: Sales shows who took it, everything else shows the
+        // note. Both can be present, so they're joined rather than picked.
+        const forParts = [];
+        if (rel.sales_name) forParts.push(rel.sales_name);
+        if (rel.notes) forParts.push(rel.notes);
+        const isSales = rel.category === 'Sales';
+        return `
+            <tr>
+                <td style="white-space:nowrap;">${rel.date || '-'}</td>
+                <td>${isSales
+                    ? `<span style="font-size:0.7rem; font-weight:700; color:var(--primary); background:var(--primary-glow); padding:2px 7px; border-radius:9999px;">${stockReleaseCategoryLabel(rel.category)}</span>`
+                    : `<span style="color:var(--text-secondary);">${stockReleaseCategoryLabel(rel.category)}</span>`}</td>
+                <td style="font-size:0.82rem;">${itemsText}</td>
+                <td style="color:var(--text-secondary); font-size:0.82rem;">${forParts.join(' &middot; ') || '-'}</td>
+                <td style="color:var(--text-secondary); font-size:0.82rem;">${rel.released_by || '-'}</td>
+                <td style="text-align:right; font-weight:700; white-space:nowrap;">${totalQty} pcs</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Cart-based picker (user's explicit choice over a flat searchable list):
+// coffee select -> lot select -> qty -> Add, repeated per coffee, with the
+// cart listing every line across coffees. The one weakness of a
+// coffee-filtered picker — a scan for a DIFFERENT coffee failing — is solved
+// by resolving scans against ALL lots and switching the selects to whatever
+// matched (see the scan handler below), so scanning never depends on which
+// coffee happens to be selected.
+async function openNewStockReleaseModal() {
+    const [
+        { data: packedList },
+        { data: packedLots },
+        { data: roastBatches },
+        { data: greenbeans },
+        { data: recipes },
+        { data: salesAgents }
+    ] = await Promise.all([
+        fetchData('packed_coffee'),
+        fetchData('packed_coffee_lots'),
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('sales_agents')
+    ]);
+
+    // Same identity resolution as openNewRepackModal / openPackedLotsModal, so
+    // the coffee list reads identically everywhere in Packing. rawName keeps
+    // any "(Single)"/"(Blend)" suffix for the stored snapshot; groupKey strips
+    // it for grouping and display.
+    const resolved = (packedList || []).map(item => {
+        let rawName = item.custom_coffee_name || 'Roasted Coffee';
+        if (item.roast_batch_id) {
+            const b = (roastBatches || []).find(x => x.id === item.roast_batch_id);
+            if (b) {
+                if (b.coffee_type === 'Single') {
+                    const gb = (greenbeans || []).find(g => g.id === b.single_coffee_id);
+                    if (gb) rawName = gb.name;
+                } else {
+                    const r = (recipes || []).find(rec => rec.id === b.blend_recipe_id);
+                    if (r) rawName = r.name;
+                }
+            }
+        }
+        const groupKey = rawName.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+        return { ...item, rawName, groupKey };
+    });
+
+    const groupMap = new Map();
+    resolved.forEach(item => {
+        const lotsForItem = (packedLots || []).filter(l => l.packed_coffee_id === item.id && (parseInt(l.remaining_pcs) || 0) > 0);
+        if (lotsForItem.length === 0) return;
+        if (!groupMap.has(item.groupKey)) {
+            groupMap.set(item.groupKey, { label: item.groupKey, coffeeName: item.rawName, lots: [] });
+        }
+        const group = groupMap.get(item.groupKey);
+        lotsForItem.forEach(l => {
+            group.lots.push({
+                lotId: l.id,
+                lotCode: l.lot_code,
+                stripCode: l.strip_code,
+                sizeG: parseInt(item.bag_size_g) || 0,
+                packedDate: l.packed_date,
+                remaining: parseInt(l.remaining_pcs) || 0,
+                packedCoffeeId: item.id
+            });
+        });
+    });
+
+    const groups = [...groupMap.values()].filter(g => g.lots.length > 0);
+    if (groups.length === 0) {
+        await showWarningModal('No packed stock with remaining lots is available to release.', false);
+        return;
+    }
+    groups.forEach(g => g.lots.sort((a, b) => (a.packedDate || '').localeCompare(b.packedDate || '') || a.lotId - b.lotId));
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const categoryOptions = STOCK_RELEASE_CATEGORIES
+        .map(c => `<option value="${c.value}">${window.t ? window.t(c.i18n) : c.fallback}</option>`)
+        .join('');
+    const agentOptions = (salesAgents || [])
+        .filter(a => a.is_active !== false)
+        .map(a => `<option value="${a.name}"></option>`)
+        .join('');
+    const coffeeOptions = groups.map((g, idx) => `<option value="${idx}">${g.label}</option>`).join('');
+
+    const html = `
+        <form id="modal-stock-release-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="lbl_sr_date">Date</label>
+                    <input type="date" id="sr-date" class="form-control" value="${todayStr}" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="lbl_sr_category">Category</label>
+                    <select id="sr-category" class="form-control">${categoryOptions}</select>
+                </div>
+            </div>
+
+            <div id="sr-sales-name-wrap" class="form-group hidden" style="background: var(--primary-glow); border-radius: 8px; padding: 10px 11px;">
+                <label class="form-label" data-i18n="lbl_sr_sales_name">Sales Name</label>
+                <input type="text" id="sr-sales-name" class="form-control" list="sr-agent-list" autocomplete="off" placeholder="e.g. Budi">
+                <datalist id="sr-agent-list">${agentOptions}</datalist>
+                <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;" data-i18n="hint_sr_sales_name">Pick a registered sales agent, or type a new name.</div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" data-i18n="lbl_sr_scan">Scan strip code, then Enter</label>
+                <input type="text" id="sr-scan-input" class="form-control" placeholder="20037" autocomplete="off">
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="lbl_sr_coffee">Coffee</label>
+                    <select id="sr-coffee-select" class="form-control">${coffeeOptions}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="lbl_sr_lot">Lot</label>
+                    <select id="sr-lot-select" class="form-control"></select>
+                </div>
+            </div>
+            <div class="form-row" style="align-items: flex-end;">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="lbl_sr_qty">Qty (pcs)</label>
+                    <input type="number" id="sr-qty" class="form-control" value="1" min="1">
+                    <div id="sr-stock-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;"></div>
+                </div>
+                <div class="form-group">
+                    <button type="button" id="sr-btn-add" class="btn btn-secondary" style="width:100%;"><i class="icon-plus va-middle-mr-1"></i><span data-i18n="btn_sr_add">Add to list</span></button>
+                </div>
+            </div>
+
+            <div style="margin-top: 4px;">
+                <label class="form-label" data-i18n="lbl_sr_cart">Items to release</label>
+                <div id="sr-cart" style="border:1px solid var(--border); border-radius:8px; overflow:hidden;"></div>
+            </div>
+
+            <div class="form-group" style="margin-top: 14px;">
+                <label class="form-label" data-i18n="lbl_sr_notes">Notes</label>
+                <input type="text" id="sr-notes" class="form-control" placeholder="optional">
+                <div id="sr-notes-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;"></div>
+            </div>
+
+            <div style="display:flex; align-items:baseline; justify-content:space-between; border-top:1px solid var(--border); padding-top:12px; margin-top:6px;">
+                <span style="font-size:0.8rem; color:var(--text-secondary);" data-i18n="lbl_sr_total">Total released</span>
+                <span id="sr-total" style="font-size:1.5rem; font-weight:700; color:var(--primary);">0 pcs</span>
+            </div>
+
+            <div class="modal-footer-actions-lg">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                <button type="submit" class="btn btn-primary" data-i18n="btn_sr_submit">Record Release</button>
+            </div>
+        </form>
+    `;
+
+    openModal(window.t ? window.t('title_new_stock_release') : 'New Stock Release', html, '640px');
+
+    const selCoffee = document.getElementById('sr-coffee-select');
+    const selLot = document.getElementById('sr-lot-select');
+    const inpQty = document.getElementById('sr-qty');
+    const hintStock = document.getElementById('sr-stock-hint');
+    const cartEl = document.getElementById('sr-cart');
+    const totalEl = document.getElementById('sr-total');
+    const selCategory = document.getElementById('sr-category');
+    const salesWrap = document.getElementById('sr-sales-name-wrap');
+    const notesHint = document.getElementById('sr-notes-hint');
+
+    // cart: Map keyed by lotId so re-adding the same lot accumulates instead
+    // of creating a duplicate line the submit loop would then double-deduct.
+    const cart = new Map();
+
+    const cleanup = () => { window.activeStockReleaseScanHandler = null; };
+    document.getElementById('btn-close-modal').addEventListener('click', cleanup, { once: true });
+
+    function allLots() {
+        return groups.flatMap((g, gi) => g.lots.map(l => ({ ...l, groupIdx: gi, coffeeName: g.coffeeName, label: g.label })));
+    }
+
+    function currentGroup() {
+        return groups[parseInt(selCoffee.value) || 0];
+    }
+
+    function renderLotOptions() {
+        const group = currentGroup();
+        const pickFirst = window.t ? window.t('badge_pick_first') : 'PICK FIRST';
+        selLot.innerHTML = group.lots.map((l, idx) =>
+            `<option value="${l.lotId}">${l.stripCode || l.lotCode} · ${l.sizeG}g · ${l.packedDate || '-'}${idx === 0 ? ' — ' + pickFirst : ''}</option>`
+        ).join('');
+        updateStockHint();
+    }
+
+    function selectedLot() {
+        const lotId = parseInt(selLot.value);
+        return currentGroup().lots.find(l => l.lotId === lotId) || null;
+    }
+
+    // Remaining shown here is the lot's stock MINUS whatever is already in the
+    // cart for it, so the operator can't be told "12 available" while 10 are
+    // already staged.
+    function availableFor(lot) {
+        if (!lot) return 0;
+        const staged = cart.has(lot.lotId) ? cart.get(lot.lotId).qty : 0;
+        return Math.max(0, lot.remaining - staged);
+    }
+
+    function updateStockHint() {
+        const lot = selectedLot();
+        const avail = availableFor(lot);
+        const label = window.t ? window.t('lbl_sr_available') : 'available';
+        hintStock.textContent = lot ? `${avail} pcs ${label}` : '';
+        inpQty.max = avail;
+    }
+
+    function renderCart() {
+        const emptyMsg = window.t ? window.t('msg_sr_cart_empty') : 'Nothing added yet.';
+        if (cart.size === 0) {
+            cartEl.innerHTML = `<div style="padding:14px; text-align:center; color:var(--text-muted); font-size:0.82rem;">${emptyMsg}</div>`;
+        } else {
+            cartEl.innerHTML = [...cart.values()].map((line, idx) => `
+                <div style="display:flex; align-items:center; gap:10px; padding:9px 11px; ${idx > 0 ? 'border-top:1px solid var(--border);' : ''}">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:0.82rem;">
+                            <span style="font-family:monospace; font-weight:700; color:var(--primary);">${line.stripCode || line.lotCode}</span>
+                            <span style="color:var(--text-secondary);"> · ${line.label} · ${line.sizeG}g</span>
+                        </div>
+                        <div style="font-size:0.72rem; color:var(--text-muted);">${line.packedDate || '-'}</div>
+                    </div>
+                    <div style="font-weight:700; font-size:0.9rem; white-space:nowrap;">${line.qty} pcs</div>
+                    <button type="button" class="sr-cart-remove btn btn-danger btn-sm" data-lot-id="${line.lotId}" aria-label="Remove">&times;</button>
+                </div>
+            `).join('');
+            cartEl.querySelectorAll('.sr-cart-remove').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    cart.delete(parseInt(btn.getAttribute('data-lot-id')));
+                    renderCart();
+                    updateStockHint();
+                });
+            });
+        }
+        const total = [...cart.values()].reduce((s, l) => s + l.qty, 0);
+        totalEl.textContent = `${total} pcs`;
+    }
+
+    function addToCart(lot, qty) {
+        const avail = availableFor(lot);
+        if (qty <= 0) return false;
+        const take = Math.min(qty, avail);
+        if (take <= 0) return false;
+        if (cart.has(lot.lotId)) {
+            cart.get(lot.lotId).qty += take;
+        } else {
+            cart.set(lot.lotId, { ...lot, qty: take });
+        }
+        renderCart();
+        updateStockHint();
+        return true;
+    }
+
+    function applyCategoryRules() {
+        const needs = stockReleaseCategoryNeeds(selCategory.value);
+        salesWrap.classList.toggle('hidden', !needs.salesName);
+        notesHint.textContent = needs.notes
+            ? (window.t ? window.t('hint_sr_notes_required') : 'Required for the "Other" category.')
+            : '';
+    }
+
+    selCoffee.addEventListener('change', renderLotOptions);
+    selLot.addEventListener('change', updateStockHint);
+    selCategory.addEventListener('change', applyCategoryRules);
+
+    document.getElementById('sr-btn-add').addEventListener('click', async () => {
+        const lot = selectedLot();
+        if (!lot) return;
+        const qty = parseInt(inpQty.value) || 0;
+        if (qty <= 0) {
+            await showWarningModal('Enter a quantity of at least 1.', false);
+            return;
+        }
+        if (qty > availableFor(lot)) {
+            await showWarningModal(`Only ${availableFor(lot)} pcs of lot ${lot.stripCode || lot.lotCode} are still available (stock minus what you've already added).`, false);
+            return;
+        }
+        addToCart(lot, qty);
+        inpQty.value = 1;
+    });
+
+    // Resolves a strip code (or full lot code) against EVERY coffee's lots,
+    // not just the selected one — then switches the coffee/lot selects to the
+    // match before adding, so the operator sees what was picked up and the
+    // cart works regardless of which coffee was showing.
+    function matchAndAdd(raw, qty) {
+        const code = (raw || '').trim();
+        if (!code) return null;
+        const stripCandidate = /^\d{5,7}$/.test(code) ? code.slice(0, 5) : code;
+        const hit = allLots().find(l => l.stripCode === stripCandidate || l.lotCode === code);
+        if (!hit) return null;
+        selCoffee.value = String(hit.groupIdx);
+        renderLotOptions();
+        selLot.value = String(hit.lotId);
+        updateStockHint();
+        const lot = selectedLot();
+        if (!lot) return null;
+        return addToCart(lot, qty || 1) ? lot : null;
+    }
+
+    const scanInput = document.getElementById('sr-scan-input');
+    scanInput.addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const raw = scanInput.value;
+        scanInput.value = '';
+        const hit = matchAndAdd(raw, 1);
+        if (!hit) {
+            await showWarningModal('No lot with that code has stock remaining, or it is already fully staged in the list below.', false);
+        }
+    });
+
+    window.activeStockReleaseScanHandler = async function (lotId, sizeG, multiplier) {
+        const hit = allLots().find(l => l.lotId === lotId);
+        if (!hit) {
+            await showWarningModal(`Scanned lot #${lotId} has no stock remaining.`, false);
+            return;
+        }
+        selCoffee.value = String(hit.groupIdx);
+        renderLotOptions();
+        selLot.value = String(hit.lotId);
+        updateStockHint();
+        const lot = selectedLot();
+        if (lot) addToCart(lot, multiplier || 1);
+    };
+
+    renderLotOptions();
+    renderCart();
+    applyCategoryRules();
+
+    document.getElementById('modal-stock-release-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await submitStockRelease({
+            date: document.getElementById('sr-date').value,
+            category: selCategory.value,
+            salesName: document.getElementById('sr-sales-name').value.trim(),
+            notes: document.getElementById('sr-notes').value.trim(),
+            lines: [...cart.values()]
+        });
+    });
+}
+
+// Validates, writes the header + one item row per cart line, and consumes the
+// lots — same consumption pattern as submitDispatchCheckout (decrement
+// packed_coffee_lots.remaining_pcs and the parent packed_coffee.quantity;
+// quantity_pcs is the lot's original size and is never touched).
+async function submitStockRelease({ date, category, salesName, notes, lines }) {
+    if (!lines || lines.length === 0) {
+        await showWarningModal('Add at least one item before recording the release.', false);
+        return;
+    }
+    const needs = stockReleaseCategoryNeeds(category);
+    if (needs.salesName && !salesName) {
+        await showWarningModal('Enter the sales name — it is required for the Sales category.', false);
+        return;
+    }
+    if (needs.notes && !notes) {
+        await showWarningModal('Enter a note — it is required for the "Other" category.', false);
+        return;
+    }
+
+    // Re-check against freshly fetched rows rather than the modal's snapshot:
+    // stock can move while this modal is open (another dispatch, a repack),
+    // and releasing more than a lot actually has would drive remaining_pcs
+    // negative and silently corrupt FIFO.
+    const { data: freshLots } = await fetchData('packed_coffee_lots');
+    for (const line of lines) {
+        const lot = (freshLots || []).find(l => l.id === line.lotId);
+        const live = lot ? (parseInt(lot.remaining_pcs) || 0) : 0;
+        if (line.qty > live) {
+            await showWarningModal(`Lot ${line.stripCode || line.lotCode} only has ${live} pcs left now (someone else may have used it while this form was open). Adjust the quantity and try again.`, false);
+            return;
+        }
+    }
+
+    const { data: header, error: headerError } = await saveData('stock_releases', {
+        date: date || new Date().toISOString().split('T')[0],
+        category: category,
+        sales_name: salesName || null,
+        notes: notes || null,
+        released_by: (currentUser && currentUser.name) || null
+    });
+    if (headerError || !header) {
+        alert('Failed to record stock release: ' + (headerError ? headerError.message : 'unknown error'));
+        return;
+    }
+
+    const { data: freshPacked } = await fetchData('packed_coffee');
+
+    for (const line of lines) {
+        await saveData('stock_release_items', {
+            stock_release_id: header.id,
+            packed_coffee_lot_id: line.lotId,
+            packed_coffee_id: line.packedCoffeeId,
+            coffee_name: line.coffeeName,
+            bag_size_g: line.sizeG,
+            qty: line.qty
+        });
+
+        const lot = (freshLots || []).find(l => l.id === line.lotId);
+        if (lot) {
+            const newRemaining = Math.max(0, (parseInt(lot.remaining_pcs) || 0) - line.qty);
+            await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemaining });
+        }
+        const packedRow = (freshPacked || []).find(p => p.id === line.packedCoffeeId);
+        if (packedRow) {
+            const newQty = Math.max(0, (parseInt(packedRow.quantity) || 0) - line.qty);
+            await saveData('packed_coffee', { id: packedRow.id, quantity: newQty });
+        }
+    }
+
+    document.getElementById('btn-close-modal').click();
+    await loadStockReleaseSection();
+    await loadPackingSection();
     scheduleDashboardRefresh();
 }

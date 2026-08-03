@@ -295,7 +295,7 @@ CREATE TABLE IF NOT EXISTS public.bulk_roasted_coffee (
     source_plan_id INTEGER REFERENCES public.roasting_plans(id) ON DELETE SET NULL,  -- V2 1I-b: links a recipe-assembled post-blend back to its parent roasting_plans row, so composition is derived from that parent's sub-plans (parent_plan_id) instead of a components table
     custom_coffee_code TEXT,              -- V2 Custom Blend: user-typed short code for a custom blend (distinct from custom_blend_code, which is the auto-generated date-based bulk/lot code)
     production_date DATE NOT NULL DEFAULT CURRENT_DATE,  -- V2: re-keys bulk pooling by (coffee, machine, roast day) instead of pooling indefinitely — see bulk_production_date_migration.sql
-    is_repack BOOLEAN DEFAULT FALSE        -- ⚠️ NOT YET APPLIED TO PRODUCTION — V2 Repack: true for a bulk row created by opening finished packed stock back into loose bulk for re-packing (never renames the coffee — see repack_sources below). Run database/repack_migration.sql first. See "Database Schema" rules at the top of CLAUDE.md.
+    is_repack BOOLEAN DEFAULT FALSE        -- V2 Repack (applied to production 2026-08-03): true for a bulk row created by opening finished packed stock back into loose bulk for re-packing (never renames the coffee — see repack_sources below). See database/repack_migration.sql.
 );
 
 -- 12. Waste inventory (failed test batches etc.)
@@ -627,19 +627,50 @@ CREATE TABLE IF NOT EXISTS public.post_blend_components (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 30. ⚠️ NOT YET APPLIED TO PRODUCTION — V2 Repack: one row per source
+-- 30. V2 Repack (applied to production 2026-08-03): one row per source
 -- packed_coffee_lots row opened into a repack bulk (bulk_roasted_coffee.
 -- is_repack = true above). Mirrors post_blend_components' role, but always
 -- points at packed_coffee_lots (repack only ever opens FINISHED packed
 -- stock, never another bulk row directly) — js/tracking.js walks this to
--- resolve a repacked lot's full ancestry. Run database/repack_migration.sql
--- first; see "Database Schema" rules at the top of CLAUDE.md.
+-- resolve a repacked lot's full ancestry. See
+-- database/repack_migration.sql.
 CREATE TABLE IF NOT EXISTS public.repack_sources (
     id SERIAL PRIMARY KEY,
     repack_bulk_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE CASCADE,
     source_packed_lot_id INTEGER REFERENCES public.packed_coffee_lots(id) ON DELETE SET NULL,
     pcs INTEGER NOT NULL DEFAULT 0,
     kg NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 31/32. V2 Stock Release (applied to production 2026-08-03): finished goods
+-- leaving stock WITHOUT a sales order (Packing > Stock Release), entered
+-- directly by the packing team with no approval step. The finished-goods
+-- sibling of green_coffee_outbound, but header+items (one release can carry
+-- several coffees/sizes) and LOT-LEVEL (every line names the
+-- packed_coffee_lots row consumed, like dispatch_lot_items does for sales —
+-- a coarse quantity decrement would desync remaining_pcs and lose the
+-- "which lot went where" answer). Damaged/discarded stock is deliberately
+-- NOT modelled here — that stays with waste_inventory, so one loss can never
+-- be counted twice. See database/stock_release_migration.sql.
+CREATE TABLE IF NOT EXISTS public.stock_releases (
+    id SERIAL PRIMARY KEY,
+    date DATE NOT NULL DEFAULT CURRENT_DATE,
+    category TEXT NOT NULL,                      -- 'Sales' | 'Sample' | 'Internal' | 'Marketing' | 'Other'
+    sales_name TEXT,                             -- app-required when category = 'Sales'; free text, datalist-assisted from sales_agents. No customer link / invoice status by explicit user choice — billing reconciliation is manual.
+    notes TEXT,                                  -- app-required when category = 'Other'
+    released_by TEXT,                            -- audit trail: currentUser.name, same pattern as waste_inventory.recorded_by
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.stock_release_items (
+    id SERIAL PRIMARY KEY,
+    stock_release_id INTEGER REFERENCES public.stock_releases(id) ON DELETE CASCADE,
+    packed_coffee_lot_id INTEGER REFERENCES public.packed_coffee_lots(id) ON DELETE SET NULL,
+    packed_coffee_id INTEGER REFERENCES public.packed_coffee(id) ON DELETE SET NULL,
+    coffee_name TEXT,                            -- snapshot, keeps history readable after a lot/packed row is removed
+    bag_size_g NUMERIC,                          -- snapshot, same reason
+    qty INTEGER NOT NULL DEFAULT 0,              -- pcs released from this lot
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -665,7 +696,8 @@ BEGIN
     'green_coffee_lots','packed_coffee_lots','production_lots',
     'roast_batch_green_lots','production_lot_batches',
     'dispatch_lot_items','post_blend_components','code_definitions',
-    'repack_sources' -- ⚠️ NOT YET APPLIED — see database/repack_migration.sql
+    'repack_sources', -- applied to production 2026-08-03
+    'stock_releases','stock_release_items' -- applied to production 2026-08-03
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);

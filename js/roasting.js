@@ -3492,14 +3492,19 @@ async function handleBarcodeScan(barcode) {
     if (isFifoStripBarcode) {
         // V2 FIFO strip code: only meaningful while a screen that consumes a
         // packed lot by strip code is open — dispatch checkout (see
-        // js/packing.js openDispatchCheckoutModal) or New Repack (see
-        // openNewRepackModal). Whichever registered itself most recently as
-        // the active handler wins; scans do nothing if neither is open.
-        const activeStripCodeHandler = (typeof window.activeRepackScanHandler === 'function')
-            ? window.activeRepackScanHandler
-            : (typeof window.activeDispatchCheckoutHandler === 'function' ? window.activeDispatchCheckoutHandler : null);
+        // js/packing.js openDispatchCheckoutModal), New Repack
+        // (openNewRepackModal) or New Stock Release
+        // (openNewStockReleaseModal). Only one of these modals can be open at
+        // a time (they share #modal-container), and each clears its own hook
+        // on close, so this order is a priority list for safety rather than a
+        // real contest.
+        const activeStripCodeHandler = (typeof window.activeStockReleaseScanHandler === 'function')
+            ? window.activeStockReleaseScanHandler
+            : (typeof window.activeRepackScanHandler === 'function')
+                ? window.activeRepackScanHandler
+                : (typeof window.activeDispatchCheckoutHandler === 'function' ? window.activeDispatchCheckoutHandler : null);
         if (!activeStripCodeHandler) {
-            await showWarningModal('Scan this inside an order\'s Checkout screen (Packing → Order Requests → Prepare) or the New Repack screen (Packing → Repack) — neither is open right now.', false);
+            await showWarningModal('Scan this inside an order\'s Checkout screen (Packing → Order Requests → Prepare), the New Repack screen, or the New Stock Release screen — none of them is open right now.', false);
             return;
         }
 

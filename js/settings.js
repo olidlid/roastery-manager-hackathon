@@ -359,6 +359,7 @@ const PERMISSION_GROUPS = [
         { key: 'packing_records_view', label: 'View Records' },
         { key: 'packing_unpack', label: 'Unpack' },
         { key: 'packing_repack', label: 'Repack' },
+        { key: 'packing_stock_release', label: 'Stock Release (non-sales goods out)' },
         { key: 'packing_completed_view', label: 'View Completed Orders' },
         { key: 'packing_dispatch_checkout', label: 'Checkout Order (POS Dispatch)' }
     ]},

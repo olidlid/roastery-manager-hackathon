@@ -1072,6 +1072,7 @@
                         <button class="tab-btn" data-target="tab-order-request" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_order_request">Order Requests</button>
                         <button class="tab-btn" data-target="tab-packing-records" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Packing Records</button>
                         <button class="tab-btn" data-target="tab-packing-history" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Completed Order</button>
+                        <button class="tab-btn" data-target="tab-stock-release" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_stock_release">Stock Release</button>
                         <button class="tab-btn" data-target="tab-waste-inventory" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_waste_inventory">Waste</button>
                     </nav>
                 </div>
@@ -1251,6 +1252,43 @@
                             <!-- Dynamic order-request cards -->
                         </div>
                         <div id="packing-requests-empty" class="text-center-muted hidden" style="padding: 24px 0;">No preparing orders found.</div>
+                    </div>
+                </div>
+
+                <!-- V2 Stock Release: non-sales finished-goods out. Sits next to
+                     Waste because both are stock-leaving flows — but they are
+                     deliberately separate: Waste is for damaged/discarded
+                     stock, this is for stock leaving in GOOD condition, so one
+                     loss can never be counted in both. -->
+                <div id="tab-stock-release" class="packing-tab-content hidden">
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
+                            <div>
+                                <h3 class="card-title" style="font-size: 1.5rem; margin-bottom: 4px; font-weight: 700;" data-i18n="stock_release_title">Stock Release</h3>
+                                <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="stock_release_hint">Record finished goods leaving stock without a sales order.</p>
+                            </div>
+                            <button type="button" id="btn-new-stock-release" class="btn btn-primary btn-sm" style="display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer;">
+                                <i class="icon-arrow-up-right va-middle-mr-1"></i><span data-i18n="btn_new_stock_release">New Stock Release</span>
+                            </button>
+                        </div>
+                        <div style="overflow-x: auto;">
+                            <table class="table" style="width: 100%;">
+                                <thead>
+                                    <tr>
+                                        <th data-i18n="th_sr_date">Date</th>
+                                        <th data-i18n="th_sr_category">Category</th>
+                                        <th data-i18n="th_sr_items">Items</th>
+                                        <th data-i18n="th_sr_for">For / Notes</th>
+                                        <th data-i18n="th_sr_recorded_by">Recorded By</th>
+                                        <th style="text-align:right;" data-i18n="th_sr_qty">Qty</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="stock-release-history-tbody">
+                                    <!-- Dynamic stock release history rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="stock-release-history-empty" class="text-center-muted hidden" style="padding: 24px 0;" data-i18n="stock_release_history_empty">No stock releases recorded yet.</div>
                     </div>
                 </div>
             </section>
@@ -2565,18 +2603,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=22"></script>
+    <script src="js/translations.js?v=23"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=1"></script>
-    <script src="js/auth.js?v=10"></script>
+    <script src="js/auth.js?v=11"></script>
     <script src="js/greenbean.js?v=12"></script>
-    <script src="js/roasting.js?v=23"></script>
-    <script src="js/packing.js?v=63"></script>
+    <script src="js/roasting.js?v=24"></script>
+    <script src="js/packing.js?v=64"></script>
     <script src="js/sales.js?v=17"></script>
-    <script src="js/settings.js?v=17"></script>
+    <script src="js/settings.js?v=18"></script>
     <script src="js/tracking.js?v=8"></script>
-    <script src="js/app.js?v=75"></script>
+    <script src="js/app.js?v=76"></script>
 </body>
 </html>

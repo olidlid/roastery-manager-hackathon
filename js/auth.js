@@ -194,6 +194,12 @@ const PERMISSION_FALLBACKS = {
     // core "can pack from bulk" gate) since repack just feeds that same
     // pipeline in reverse; admins can restrict it separately later.
     packing_repack: 'packing_daily',
+    // Stock Release (V2) likewise. Falls back to packing_dispatch_checkout
+    // rather than packing_daily: both hand finished goods OUT of stock, so
+    // whoever is already trusted to check stock out for an order is the
+    // closest existing equivalent — packing_daily only covers turning bulk
+    // into bags, which is a different kind of authority.
+    packing_stock_release: 'packing_dispatch_checkout',
 };
 
 // Effective permission for a specific role object, honouring PERMISSION_FALLBACKS
