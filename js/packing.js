@@ -4808,7 +4808,17 @@ async function openNewStockReleaseModal() {
                 sizeG: parseInt(item.bag_size_g) || 0,
                 packedDate: l.packed_date,
                 remaining: parseInt(l.remaining_pcs) || 0,
-                packedCoffeeId: item.id
+                packedCoffeeId: item.id,
+                // Carried on the LOT, not just the group: cart lines are built
+                // from selectedLot() (the Add button and, after switching, the
+                // scan path), which reads straight out of group.lots and never
+                // sees the group object. Without these here the cart rendered
+                // "undefined" and — worse — wrote a null coffee_name snapshot
+                // into stock_release_items, silently breaking the history's
+                // readability. label is the clean display name, coffeeName the
+                // raw suffixed one that gets persisted.
+                label: item.groupKey,
+                coffeeName: item.rawName
             });
         });
     });
