@@ -4854,6 +4854,17 @@ async function openNewStockReleaseModal() {
     }
     groups.forEach(g => g.lots.sort((a, b) => (a.packedDate || '').localeCompare(b.packedDate || '') || a.lotId - b.lotId));
 
+    // Same name-match resolution openPackedLotsModal already uses to show a
+    // coffee's code next to its name — the dropdown otherwise lists over 20
+    // similarly-worded blend names with nothing to tell them apart at a
+    // glance (e.g. two "BLEND" names differing only by a code the operator
+    // actually recognizes).
+    groups.forEach(g => {
+        const gbMatch = (greenbeans || []).find(x => x.name === g.label);
+        const rMatch = (recipes || []).find(x => x.name === g.label);
+        g.code = (gbMatch && gbMatch.code) || (rMatch && rMatch.code) || '';
+    });
+
     const todayStr = new Date().toISOString().split('T')[0];
     const categoryOptions = STOCK_RELEASE_CATEGORIES
         .map(c => `<option value="${c.value}">${window.t ? window.t(c.i18n) : c.fallback}</option>`)
@@ -4862,7 +4873,7 @@ async function openNewStockReleaseModal() {
         .filter(a => a.is_active !== false)
         .map(a => `<option value="${a.name}"></option>`)
         .join('');
-    const coffeeOptions = groups.map((g, idx) => `<option value="${idx}">${g.label}</option>`).join('');
+    const coffeeOptions = groups.map((g, idx) => `<option value="${idx}">${g.code ? g.code + ' — ' + g.label : g.label}</option>`).join('');
 
     const html = `
         <form id="modal-stock-release-form">

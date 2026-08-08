@@ -914,6 +914,14 @@ tbody tr:hover {
     display: flex;
     flex-direction: column;
     gap: 20px;
+    /* Was unbounded on desktop (only the <900px media query below capped
+       it), so a modal taller than the viewport — e.g. Stock Release's
+       date/category/scan/coffee/lot/cart/notes stack — got clipped past the
+       top and bottom of the screen with no way to scroll to the cut-off
+       part. .overlay already centers this with 24px padding on all sides
+       (see .overlay above), hence the 48px here. */
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
 }
 
 .overlay-header {
