@@ -4417,6 +4417,18 @@ async function openNewRepackModal() {
         const rMatch = (recipes || []).find(x => x.name === g.label);
         g.code = (gbMatch && gbMatch.code) || (rMatch && rMatch.code) || '';
     });
+    // Numeric-aware, same comparator as renderCodeDefinitionsRows — "2" sorts
+    // before "10", not after. Codeless entries (custom/manual packs with no
+    // matching code_definitions row) sort to the end by name instead of
+    // colliding with "" at the front. Sorting `groups` itself (not a copy) is
+    // safe: option values below are indices into this exact array, built
+    // AFTER this sort, so they still resolve correctly via currentGroup().
+    groups.sort((a, b) => {
+        if (!a.code && !b.code) return a.label.localeCompare(b.label);
+        if (!a.code) return 1;
+        if (!b.code) return -1;
+        return a.code.localeCompare(b.code, undefined, { numeric: true });
+    });
 
     const coffeeOptionsHtml = groups.map((g, idx) => `<option value="${idx}">${g.code ? g.code + ' — ' + g.label : g.label}</option>`).join('');
 
@@ -4873,6 +4885,16 @@ async function openNewStockReleaseModal() {
         const gbMatch = (greenbeans || []).find(x => x.name === g.label);
         const rMatch = (recipes || []).find(x => x.name === g.label);
         g.code = (gbMatch && gbMatch.code) || (rMatch && rMatch.code) || '';
+    });
+    // Numeric-aware, same comparator as renderCodeDefinitionsRows — "2" sorts
+    // before "10", not after. Codeless entries sort to the end by name.
+    // Sorting `groups` itself is safe: option values below are indices into
+    // this exact array, built after this sort.
+    groups.sort((a, b) => {
+        if (!a.code && !b.code) return a.label.localeCompare(b.label);
+        if (!a.code) return 1;
+        if (!b.code) return -1;
+        return a.code.localeCompare(b.code, undefined, { numeric: true });
     });
 
     const todayStr = new Date().toISOString().split('T')[0];
