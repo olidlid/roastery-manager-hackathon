@@ -1307,7 +1307,7 @@ async function loadPackingRequestsSection() {
             let coffeeName = '';
             if (item.coffee_code) {
                 const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
-                coffeeName = def ? `${def.name} (Single)` : `Code ${item.coffee_code}`;
+                coffeeName = def ? `${def.name} (${type})` : `Code ${item.coffee_code}`;
             } else if (type === 'Single') {
                 const gb = (greenbeans || []).find(g => g.id === coffeeId);
                 coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
@@ -1468,7 +1468,7 @@ async function openDispatchCheckoutModal(orderId) {
     function coffeeLabel(item) {
         if (item.coffee_code) {
             const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
-            return def ? `${def.name} (Single)` : `Code ${item.coffee_code}`;
+            return def ? `${def.name} (${item.coffee_type})` : `Code ${item.coffee_code}`;
         }
         if (item.coffee_type === 'Single') {
             const gb = (greenbeans || []).find(g => g.id === item.single_coffee_id);
@@ -1500,24 +1500,34 @@ async function openDispatchCheckoutModal(orderId) {
     items.forEach(item => {
         const itemCoffeeId = item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
         const codeGroupIds = item.coffee_code
-            ? (greenbeans || []).filter(g => g.code === item.coffee_code).map(g => g.id)
+            ? (item.coffee_type === 'Single'
+                ? (greenbeans || []).filter(g => g.code === item.coffee_code).map(g => g.id)
+                : (recipes || []).filter(r => r.code === item.coffee_code).map(r => r.id))
             : null;
         const matchingPacked = (packedGoods || []).filter(p => {
             if (parseInt(p.bag_size_g) !== parseInt(item.bag_size_g)) return false;
             const idn = resolvePackedIdentity(p);
             if (!idn) return false;
-            if (codeGroupIds) return idn.type === 'Single' && codeGroupIds.includes(idn.coffeeId);
+            if (codeGroupIds) return idn.type === item.coffee_type && codeGroupIds.includes(idn.coffeeId);
             return idn.type === item.coffee_type && idn.coffeeId === itemCoffeeId;
         });
         const packedIds = new Set(matchingPacked.map(p => p.id));
         const machineByPackedId = new Map(matchingPacked.map(p => [p.id, p.machine_id]));
-        // Origin name/code per packed_coffee_id — the physical green bean
-        // that lot's sticker was printed for, not the trade name. Needed so
-        // the Lot dropdown/Cart can tell two same-code origins apart.
+        // Origin/recipe name+code per packed_coffee_id — the physical green
+        // bean (or blend recipe) that lot's sticker was printed for, not the
+        // trade name. Needed so the Lot dropdown/Cart can tell two same-code
+        // origins/recipes apart.
         const originByPackedId = new Map(matchingPacked.map(p => {
             const idn = resolvePackedIdentity(p);
-            const gb = idn && idn.type === 'Single' ? (greenbeans || []).find(g => g.id === idn.coffeeId) : null;
-            return [p.id, gb ? { name: gb.name, code: gb.code || '' } : { name: 'Unknown', code: '' }];
+            let identity = null;
+            if (idn && idn.type === 'Single') {
+                const gb = (greenbeans || []).find(g => g.id === idn.coffeeId);
+                identity = gb ? { name: gb.name, code: gb.code || '' } : null;
+            } else if (idn && idn.type === 'Blend') {
+                const r = (recipes || []).find(rec => rec.id === idn.coffeeId);
+                identity = r ? { name: r.name, code: r.code || '' } : null;
+            }
+            return [p.id, identity || { name: 'Unknown', code: '' }];
         }));
         const lots = (packedLots || [])
             .filter(l => packedIds.has(l.packed_coffee_id) && (parseInt(l.remaining_pcs) || 0) > 0)
