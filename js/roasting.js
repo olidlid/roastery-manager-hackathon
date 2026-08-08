@@ -611,9 +611,10 @@ async function loadCodeDefinitionsTable() {
     if (!tbody) return;
     tbody.innerHTML = '';
 
-    const [{ data: defs }, { data: greenbeans }] = await Promise.all([
+    const [{ data: defs }, { data: greenbeans }, { data: recipes }] = await Promise.all([
         fetchData('code_definitions'),
-        fetchData('green_coffee')
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
     ]);
 
     if (!defs || defs.length === 0) {
@@ -621,12 +622,20 @@ async function loadCodeDefinitionsTable() {
         return;
     }
 
-    renderCodeDefinitionsRows(tbody, defs, greenbeans || []);
+    renderCodeDefinitionsRows(tbody, defs, greenbeans || [], recipes || []);
 }
 
-function renderCodeDefinitionsRows(tbody, defs, greenbeans) {
+// A trade name groups whatever shares its code, Single origins AND Blend
+// recipes alike (js/sales.js already matches `codeDefinitions` against
+// item.coffee_code the same way regardless of type) — this table only
+// showed the Single side, so a code whose sole member was a blend read as
+// "No origins yet" even though Sales was already grouping it correctly.
+function renderCodeDefinitionsRows(tbody, defs, greenbeans, recipes) {
     [...defs].sort((a, b) => (a.code || '').localeCompare(b.code || '', undefined, { numeric: true })).forEach(d => {
-        const origins = greenbeans.filter(g => g.code === d.code).map(g => g.name);
+        const origins = [
+            ...greenbeans.filter(g => g.code === d.code).map(g => g.name),
+            ...recipes.filter(r => r.code === d.code).map(r => r.name)
+        ];
         const originsHtml = origins.length
             ? origins.map(n => `<span style="font-size:0.75rem; color:var(--text-secondary); background:var(--bg-glass-active); padding:2px 8px; border-radius:999px; margin-right:4px; display:inline-block; margin-bottom:2px;">${n}</span>`).join('')
             : `<span style="font-size:0.8rem; color:var(--text-muted);">No origins yet</span>`;
