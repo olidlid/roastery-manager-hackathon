@@ -4408,7 +4408,17 @@ async function openNewRepackModal() {
     // answering a different question ("which bag was filled first").
     groups.forEach(g => g.lots.sort((a, b) => (a.roastDate || '').localeCompare(b.roastDate || '') || a.lotId - b.lotId));
 
-    const coffeeOptionsHtml = groups.map((g, idx) => `<option value="${idx}">${g.label}</option>`).join('');
+    // Same name-match resolution openPackedLotsModal / openNewStockReleaseModal
+    // already use to show a coffee's code next to its name — this dropdown
+    // otherwise lists 20+ similarly-worded names with nothing to tell them
+    // apart at a glance.
+    groups.forEach(g => {
+        const gbMatch = (greenbeans || []).find(x => x.name === g.label);
+        const rMatch = (recipes || []).find(x => x.name === g.label);
+        g.code = (gbMatch && gbMatch.code) || (rMatch && rMatch.code) || '';
+    });
+
+    const coffeeOptionsHtml = groups.map((g, idx) => `<option value="${idx}">${g.code ? g.code + ' — ' + g.label : g.label}</option>`).join('');
 
     const html = `
         <form id="modal-new-repack-form">
