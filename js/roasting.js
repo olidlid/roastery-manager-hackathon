@@ -3270,13 +3270,11 @@ async function printStickerLabel(id) {
     // below is just a 50x25mm-sized <div> sitting inside the normal page
     // viewport, where 100vh would mean the whole browser window instead —
     // each context appends its own height rule (100% vs 100vh).
+    // Deliberately carries no @page rule and no absolute .sticker-item size:
+    // it's shared with the on-screen preview below (sized by its own 50x25mm
+    // wrapper div), so each context appends what it needs — the preview adds a
+    // height, the print branch adds the real @page size and mm dimensions.
     const stickerStyleBase = `
-        /* No @page size on purpose — that's what lets Chrome's print dialog
-           offer its own Layout: Portrait/Landscape control (see
-           buildFixedLabelDocument in packing.js for the full reasoning).
-           Irrelevant to the on-screen preview below, which is sized by its
-           own wrapper div. */
-        @page { margin: 1mm; }
         body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
         .sticker-item {
             width: 100%; box-sizing: border-box;
@@ -3322,25 +3320,26 @@ async function printStickerLabel(id) {
     }
 
     document.getElementById('btn-execute-label-print').addEventListener('click', () => {
-        // Orientation comes from the browser's own print dialog now, not an
-        // app setting — same approach as buildFixedLabelDocument (packing.js);
-        // see that function's comment for why @page carries no size and why
-        // the content has to be rotated back on portrait media. vh/vw resolve
-        // to the page box, so this adapts to whatever media the driver uses.
-        // The on-screen preview above is unaffected (it's not paged media).
-        const printStickerCss = `${stickerStyleBase}
-            .sticker-item { height: 100vh; }
-            @media print and (orientation: portrait) {
-                .sticker-item {
-                    width: 100vh;
-                    height: 100vw;
-                    position: relative;
-                    left: 100vw;
-                    top: 0;
-                    transform: rotate(90deg);
-                    transform-origin: top left;
-                }
-            }`;
+        // Page size and sticker dimensions in absolute mm, and orientation from
+        // the app's own setting — see buildFixedLabelDocument (packing.js) for
+        // the full reasoning and the Zebra GK420t print test that forced this
+        // back. Short version: with no @page size, width:100% resolved against
+        // the driver's reported media instead of the real 50x25mm sticker, and
+        // Chrome's preview could never show that was wrong.
+        // 1mm margin here (not packed coffee's 0.5mm), so the content box is
+        // 48x23mm.
+        const rotate = companySettings.label_rotate_90 === true;
+        const printStickerCss = rotate
+            ? `@page { size: 25mm 50mm; margin: 1mm; }
+               ${stickerStyleBase}
+               .sticker-item {
+                   width: 48mm; height: 23mm;
+                   position: relative; left: 23mm; top: 0;
+                   transform: rotate(90deg); transform-origin: top left;
+               }`
+            : `@page { size: 50mm 25mm; margin: 1mm; }
+               ${stickerStyleBase}
+               .sticker-item { width: 48mm; height: 23mm; }`;
 
         const printWin = window.open('', '', 'width=400,height=300');
         printWin.document.write(`

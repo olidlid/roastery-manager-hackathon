@@ -91,10 +91,18 @@ let companySettings = {
         roasting: { coffee_name: true, machine: true, coffee_code: true },
         packed: { code: true, coffee_name: true, dates: true, machine: true },
     },
-    // label_rotate_90 used to live here as an opt-in printer-orientation
-    // workaround. Removed 2026-07-30 — orientation is chosen in the browser's
-    // own print dialog now (see buildFixedLabelDocument in js/packing.js). The
-    // DB column remains as a legacy no-op; nothing reads or writes it.
+    // Some thermal printer drivers force their own fixed (portrait) media
+    // regardless of the page's declared size, so the correct landscape 50x25mm
+    // label still comes out rotated on paper. This rotates the label content
+    // 90° to compensate — a per-printer quirk, hence an opt-in toggle rather
+    // than always-on. See buildFixedLabelDocument (packing.js) and
+    // printStickerLabel (roasting.js) for where it's applied.
+    //
+    // Briefly removed 2026-07-30 in favour of Chrome's own Layout dropdown,
+    // restored 2026-08-10: exposing that dropdown requires declaring no @page
+    // size, which left the label with no absolute physical dimensions at all
+    // and printed the wrong size on a real Zebra GK420t. The two can't coexist.
+    label_rotate_90: false,
 };
 
 // Seed initial offline mock databases (used if not connected to Supabase)
@@ -433,6 +441,9 @@ function applyCompanySettings() {
         document.getElementById('sett-packed-label-show-dates').checked = packedLayout.dates !== false;
         document.getElementById('sett-packed-label-show-machine').checked = packedLayout.machine !== false;
         document.getElementById('sett-packed-label-barcode-height').value = packedLayout.barcode_height_mm || 18;
+    }
+    if (document.getElementById('sett-label-rotate-90')) {
+        document.getElementById('sett-label-rotate-90').checked = companySettings.label_rotate_90 === true;
     }
 }
 

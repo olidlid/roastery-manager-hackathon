@@ -2593,30 +2593,43 @@ function printLotBarcodeLabels(lot, requested, machines, opts = {}) {
 // old 1.1 to 2.2 (JsBarcode units) — the old value produced sub-0.2mm bars
 // once scaled into the 8mm-tall zone, well under the ~0.33mm minimum most
 // thermal printers can reproduce without dot-gain merging adjacent bars.
-// Orientation is the BROWSER's job here, not the app's (changed 2026-07-30
-// per explicit user request — the old companySettings.label_rotate_90
-// setting and the per-print Landscape/Portrait radios are both gone).
-// Two things are needed to make Chrome's own control work:
-//   1. @page declares NO size. Chrome only offers its "Layout:
-//      Portrait/Landscape" control when the page has no explicit @page
-//      size — declaring one pins "Paper size: User defined" and REMOVES the
-//      layout dropdown entirely, which is precisely why this app had to
-//      carry its own toggle before. Paper size now comes from the printer
-//      driver's selected media, which Chrome remembers per destination.
-//   2. Chrome's Layout control rotates the PAPER, not the content. Left
-//      alone it would reflow this label into a ~25mm-wide column and
-//      squeeze the barcode to unscannable module widths (see the module
-//      width note below). The `@media print and (orientation: portrait)`
-//      block rotates the content back 90° so the barcode always runs along
-//      the label's LONG edge either way. Sized in vh/vw (which resolve to
-//      the page box) instead of hardcoded mm, so it adapts to whatever
-//      media the driver is set to rather than assuming 50x25mm.
+// Page size and label dimensions are declared in ABSOLUTE mm, and that is
+// load-bearing (reverted here 2026-08-10 after a real Zebra GK420t print test).
+// Between 2026-07-30 and this change @page carried no size and the item was
+// width:100%, so that Chrome would expose its own Layout: Portrait/Landscape
+// control (declaring an @page size makes Chrome hide it). That traded away the
+// only physical anchor the label had: width:100% resolves against whatever
+// media the DRIVER reports, so with the printer's media set to anything other
+// than 50x25mm the content came out the wrong size — printed content spilled
+// past the physical label onto the next one on the roll.
+//
+// Worse, that failure mode is invisible in Chrome's print preview: because the
+// content was defined as 100% of the page, it proportionally filled whatever
+// page box existed and therefore ALWAYS previewed as a perfectly-filled label,
+// no matter how wrong the real page was. Pinning both the page and the item in
+// mm is what makes the preview honest again.
+//
+// Orientation is therefore back to being the app's own setting
+// (companySettings.label_rotate_90, Settings > Production > Label Layout >
+// Print Orientation) rather than Chrome's dropdown — the two are mutually
+// exclusive, and a correct physical size matters more than where the toggle
+// lives. `rotate` is the per-printer workaround for thermal drivers that force
+// their own portrait media: @page is then declared as that portrait shape
+// (25x50mm) while .barcode-label-item is still drawn at its landscape size and
+// rotated 90° into place, so the barcode always runs along the label's LONG
+// edge either way.
 function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
+    const rotate = companySettings.label_rotate_90 === true;
     // 0.5mm page margin (was 1mm) to reclaim print area — most thermal roll
-    // printers can hold 0.5mm reliably.
-    const pageCss = `@page { margin: 0.5mm; }`;
-    const itemCss = `.barcode-label-item {
-                width: 100%;
+    // printers can hold 0.5mm reliably. Content box is then 49x24mm either
+    // way (50/25mm minus 2x0.5mm), which is what the item sizes below match.
+    const pageCss = rotate
+        ? `@page { size: 25mm 50mm; margin: 0.5mm; }`
+        : `@page { size: 50mm 25mm; margin: 0.5mm; }`;
+    const itemCss = rotate
+        ? `.barcode-label-item {
+                width: 49mm;
+                height: 24mm;
                 box-sizing: border-box;
                 display: flex;
                 flex-direction: column;
@@ -2624,24 +2637,22 @@ function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
                 text-align: center;
                 padding: 0 1mm;
                 page-break-after: always;
-           }
-           /* Portrait media selected in Chrome's print dialog: draw the label
-              at landscape proportions — 100vh wide x 100vw tall, i.e. the
-              page box with its axes swapped — then rotate 90 degrees about
-              its own top-left corner and shift right by the page's width so
-              it lands exactly filling the portrait page. Relative positioning
-              only offsets the paint (the element stays in normal block flow),
-              so page-break-after keeps working across multiple labels. */
-           @media print and (orientation: portrait) {
-               .barcode-label-item {
-                   width: 100vh;
-                   height: 100vw;
-                   position: relative;
-                   left: 100vw;
-                   top: 0;
-                   transform: rotate(90deg);
-                   transform-origin: top left;
-               }
+                position: relative;
+                left: 24mm;
+                top: 0;
+                transform: rotate(90deg);
+                transform-origin: top left;
+           }`
+        : `.barcode-label-item {
+                width: 49mm;
+                height: 24mm;
+                box-sizing: border-box;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                padding: 0 1mm;
+                page-break-after: always;
            }`;
     // Barcode height: for packed-coffee labels (the only caller that passes
     // packedBarcodeHeightMm) this is now a Settings-configurable value

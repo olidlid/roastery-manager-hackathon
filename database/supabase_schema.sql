@@ -86,15 +86,18 @@ CREATE TABLE IF NOT EXISTS public.company_settings (
                                                  -- Replaces the old label_show_* + label_width/label_height
                                                  -- columns above, which are no longer read by the app but were
                                                  -- left in place rather than dropped.
-    label_rotate_90 BOOLEAN DEFAULT FALSE        -- legacy (added 2026-07-18, retired 2026-07-30): was a
-                                                 -- printer-driver workaround that rotated the 50x25mm label
-                                                 -- content 90 degrees. Label orientation is now chosen in the
-                                                 -- browser's own print dialog (the label documents declare no
-                                                 -- @page size so Chrome exposes its Layout control, and
-                                                 -- auto-rotate their content on portrait media via
-                                                 -- @media print and (orientation: portrait)) — see
-                                                 -- buildFixedLabelDocument in js/packing.js. Nothing reads or
-                                                 -- writes this column anymore; left in place, not dropped.
+    label_rotate_90 BOOLEAN DEFAULT FALSE        -- ACTIVE (added 2026-07-18; briefly retired 2026-07-30,
+                                                 -- restored 2026-08-10): printer-driver workaround that
+                                                 -- rotates the 50x25mm label content 90 degrees for thermal
+                                                 -- drivers that force their own portrait media. Settings >
+                                                 -- Production > Label Layout > Print Orientation. The
+                                                 -- 2026-07-30 alternative (let Chrome's own Layout dropdown
+                                                 -- handle it) required declaring no @page size, which left
+                                                 -- the label with no absolute physical dimensions and printed
+                                                 -- the wrong size on a real Zebra GK420t — the two are
+                                                 -- mutually exclusive. See buildFixedLabelDocument in
+                                                 -- js/packing.js. Never dropped, so no migration was needed
+                                                 -- to bring it back.
 );
 
 -- 4. Green bean inventory
