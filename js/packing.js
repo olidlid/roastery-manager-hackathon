@@ -2478,7 +2478,17 @@ async function syncProductionLotBatches(lot, bulk, roastBatches) {
     }
 }
 
-function printLotBarcodeLabels(lot, requested, machines) {
+// opts.priorityMark — "KELUAR DULU" sticker for stock counted straight off the
+// warehouse shelf (Stock by Lot > Print Sticker), as opposed to a normal
+// just-packed run. It deliberately drops the coffee name, machine and date
+// lines: those bags already carry their own printed roast date, and stamping
+// the ENTRY date next to it would put two conflicting dates on one package.
+// What's left is the scannable identity (barcode + strip code), the size, and
+// the priority band the packing team actually sorts by. Omitted opts keeps the
+// normal production label byte-identical.
+function printLotBarcodeLabels(lot, requested, machines, opts = {}) {
+    const priorityMark = opts.priorityMark === true;
+    const priorityLabel = window.t ? window.t('lbl_sticker_priority') : 'KELUAR DULU';
     // Production date = the lot's roast/pack date (production_date). Expiry
     // is a fixed 1-year shelf life from that date — no separate field to
     // track, just computed at print time. dd-mm-yyyy per the label spec
@@ -2504,9 +2514,11 @@ function printLotBarcodeLabels(lot, requested, machines) {
     // separate line — the barcode graphic itself always prints regardless.
     const cfg = (companySettings.label_layout && companySettings.label_layout.packed) || {};
     const showCode = cfg.code !== false;
-    const showCoffeeName = cfg.coffee_name !== false;
-    const showDates = cfg.dates !== false;
-    const showMachine = cfg.machine !== false;
+    // A priority sticker overrides these three regardless of the Settings
+    // toggles — see the opts.priorityMark note on the signature above.
+    const showCoffeeName = priorityMark ? false : cfg.coffee_name !== false;
+    const showDates = priorityMark ? false : cfg.dates !== false;
+    const showMachine = priorityMark ? false : cfg.machine !== false;
 
     // Physical sticker is exactly 50×25mm — one label per printed page (roll
     // printer), content flex-centered/space-evenly so it fills the sticker
@@ -2542,6 +2554,7 @@ function printLotBarcodeLabels(lot, requested, machines) {
             linesHtml += `<div class="lbl-size">${r.label}</div>`;
             if (showMachine && machineName) linesHtml += `<div class="lbl-machine">${machineName}</div>`;
             if (showDates) linesHtml += `<div class="lbl-dates">${dateRangeStr}</div>`;
+            if (priorityMark) linesHtml += `<div class="lbl-priority">${priorityLabel}</div>`;
             labelsHtml += `
                 <div class="barcode-label-item">
                     <div class="barcode-label-row">
@@ -2680,6 +2693,18 @@ function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
             .lbl-size { font-size: 2.1mm; font-weight: 700; line-height: 1.15; margin-top: 0.15mm; }
             .lbl-machine { font-size: 1.7mm; font-weight: 600; line-height: 1.15; color: #333; margin-top: 0.1mm; }
             .lbl-dates { font-size: 2mm; font-weight: 700; line-height: 1.15; margin-top: 0.15mm; }
+            /* Priority band (see opts.priorityMark in printLotBarcodeLabels).
+               Boxed + letter-spaced rather than plain bold text so it reads
+               across a shelf at a glance, which is the whole point of this
+               sticker. It only ever appears when the coffee-name/machine/date
+               lines are suppressed, so there's room on the 25mm height without
+               squeezing the barcode.
+               Deliberately a BORDER with black text, not white-on-black:
+               Chrome's print dialog defaults "Background graphics" to OFF, and
+               with it off a background-filled band prints as blank paper with
+               invisible white text. Borders and text are content, not
+               background, so this survives that setting either way. */
+            .lbl-priority { font-size: 2.8mm; font-weight: 800; line-height: 1.2; letter-spacing: 0.3mm; margin-top: 0.4mm; color: #000; border: 0.4mm solid #000; padding: 0.25mm 1mm; border-radius: 0.6mm; width: 100%; box-sizing: border-box; text-align: center; }
         </style></head><body>
         ${labelsHtml}
         <script>
@@ -2981,14 +3006,29 @@ async function openPackBulkModal(bulkId) {
 async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId) {
     const { data: existingLots } = await fetchData('packed_coffee_lots');
 
-    if (productionLotId) {
-        const existing = (existingLots || []).find(l => l.packed_coffee_id === packedCoffeeId && l.production_lot_id === productionLotId);
-        if (existing) {
-            const newQtyPcs = (parseInt(existing.quantity_pcs) || 0) + qty;
-            const newRemaining = (parseInt(existing.remaining_pcs) || 0) + qty;
-            await saveData('packed_coffee_lots', { id: existing.id, quantity_pcs: newQtyPcs, remaining_pcs: newRemaining });
-            return { ...existing, quantity_pcs: newQtyPcs, remaining_pcs: newRemaining };
-        }
+    // A production-linked pack merges on (packed_coffee_id, production_lot_id).
+    // A MANUAL pack (no production lot) merges on packed_coffee_id alone —
+    // packed_coffee is itself already keyed by coffee name + size + machine
+    // (see getOrCreatePackedCoffeeRow), so this is exactly "same coffee, same
+    // machine, same size = same lot", which is what warehouse stock entry
+    // wants: one stable strip code per shelf position instead of a new code
+    // per entry session. Before this, manual entries always inserted a fresh
+    // lot, so finding 10 more bags of something already entered produced a
+    // second lot with a second sticker code for the same physical shelf.
+    //
+    // remaining_pcs > 0 is deliberate, not incidental: zeroed-out lots stay in
+    // this table as history, and merging into one would resurrect it and
+    // inherit its strip_code — a code that may already be printed on older
+    // physical packaging. Requiring live stock means a fresh entry always
+    // starts a clean code, and only genuinely-current stock accumulates.
+    const existing = productionLotId
+        ? (existingLots || []).find(l => l.packed_coffee_id === packedCoffeeId && l.production_lot_id === productionLotId)
+        : (existingLots || []).find(l => l.packed_coffee_id === packedCoffeeId && !l.production_lot_id && (parseInt(l.remaining_pcs) || 0) > 0);
+    if (existing) {
+        const newQtyPcs = (parseInt(existing.quantity_pcs) || 0) + qty;
+        const newRemaining = (parseInt(existing.remaining_pcs) || 0) + qty;
+        await saveData('packed_coffee_lots', { id: existing.id, quantity_pcs: newQtyPcs, remaining_pcs: newRemaining });
+        return { ...existing, quantity_pcs: newQtyPcs, remaining_pcs: newRemaining };
     }
 
     const [
@@ -3597,12 +3637,19 @@ async function openPackedLotsModal(coffeeName) {
             const parentPacked = resolved.find(r => r.id === pl.packed_coffee_id);
             const machine = parentPacked && parentPacked.machine_id ? (machines || []).find(m => m.id === parentPacked.machine_id) : null;
             return {
+                lotId: pl.id,
                 lotCode: pl.lot_code,
                 stripCode: pl.strip_code,
                 machineName: machine ? machine.name : 'Unknown',
+                machineId: parentPacked ? parentPacked.machine_id : null,
                 sizeG: parentPacked ? parentPacked.bag_size_g : '-',
                 packedDate: pl.packed_date,
-                remaining: parseInt(pl.remaining_pcs) || 0
+                remaining: parseInt(pl.remaining_pcs) || 0,
+                // No production lot behind it = counted straight off the shelf
+                // rather than produced through Ready to Pack, which is exactly
+                // the stock the KELUAR DULU sticker is for — so the checkbox
+                // in the print dialog defaults to this.
+                isManual: !pl.production_lot_id
             };
         })
         // Grouped by machine+size first (so the same fulfillable bucket
@@ -3613,6 +3660,10 @@ async function openPackedLotsModal(coffeeName) {
             (parseInt(a.sizeG) || 0) - (parseInt(b.sizeG) || 0) ||
             new Date(a.packedDate || 0) - new Date(b.packedDate || 0)
         );
+
+    // Same gate as the Barcode button on Ready to Pack cards — printing a
+    // sticker is the same privilege wherever it happens.
+    const canPrintSticker = hasPermission('packing_print_barcode');
 
     let rowsHtml = '';
     if (lotRows.length === 0) {
@@ -3647,6 +3698,9 @@ async function openPackedLotsModal(coffeeName) {
                     <td>${r.sizeG}g</td>
                     <td>${r.packedDate || '-'}</td>
                     <td style="text-align:right;"><strong>${r.remaining}</strong></td>
+                    <td style="text-align:right; white-space:nowrap;">${r.stripCode
+                        ? `<button type="button" class="btn btn-secondary btn-sm btn-print-lot-sticker" data-lot-id="${r.lotId}" title="${canPrintSticker ? 'Print sticker' : ''}"><i class="icon-printer va-middle-mr-1"></i>Sticker</button>`
+                        : `<span style="font-size:0.7rem; color:var(--text-muted);" title="This size has no FIFO digit configured (Settings &rarr; Production &rarr; Packaging Sizes), so there is no scannable strip code to print.">no code</span>`}</td>
                 </tr>
             `;
         });
@@ -3657,7 +3711,7 @@ async function openPackedLotsModal(coffeeName) {
         rowsHtml = `
             <table class="table" style="width:100%;">
                 <thead><tr>
-                    <th>Lot Code</th><th>Machine</th><th>Size</th><th>Packed Date</th><th style="text-align:right;">Remaining</th>
+                    <th>Lot Code</th><th>Machine</th><th>Size</th><th>Packed Date</th><th style="text-align:right;">Remaining</th><th></th>
                 </tr></thead>
                 <tbody>
                     ${groupBlocks.map(g => g.rows).join('')}
@@ -3666,6 +3720,7 @@ async function openPackedLotsModal(coffeeName) {
                     <tr style="border-top: 2px solid var(--border);">
                         <td colspan="4" style="text-align:right; font-weight:700;">Total (all lots)</td>
                         <td style="text-align:right; font-weight:700;">${grandTotal}</td>
+                        <td></td>
                     </tr>
                 </tfoot>
             </table>
@@ -3683,7 +3738,80 @@ async function openPackedLotsModal(coffeeName) {
             </div>
         </div>
     `;
-    openModal(`Stock by Lot — ${displayName}`, html, '650px');
+    openModal(`Stock by Lot — ${displayName}`, html, '700px');
+
+    document.querySelectorAll('.btn-print-lot-sticker').forEach(btn => {
+        if (!canPrintSticker) { btn.style.display = 'none'; return; }
+        btn.addEventListener('click', () => {
+            const row = lotRows.find(r => r.lotId === parseInt(btn.getAttribute('data-lot-id')));
+            if (row) openPrintLotStickerModal(row, coffeeName, machines);
+        });
+    });
+}
+
+// Sticker reprint for ONE already-existing packed lot, independent of the
+// Ready to Pack > Barcode flow. That flow is anchored to a bulk_roasted_coffee
+// row (it needs bulk_available > 0 to even render a card), so it can't reach
+// stock that was counted straight into the app rather than produced — and it
+// can't reprint a torn sticker for a lot whose bulk is long gone.
+function openPrintLotStickerModal(row, coffeeName, machines) {
+    const priorityLabel = window.t ? window.t('lbl_sticker_priority') : 'KELUAR DULU';
+    const html = `
+        <form id="modal-print-sticker-form">
+            <div style="background: var(--bg-glass-active); border-radius: 8px; padding: 10px 12px; margin-bottom: 16px; font-size: 0.85rem;">
+                <div><strong style="font-family:monospace;">${row.stripCode}</strong> &middot; <code style="font-size:0.78rem;">${row.lotCode}</code></div>
+                <div style="color: var(--text-muted); font-size: 0.78rem; margin-top: 2px;">${coffeeName} &middot; ${row.sizeG}g &middot; ${row.machineName} &middot; ${row.remaining} pcs in stock</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label" data-i18n="lbl_sticker_qty">Number of stickers</label>
+                <input type="number" id="m-sticker-qty" class="form-control" min="1" value="${row.remaining}" required>
+                <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;" data-i18n="hint_sticker_qty">Defaults to the full remaining stock — one sticker per package.</div>
+            </div>
+            <label class="checkbox-container" style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+                <input type="checkbox" id="m-sticker-priority" ${row.isManual ? 'checked' : ''}>
+                <span>Mark as &ldquo;${priorityLabel}&rdquo;</span>
+            </label>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;" data-i18n="hint_sticker_priority">Prints only the barcode, code and size plus the priority mark — no coffee name or dates, since the packaging already carries its own roast date.</div>
+            <div class="modal-footer-actions-lg">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                <button type="submit" class="btn btn-primary" data-i18n="btn_print_stickers">Print Stickers</button>
+            </div>
+        </form>
+    `;
+
+    openModal(window.t ? window.t('title_print_sticker') : 'Print Sticker', html, '460px');
+
+    document.getElementById('modal-print-sticker-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const qty = parseInt(document.getElementById('m-sticker-qty').value) || 0;
+        if (qty < 1) {
+            await showWarningModal('Enter how many stickers to print (at least 1).', false);
+            return;
+        }
+        const priorityMark = document.getElementById('m-sticker-priority').checked;
+
+        // printLotBarcodeLabels only ever reads production_date, machine_id and
+        // coffee_name off this first argument (verified) — it does NOT need a
+        // real production_lots row, so a plain shape is enough here. The date
+        // is irrelevant for a priority sticker (dates are suppressed) but is
+        // still passed so a non-priority reprint keeps its date line correct.
+        const lotShape = {
+            production_date: row.packedDate || null,
+            machine_id: row.machineId,
+            coffee_name: coffeeName
+        };
+        const requested = [{
+            packedCoffeeLotId: row.lotId,
+            stripCode: row.stripCode,
+            lotCode: row.lotCode,
+            label: `${row.sizeG}g`,
+            multiplier: null,
+            qty
+        }];
+
+        document.getElementById('btn-close-modal').click();
+        printLotBarcodeLabels(lotShape, requested, machines, { priorityMark });
+    });
 }
 
 async function openEditPackedModal(coffeeName) {
