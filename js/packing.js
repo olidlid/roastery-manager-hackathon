@@ -2609,17 +2609,16 @@ function printLotBarcodeLabels(lot, requested, machines, opts = {}) {
 // no matter how wrong the real page was. Pinning both the page and the item in
 // mm is what makes the preview honest again.
 //
-// Orientation is therefore back to being the app's own setting
-// (companySettings.label_rotate_90, Settings > Production > Label Layout >
-// Print Orientation) rather than Chrome's dropdown — the two are mutually
-// exclusive, and a correct physical size matters more than where the toggle
-// lives. `rotate` is the per-printer workaround for thermal drivers that force
-// their own portrait media: @page is then declared as that portrait shape
-// (25x50mm) while .barcode-label-item is still drawn at its landscape size and
-// rotated 90° into place, so the barcode always runs along the label's LONG
-// edge either way.
+// Orientation used to be a user-facing Settings toggle
+// (companySettings.label_rotate_90); removed again 2026-08-10 in favor of
+// fixing orientation at the OS/driver level (Chrome print dialog Scale +
+// the ZDesigner driver's own media size), so `rotate` is now hardcoded to
+// match this printer's physical mounting: @page is declared as the portrait
+// shape (25x50mm) while .barcode-label-item is still drawn at its landscape
+// size and rotated 90° into place, so the barcode always runs along the
+// label's LONG edge.
 function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
-    const rotate = companySettings.label_rotate_90 === true;
+    const rotate = true;
     // 0.5mm page margin (was 1mm) to reclaim print area — most thermal roll
     // printers can hold 0.5mm reliably. Content box is then 49x24mm either
     // way (50/25mm minus 2x0.5mm), which is what the item sizes below match.

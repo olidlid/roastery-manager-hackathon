@@ -86,18 +86,14 @@ CREATE TABLE IF NOT EXISTS public.company_settings (
                                                  -- Replaces the old label_show_* + label_width/label_height
                                                  -- columns above, which are no longer read by the app but were
                                                  -- left in place rather than dropped.
-    label_rotate_90 BOOLEAN DEFAULT FALSE        -- ACTIVE (added 2026-07-18; briefly retired 2026-07-30,
-                                                 -- restored 2026-08-10): printer-driver workaround that
-                                                 -- rotates the 50x25mm label content 90 degrees for thermal
-                                                 -- drivers that force their own portrait media. Settings >
-                                                 -- Production > Label Layout > Print Orientation. The
-                                                 -- 2026-07-30 alternative (let Chrome's own Layout dropdown
-                                                 -- handle it) required declaring no @page size, which left
-                                                 -- the label with no absolute physical dimensions and printed
-                                                 -- the wrong size on a real Zebra GK420t — the two are
-                                                 -- mutually exclusive. See buildFixedLabelDocument in
-                                                 -- js/packing.js. Never dropped, so no migration was needed
-                                                 -- to bring it back.
+    label_rotate_90 BOOLEAN DEFAULT FALSE        -- LEGACY (added 2026-07-18, retired 2026-07-30, briefly
+                                                 -- revived 2026-08-10, retired again same day): was a
+                                                 -- Settings-facing toggle for a printer-driver rotation
+                                                 -- workaround. Nothing reads/writes this column anymore —
+                                                 -- js/packing.js and js/roasting.js now hardcode `rotate`
+                                                 -- to match the printer's physical mounting instead, since
+                                                 -- @page size and Chrome's Layout dropdown are mutually
+                                                 -- exclusive either way. Left in place rather than dropped.
 );
 
 -- 4. Green bean inventory

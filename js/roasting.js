@@ -3320,15 +3320,14 @@ async function printStickerLabel(id) {
     }
 
     document.getElementById('btn-execute-label-print').addEventListener('click', () => {
-        // Page size and sticker dimensions in absolute mm, and orientation from
-        // the app's own setting — see buildFixedLabelDocument (packing.js) for
-        // the full reasoning and the Zebra GK420t print test that forced this
-        // back. Short version: with no @page size, width:100% resolved against
-        // the driver's reported media instead of the real 50x25mm sticker, and
-        // Chrome's preview could never show that was wrong.
+        // Page size and sticker dimensions in absolute mm — see
+        // buildFixedLabelDocument (packing.js) for the full reasoning and the
+        // Zebra GK420t print test that forced this. `rotate` is hardcoded
+        // (no more in-app toggle, see packing.js comment) to match this
+        // printer's physical mounting.
         // 1mm margin here (not packed coffee's 0.5mm), so the content box is
         // 48x23mm.
-        const rotate = companySettings.label_rotate_90 === true;
+        const rotate = true;
         const printStickerCss = rotate
             ? `@page { size: 25mm 50mm; margin: 1mm; }
                ${stickerStyleBase}
