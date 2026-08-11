@@ -3320,15 +3320,22 @@ async function printStickerLabel(id) {
     }
 
     document.getElementById('btn-execute-label-print').addEventListener('click', () => {
-        // See buildFixedLabelDocument (packing.js) for the full page-sizing
-        // history/reasoning. Currently (2026-08-11): no @page size, item at
-        // 100%/100% — deferring physical size entirely to the ZDesigner
-        // driver's own calibrated Stocks + Paper Format setting, since
-        // pinning an absolute mm @page kept fighting the driver's own
-        // Landscape setting. Recoverable from git commit db53eba if needed.
-        const printStickerCss = `@page { margin: 1mm; }
+        // See buildFixedLabelDocument (packing.js) for the full page-sizing/
+        // orientation history — CONFIRMED WORKING on a real physical print:
+        // pin @page to the portrait shape (25x50mm) and rotate the item 90°
+        // in CSS, since neither Chrome's Layout dropdown nor the driver's own
+        // Paper Format radio actually rotate the physical output on this
+        // printer. Requires the driver's Paper Format set to PORTRAIT (not
+        // Landscape) with Stocks calibrated to 1.97 x 0.98in.
+        // 1mm margin here (not packed coffee's 0.5mm), so the content box is
+        // 48x23mm.
+        const printStickerCss = `@page { size: 25mm 50mm; margin: 1mm; }
                ${stickerStyleBase}
-               .sticker-item { width: 100%; height: 100%; }`;
+               .sticker-item {
+                   width: 48mm; height: 23mm;
+                   position: relative; left: 23mm; top: 0;
+                   transform: rotate(90deg); transform-origin: top left;
+               }`;
 
         const printWin = window.open('', '', 'width=400,height=300');
         printWin.document.write(`

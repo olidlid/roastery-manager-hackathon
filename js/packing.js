@@ -2593,30 +2593,34 @@ function printLotBarcodeLabels(lot, requested, machines, opts = {}) {
 // old 1.1 to 2.2 (JsBarcode units) — the old value produced sub-0.2mm bars
 // once scaled into the 8mm-tall zone, well under the ~0.33mm minimum most
 // thermal printers can reproduce without dot-gain merging adjacent bars.
-// Page sizing history (Zebra GK420t, ZDesigner driver):
-// 1. Originally no @page size + item width:100% — relied entirely on
-//    whatever media the driver reported, which was wrong/uncalibrated and
-//    spilled content onto the next physical label.
-// 2. 2026-08-10: pinned @page to an absolute 50x25mm + item to absolute
-//    49x24mm to force a correct physical size regardless of driver state.
-//    This fixed the size but forced Chrome to report "Paper size: User
-//    defined" in its print dialog — even after the driver's own Stocks was
-//    explicitly calibrated to match (1.97 x 0.98in) and its Paper Format
-//    set to Landscape, prints kept coming out portrait/cropped. That
-//    absolute-mm version is recoverable from git commit db53eba if needed.
-// 3. 2026-08-11 (current): back to no @page size + item at 100%/100%, now
-//    that the driver's Stocks is explicitly calibrated (not the uncalibrated
-//    default from attempt 1) — letting the driver's own already-correct
-//    media definition and its Landscape/Portrait radio fully own the
-//    physical page, instead of Chrome negotiating a competing custom size.
-// Known risk carried over from attempt 1: because the item is 100% of
-// whatever page exists, Chrome's print PREVIEW will always look correct
-// even if the real physical size is wrong — only a real print proves this.
+// Page sizing/orientation history (Zebra GK420t, ZDesigner driver) — READ
+// BEFORE touching this again, several plausible-looking approaches were
+// tried and failed on the real printer:
+// 1. No @page size + item width:100% — relied on whatever media the driver
+//    reported; with the driver uncalibrated this spilled content onto the
+//    next physical label.
+// 2. Pinned @page to absolute 50x25mm with no CSS rotation, trusting the
+//    driver's own Paper Format Landscape/Portrait radio to orient it —
+//    prints kept coming out portrait/cropped regardless of that radio.
+// 3. Dropped @page size again (item 100%/100%), trusting Chrome's own print
+//    dialog Layout: Portrait/Landscape dropdown — confirmed on a real print
+//    that changing that dropdown only changes the on-screen layout, NOT the
+//    physical output, which stayed portrait either way.
+// CONFIRMED WORKING (physical print test, restored here): pin @page to the
+// PORTRAIT shape (25x50mm) and let CSS itself rotate the item 90° into a
+// landscape 49x24mm box — i.e. do the rotation in code, not by relying on
+// Chrome or the driver to do it, since neither actually does on this
+// printer/driver combo. Requires the driver's own Paper Format set to
+// PORTRAIT (not Landscape) and rotate 180° unchecked, with Stocks
+// calibrated to 1.97 x 0.98in — changing the driver to Landscape breaks
+// this combination.
 function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
-    const pageCss = `@page { margin: 0.5mm; }`;
+    // 0.5mm page margin (was 1mm) to reclaim print area — most thermal roll
+    // printers can hold 0.5mm reliably. Content box is then 49x24mm.
+    const pageCss = `@page { size: 25mm 50mm; margin: 0.5mm; }`;
     const itemCss = `.barcode-label-item {
-                width: 100%;
-                height: 100%;
+                width: 49mm;
+                height: 24mm;
                 box-sizing: border-box;
                 display: flex;
                 flex-direction: column;
@@ -2624,6 +2628,11 @@ function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
                 text-align: center;
                 padding: 0 1mm;
                 page-break-after: always;
+                position: relative;
+                left: 24mm;
+                top: 0;
+                transform: rotate(90deg);
+                transform-origin: top left;
            }`;
     // Barcode height: for packed-coffee labels (the only caller that passes
     // packedBarcodeHeightMm) this is now a Settings-configurable value
