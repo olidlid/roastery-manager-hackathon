@@ -3512,8 +3512,13 @@ async function loadPackedCoffeeSection() {
     Object.values(grouped).sort((a,b) => a.coffeeName.localeCompare(b.coffeeName)).forEach(group => {
         const tr = document.createElement('tr');
 
+        tr.classList.add('packed-stock-row');
+        tr.setAttribute('data-coffee', encodeURIComponent(group.coffeeName));
+        tr.style.cursor = 'pointer';
+        tr.title = 'Click to view stock by lot';
+
         const codeLabel = group.coffeeCode ? `<code style="font-size:0.78rem; color:var(--text-muted); margin-right:6px;">${group.coffeeCode}</code>` : '';
-        let html = `<td>${codeLabel}<strong class="packed-stock-row-name" data-coffee="${encodeURIComponent(group.coffeeName)}" style="cursor:pointer; text-decoration:underline dotted;" title="Click to view stock by lot">${group.coffeeName}</strong></td>`;
+        let html = `<td>${codeLabel}<strong>${group.coffeeName}</strong></td>`;
 
         activeMachinesList.forEach((mach, mIdx) => {
             const machData = group.machines[mach.name] || { sizes: {} };
@@ -3543,16 +3548,20 @@ async function loadPackedCoffeeSection() {
         tbody.appendChild(tr);
     });
 
-    document.querySelectorAll('.packed-stock-row-name').forEach(el => {
-        el.addEventListener('click', () => openPackedLotsModal(decodeURIComponent(el.getAttribute('data-coffee'))));
+    document.querySelectorAll('.packed-stock-row').forEach(row => {
+        row.addEventListener('click', () => openPackedLotsModal(decodeURIComponent(row.getAttribute('data-coffee'))));
     });
 
     document.querySelectorAll('.btn-edit-packed').forEach(btn => {
-        btn.addEventListener('click', () => openEditPackedModal(decodeURIComponent(btn.getAttribute('data-coffee'))));
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openEditPackedModal(decodeURIComponent(btn.getAttribute('data-coffee')));
+        });
     });
 
     document.querySelectorAll('.btn-delete-packed').forEach(btn => {
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
             const coffeeName = decodeURIComponent(btn.getAttribute('data-coffee'));
             const confirmed = await showWarningModal(`Are you sure you want to delete all packed stock for "${coffeeName}"?\n\nThis action cannot be undone.`);
             if (!confirmed) return;
@@ -3579,14 +3588,16 @@ async function openPackedLotsModal(coffeeName) {
         { data: machines },
         { data: batches },
         { data: greenbeans },
-        { data: recipes }
+        { data: recipes },
+        { data: productionLots }
     ] = await Promise.all([
         fetchData('packed_coffee'),
         fetchData('packed_coffee_lots'),
         fetchData('machines'),
         fetchData('roast_batches'),
         fetchData('green_coffee'),
-        fetchData('blend_recipes')
+        fetchData('blend_recipes'),
+        fetchData('production_lots')
     ]);
 
     const resolved = (packed || []).map(item => {
@@ -3622,6 +3633,12 @@ async function openPackedLotsModal(coffeeName) {
         .map(pl => {
             const parentPacked = resolved.find(r => r.id === pl.packed_coffee_id);
             const machine = parentPacked && parentPacked.machine_id ? (machines || []).find(m => m.id === parentPacked.machine_id) : null;
+            // Roast date only exists for production-linked lots (production_lots
+            // is one row per bulk-roasted day, production_date IS the roast
+            // date). Manual/warehouse-counted lots have no production_lot_id
+            // and therefore no roast date to show — deliberate, per the
+            // decision that physical packaging already carries it for those.
+            const productionLot = pl.production_lot_id ? (productionLots || []).find(l => l.id === pl.production_lot_id) : null;
             return {
                 lotId: pl.id,
                 lotCode: pl.lot_code,
@@ -3629,6 +3646,7 @@ async function openPackedLotsModal(coffeeName) {
                 machineName: machine ? machine.name : 'Unknown',
                 machineId: parentPacked ? parentPacked.machine_id : null,
                 sizeG: parentPacked ? parentPacked.bag_size_g : '-',
+                roastDate: productionLot ? productionLot.production_date : null,
                 packedDate: pl.packed_date,
                 remaining: parseInt(pl.remaining_pcs) || 0,
                 // No production lot behind it = counted straight off the shelf
@@ -3679,9 +3697,10 @@ async function openPackedLotsModal(coffeeName) {
             groupTotal += r.remaining;
             currentBlockRows += `
                 <tr>
-                    <td>${r.stripCode ? `<b>${r.stripCode}</b> &middot; ` : ''}<code>${r.lotCode}</code>${isNewGroup ? ' <span style="font-size:0.68rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px; margin-left:6px;">PICK FIRST</span>' : ''}</td>
+                    <td>${r.stripCode ? `<b>${r.stripCode}</b>` : `<code>${r.lotCode}</code>`}${isNewGroup ? ' <span style="font-size:0.68rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px; margin-left:6px;">PICK FIRST</span>' : ''}</td>
                     <td>${r.machineName}</td>
                     <td>${r.sizeG}g</td>
+                    <td>${r.roastDate || '-'}</td>
                     <td>${r.packedDate || '-'}</td>
                     <td style="text-align:right;"><strong>${r.remaining}</strong></td>
                     <td style="text-align:right; white-space:nowrap;">${r.stripCode
@@ -3697,14 +3716,14 @@ async function openPackedLotsModal(coffeeName) {
         rowsHtml = `
             <table class="table" style="width:100%;">
                 <thead><tr>
-                    <th>Lot Code</th><th>Machine</th><th>Size</th><th>Packed Date</th><th style="text-align:right;">Remaining</th><th></th>
+                    <th>Strip Code</th><th>Machine</th><th>Size</th><th>Roast Date</th><th>Packed Date</th><th style="text-align:right;">Remaining</th><th></th>
                 </tr></thead>
                 <tbody>
                     ${groupBlocks.map(g => g.rows).join('')}
                 </tbody>
                 <tfoot>
                     <tr style="border-top: 2px solid var(--border);">
-                        <td colspan="4" style="text-align:right; font-weight:700;">Total (all lots)</td>
+                        <td colspan="5" style="text-align:right; font-weight:700;">Total (all lots)</td>
                         <td style="text-align:right; font-weight:700;">${grandTotal}</td>
                         <td></td>
                     </tr>
