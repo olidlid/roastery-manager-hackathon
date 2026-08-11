@@ -463,7 +463,7 @@ async function openCloseLotModal(bulkId) {
         }
 
         document.getElementById('btn-close-modal').click();
-        await showWarningModal(window.t ? window.t('close_lot_saved') : 'Lot closed. The leftover was recorded as waste.', false);
+        await showWarningModal(window.t ? window.t('close_lot_saved') : 'Lot closed. The leftover was recorded as waste.', false, null, null, 'success');
         await loadPackingSection();
         scheduleDashboardRefresh();
     });
@@ -944,7 +944,7 @@ async function submitCustomBlend({ name, coffeeCode, sourceRows }) {
     const closeBtn = document.getElementById('btn-close-modal');
     if (closeBtn) closeBtn.click();
 
-    await showWarningModal(`Blend "${name}" created — ${totalKg.toFixed(2)} kg, code ${code}.`, false);
+    await showWarningModal(`Blend "${name}" created — ${totalKg.toFixed(2)} kg, code ${code}.`, false, null, null, 'success');
     await loadCustomBlendSection();
     scheduleDashboardRefresh();
 }
@@ -1161,7 +1161,7 @@ async function openEditPackingRecordModal(recordId) {
         });
 
         document.getElementById('btn-close-modal').click();
-        await showWarningModal('Correction saved.', false);
+        await showWarningModal('Correction saved.', false, null, null, 'success');
         loadPackingRecordsTable();
         loadPackedCoffeeSection();
         loadPackingSection();
@@ -1784,7 +1784,7 @@ async function openDispatchCheckoutModal(orderId) {
         renderAll();
         await loadPackingRequestsSection();
         scheduleDashboardRefresh();
-        await showWarningModal(`Undid ${undoQty} unit(s) for ${coffeeLabel(item)}.`, false);
+        await showWarningModal(`Undid ${undoQty} unit(s) for ${coffeeLabel(item)}.`, false, null, null, 'success');
     }
 
     const itemsListHtml = items.map(item => `<div class="dc-item" id="dc-item-${item.id}">${itemHeaderHtml(item)}</div>`).join('');
@@ -2136,7 +2136,7 @@ async function submitDispatchCheckout(order, items, cart, cust) {
         stillShort
             ? 'Checkout saved. This order still has lines pending — it stays open for the remainder.'
             : 'Checkout saved. All lines are fulfilled — ready to dispatch.',
-        false
+        false, null, null, 'success'
     );
 
     const printNow = await showWarningModal('Print the waybill now?', true);
@@ -2349,7 +2349,7 @@ async function dispatchOrder(orderId) {
     order.status = 'Dispatched';
     await saveData('request_orders', order);
     
-    await showWarningModal('✅ Order dispatched! The sales team has picked up the packed items.', false);
+    await showWarningModal('Order dispatched! The sales team has picked up the packed items.', false, null, null, 'success');
     loadPackingRequestsSection();
     scheduleDashboardRefresh();
 }
@@ -2954,7 +2954,7 @@ async function openPackBulkModal(bulkId) {
             }
 
             document.getElementById('btn-close-modal').click();
-            await showWarningModal('Packing saved successfully.', false);
+            await showWarningModal('Packing saved successfully.', false, null, null, 'success');
             await loadPackingSection();
             scheduleDashboardRefresh();
         } catch (err) {
@@ -4073,7 +4073,7 @@ async function openCustomPackingModal() {
         modalContainer.classList.add('hidden');
         loadPackedCoffeeSection();
         scheduleDashboardRefresh();
-        await showWarningModal("Custom packing stock added successfully.", false);
+        await showWarningModal("Custom packing stock added successfully.", false, null, null, 'success');
     });
 }
 

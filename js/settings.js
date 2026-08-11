@@ -115,7 +115,7 @@ async function openAdminResetPasswordModal(userId, name) {
         }
 
         document.getElementById('btn-close-modal').click();
-        await showWarningModal(`Password for "${name}" has been reset. They can now sign in with the new password.`, false);
+        await showWarningModal(`Password for "${name}" has been reset. They can now sign in with the new password.`, false, null, null, 'success');
     });
 }
 
@@ -1091,7 +1091,7 @@ window.resetMockDatabase = async function() {
     initMockDatabases();
     // Clear in-memory cache
     _dbCache.clear();
-    await showWarningModal('✅ Database reset to defaults. Refreshing page...', false);
+    await showWarningModal('Database reset to defaults. Refreshing page...', false, null, null, 'success');
     location.reload();
 };
 

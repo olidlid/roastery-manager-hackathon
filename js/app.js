@@ -1363,9 +1363,17 @@ function openModal(title, htmlContent, customWidth = null) {
 }
 
 // Custom warning/alert/confirm dialog modal
-function showWarningModal(message, isConfirm = true, title = 'Warning', confirmText = null) {
+// `type` ('warning' | 'success') swaps the icon/color/default title so a
+// genuine success confirmation (e.g. "Packing saved successfully.") doesn't
+// show the same red warning triangle as an actual error or validation
+// message — both used to share this one dialog with no visual distinction.
+// `title` stays null by default (rather than a fixed string) so it can
+// fall back to the correct translated default for whichever `type` was
+// requested, instead of always defaulting to "Warning".
+function showWarningModal(message, isConfirm = true, title = null, confirmText = null, type = 'warning') {
     return new Promise((resolve) => {
         let resolved = false;
+        const isSuccess = type === 'success';
 
         let warningContainer = document.getElementById('warning-modal-container');
         if (!warningContainer) {
@@ -1373,7 +1381,7 @@ function showWarningModal(message, isConfirm = true, title = 'Warning', confirmT
             warningContainer.id = 'warning-modal-container';
             warningContainer.className = 'overlay';
             warningContainer.style.zIndex = '2000';
-            
+
             warningContainer.innerHTML = `
                 <div class="overlay-card" style="max-width: 420px; text-align: center; border: 1px solid var(--border); box-shadow: var(--shadow-premium); background: var(--bg-sidebar); border-radius: var(--border-radius); padding: 24px;">
                     <div style="margin-bottom: 16px;">
@@ -1387,10 +1395,19 @@ function showWarningModal(message, isConfirm = true, title = 'Warning', confirmT
             document.body.appendChild(warningContainer);
         }
 
+        // Icon + color follow `type`, independent of the title text.
+        const iconEl = document.getElementById('warn-dialog-icon');
+        if (iconEl) {
+            iconEl.textContent = isSuccess ? '✅' : '⚠️';
+            iconEl.style.color = isSuccess ? 'var(--success)' : 'var(--danger)';
+        }
+
         // Set title
         const titleEl = document.getElementById('warn-dialog-title');
         if (titleEl) {
-            titleEl.textContent = (title === 'Warning' && window.t) ? (window.t('warn_header') || 'Warning') : title;
+            const defaultTitle = isSuccess ? 'Success' : 'Warning';
+            const defaultKey = isSuccess ? 'success_header' : 'warn_header';
+            titleEl.textContent = (!title && window.t) ? (window.t(defaultKey) || defaultTitle) : (title || defaultTitle);
         }
 
         // Set message
@@ -1432,8 +1449,10 @@ function showWarningModal(message, isConfirm = true, title = 'Warning', confirmT
 
         const okBtn = document.createElement('button');
         okBtn.type = 'button';
-        okBtn.className = 'btn btn-danger';
-        okBtn.style.cssText = 'min-width: 100px; background: var(--danger); color: #fff;';
+        okBtn.className = isSuccess ? 'btn btn-primary' : 'btn btn-danger';
+        okBtn.style.cssText = isSuccess
+            ? 'min-width: 100px; background: var(--success); color: #fff;'
+            : 'min-width: 100px; background: var(--danger); color: #fff;';
         okBtn.textContent = confirmText || (window.t ? window.t('btn_confirm_ok') || 'OK' : 'OK');
         okBtn.addEventListener('click', function() { finish(true); });
         buttonsDiv.appendChild(okBtn);
