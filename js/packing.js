@@ -2611,14 +2611,17 @@ function printLotBarcodeLabels(lot, requested, machines, opts = {}) {
 //
 // Orientation used to be a user-facing Settings toggle
 // (companySettings.label_rotate_90); removed again 2026-08-10 in favor of
-// fixing orientation at the OS/driver level (Chrome print dialog Scale +
-// the ZDesigner driver's own media size), so `rotate` is now hardcoded to
-// match this printer's physical mounting: @page is declared as the portrait
-// shape (25x50mm) while .barcode-label-item is still drawn at its landscape
-// size and rotated 90° into place, so the barcode always runs along the
-// label's LONG edge.
+// fixing orientation at the OS/driver level. `rotate` is hardcoded false:
+// the ZDesigner driver's own "Printing Preferences" Stocks size is set to
+// 1.97 x 0.98in (50 x 25mm, width > height — a landscape-shaped stock), so
+// @page must match that exact shape. Setting rotate true here declared an
+// @page of 25x50mm (portrait) that fought the driver's own landscape stock
+// definition and printed cropped/rotated wrong. If this printer's physical
+// mounting ever needs the content rotated again, do it via the driver's own
+// Paper Format Landscape/Portrait radio — not here — so there is only ever
+// one place doing the rotation.
 function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
-    const rotate = true;
+    const rotate = false;
     // 0.5mm page margin (was 1mm) to reclaim print area — most thermal roll
     // printers can hold 0.5mm reliably. Content box is then 49x24mm either
     // way (50/25mm minus 2x0.5mm), which is what the item sizes below match.

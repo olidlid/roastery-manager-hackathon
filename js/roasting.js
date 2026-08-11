@@ -3321,13 +3321,14 @@ async function printStickerLabel(id) {
 
     document.getElementById('btn-execute-label-print').addEventListener('click', () => {
         // Page size and sticker dimensions in absolute mm — see
-        // buildFixedLabelDocument (packing.js) for the full reasoning and the
-        // Zebra GK420t print test that forced this. `rotate` is hardcoded
-        // (no more in-app toggle, see packing.js comment) to match this
-        // printer's physical mounting.
+        // buildFixedLabelDocument (packing.js) for the full reasoning:
+        // `rotate` is hardcoded false to match the ZDesigner driver's own
+        // Stocks size (50x25mm, landscape-shaped) instead of fighting it with
+        // a portrait @page here. Rotate via the driver's own Paper Format
+        // radio if this printer's mounting ever needs it, not here.
         // 1mm margin here (not packed coffee's 0.5mm), so the content box is
         // 48x23mm.
-        const rotate = true;
+        const rotate = false;
         const printStickerCss = rotate
             ? `@page { size: 25mm 50mm; margin: 1mm; }
                ${stickerStyleBase}
