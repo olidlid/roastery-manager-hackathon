@@ -3709,7 +3709,7 @@ async function openPackedLotsModal(coffeeName) {
                 prevGroupKey = groupKey;
             }
             groupTotal += r.remaining;
-            const cell = 'padding:10px 12px; text-align:center; white-space:nowrap;';
+            const cell = 'padding:5px 10px; text-align:center; white-space:nowrap;';
             currentBlockRows += `
                 <tr>
                     <td style="${cell}">${r.stripCode ? `<b>${r.stripCode}</b>` : `<code>${r.lotCode}</code>`}${isNewGroup ? '<br><span style="font-size:0.62rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px;">PICK FIRST</span>' : ''}</td>
@@ -3727,7 +3727,7 @@ async function openPackedLotsModal(coffeeName) {
         flushGroup();
 
         const grandTotal = lotRows.reduce((sum, r) => sum + r.remaining, 0);
-        const headCell = 'padding:10px 12px; text-align:center; white-space:nowrap;';
+        const headCell = 'padding:6px 10px; text-align:center; white-space:nowrap;';
 
         rowsHtml = `
             <table class="table" style="width:100%; border-collapse:collapse;">
@@ -3739,8 +3739,8 @@ async function openPackedLotsModal(coffeeName) {
                 </tbody>
                 <tfoot>
                     <tr style="border-top: 2px solid var(--border);">
-                        <td colspan="5" style="padding:10px 12px; text-align:right; font-weight:700; white-space:nowrap;">Total (all lots)</td>
-                        <td style="padding:10px 12px; text-align:center; font-weight:700; white-space:nowrap;">${grandTotal}</td>
+                        <td colspan="5" style="padding:6px 10px; text-align:right; font-weight:700; white-space:nowrap;">Total (all lots)</td>
+                        <td style="padding:6px 10px; text-align:center; font-weight:700; white-space:nowrap;">${grandTotal}</td>
                         <td></td>
                     </tr>
                 </tfoot>
@@ -3751,7 +3751,7 @@ async function openPackedLotsModal(coffeeName) {
     const html = `
         <div>
             <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px;">Packed stock by lot for <strong>${displayName}</strong>, oldest first (FIFO order).</p>
-            <div style="max-height: 400px; overflow-y: auto; overflow-x: auto;">
+            <div style="max-height: 480px; overflow-y: auto;">
                 ${rowsHtml}
             </div>
             <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
@@ -3759,7 +3759,7 @@ async function openPackedLotsModal(coffeeName) {
             </div>
         </div>
     `;
-    openModal(`Stock by Lot — ${displayName}`, html, '700px');
+    openModal(`Stock by Lot — ${displayName}`, html, '850px');
 
     document.querySelectorAll('.btn-print-lot-sticker').forEach(btn => {
         if (!canPrintSticker) { btn.style.display = 'none'; return; }
