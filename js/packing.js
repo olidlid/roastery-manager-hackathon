@@ -2593,61 +2593,30 @@ function printLotBarcodeLabels(lot, requested, machines, opts = {}) {
 // old 1.1 to 2.2 (JsBarcode units) — the old value produced sub-0.2mm bars
 // once scaled into the 8mm-tall zone, well under the ~0.33mm minimum most
 // thermal printers can reproduce without dot-gain merging adjacent bars.
-// Page size and label dimensions are declared in ABSOLUTE mm, and that is
-// load-bearing (reverted here 2026-08-10 after a real Zebra GK420t print test).
-// Between 2026-07-30 and this change @page carried no size and the item was
-// width:100%, so that Chrome would expose its own Layout: Portrait/Landscape
-// control (declaring an @page size makes Chrome hide it). That traded away the
-// only physical anchor the label had: width:100% resolves against whatever
-// media the DRIVER reports, so with the printer's media set to anything other
-// than 50x25mm the content came out the wrong size — printed content spilled
-// past the physical label onto the next one on the roll.
-//
-// Worse, that failure mode is invisible in Chrome's print preview: because the
-// content was defined as 100% of the page, it proportionally filled whatever
-// page box existed and therefore ALWAYS previewed as a perfectly-filled label,
-// no matter how wrong the real page was. Pinning both the page and the item in
-// mm is what makes the preview honest again.
-//
-// Orientation used to be a user-facing Settings toggle
-// (companySettings.label_rotate_90); removed again 2026-08-10 in favor of
-// fixing orientation at the OS/driver level. `rotate` is hardcoded false:
-// the ZDesigner driver's own "Printing Preferences" Stocks size is set to
-// 1.97 x 0.98in (50 x 25mm, width > height — a landscape-shaped stock), so
-// @page must match that exact shape. Setting rotate true here declared an
-// @page of 25x50mm (portrait) that fought the driver's own landscape stock
-// definition and printed cropped/rotated wrong. If this printer's physical
-// mounting ever needs the content rotated again, do it via the driver's own
-// Paper Format Landscape/Portrait radio — not here — so there is only ever
-// one place doing the rotation.
+// Page sizing history (Zebra GK420t, ZDesigner driver):
+// 1. Originally no @page size + item width:100% — relied entirely on
+//    whatever media the driver reported, which was wrong/uncalibrated and
+//    spilled content onto the next physical label.
+// 2. 2026-08-10: pinned @page to an absolute 50x25mm + item to absolute
+//    49x24mm to force a correct physical size regardless of driver state.
+//    This fixed the size but forced Chrome to report "Paper size: User
+//    defined" in its print dialog — even after the driver's own Stocks was
+//    explicitly calibrated to match (1.97 x 0.98in) and its Paper Format
+//    set to Landscape, prints kept coming out portrait/cropped. That
+//    absolute-mm version is recoverable from git commit db53eba if needed.
+// 3. 2026-08-11 (current): back to no @page size + item at 100%/100%, now
+//    that the driver's Stocks is explicitly calibrated (not the uncalibrated
+//    default from attempt 1) — letting the driver's own already-correct
+//    media definition and its Landscape/Portrait radio fully own the
+//    physical page, instead of Chrome negotiating a competing custom size.
+// Known risk carried over from attempt 1: because the item is 100% of
+// whatever page exists, Chrome's print PREVIEW will always look correct
+// even if the real physical size is wrong — only a real print proves this.
 function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
-    const rotate = false;
-    // 0.5mm page margin (was 1mm) to reclaim print area — most thermal roll
-    // printers can hold 0.5mm reliably. Content box is then 49x24mm either
-    // way (50/25mm minus 2x0.5mm), which is what the item sizes below match.
-    const pageCss = rotate
-        ? `@page { size: 25mm 50mm; margin: 0.5mm; }`
-        : `@page { size: 50mm 25mm; margin: 0.5mm; }`;
-    const itemCss = rotate
-        ? `.barcode-label-item {
-                width: 49mm;
-                height: 24mm;
-                box-sizing: border-box;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                text-align: center;
-                padding: 0 1mm;
-                page-break-after: always;
-                position: relative;
-                left: 24mm;
-                top: 0;
-                transform: rotate(90deg);
-                transform-origin: top left;
-           }`
-        : `.barcode-label-item {
-                width: 49mm;
-                height: 24mm;
+    const pageCss = `@page { margin: 0.5mm; }`;
+    const itemCss = `.barcode-label-item {
+                width: 100%;
+                height: 100%;
                 box-sizing: border-box;
                 display: flex;
                 flex-direction: column;
