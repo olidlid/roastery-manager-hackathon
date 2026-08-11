@@ -573,7 +573,7 @@ window.translations = {
         hint_sticker_qty: "Defaults to the full remaining stock — one sticker per package.",
         hint_sticker_priority: "Prints only the barcode, code and size plus the priority mark — no coffee name or dates, since the packaging already carries its own roast date.",
         btn_print_stickers: "Print Stickers",
-        lbl_sticker_priority: "KELUAR DULU",
+        lbl_sticker_priority: "OUT FIRST",
         lbl_yield_weight_chk: "Yield Weight",
         lbl_depreciation_pct_chk: "Depreciation (%)",
         lbl_operator_chk: "Operator",

@@ -2488,7 +2488,7 @@ async function syncProductionLotBatches(lot, bulk, roastBatches) {
 // normal production label byte-identical.
 function printLotBarcodeLabels(lot, requested, machines, opts = {}) {
     const priorityMark = opts.priorityMark === true;
-    const priorityLabel = window.t ? window.t('lbl_sticker_priority') : 'KELUAR DULU';
+    const priorityLabel = window.t ? window.t('lbl_sticker_priority') : 'OUT FIRST';
     // Production date = the lot's roast/pack date (production_date). Expiry
     // is a fixed 1-year shelf life from that date — no separate field to
     // track, just computed at print time. dd-mm-yyyy per the label spec
@@ -3776,7 +3776,7 @@ async function openPackedLotsModal(coffeeName) {
 // stock that was counted straight into the app rather than produced — and it
 // can't reprint a torn sticker for a lot whose bulk is long gone.
 function openPrintLotStickerModal(row, coffeeName, machines) {
-    const priorityLabel = window.t ? window.t('lbl_sticker_priority') : 'KELUAR DULU';
+    const priorityLabel = window.t ? window.t('lbl_sticker_priority') : 'OUT FIRST';
     const html = `
         <form id="modal-print-sticker-form">
             <div style="background: var(--bg-glass-active); border-radius: 8px; padding: 10px 12px; margin-bottom: 16px; font-size: 0.85rem;">
