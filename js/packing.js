@@ -3956,12 +3956,29 @@ async function openCustomPackingModal() {
     ]);
     const activeSizes = (sizes || []).filter(s => s.is_visible).sort((a, b) => a.gram - b.gram);
 
-    // List of coffee name suggestions
-    const coffeeNames = new Set();
-    if (greenbeans) greenbeans.forEach(gb => coffeeNames.add(gb.name));
-    if (recipes) recipes.forEach(r => coffeeNames.add(r.name));
-    
-    const datalistOptions = Array.from(coffeeNames).map(name => `<option value="${name}"></option>`).join('');
+    // List of coffee name suggestions, with each option's displayed/selected
+    // value prefixed with its code (e.g. "9 — CHAMBAKU") the same way
+    // openPackedLotsModal's displayName does, so it's easy to tell apart
+    // near-identical names — and sorted by name so a long list stays
+    // scannable. Deduped by name (green bean wins over a same-named recipe,
+    // matching the previous Set-based behavior) since this datalist also
+    // accepts a fully custom typed name that matches neither list.
+    const coffeeByName = new Map();
+    if (greenbeans) greenbeans.forEach(gb => { if (!coffeeByName.has(gb.name)) coffeeByName.set(gb.name, gb.code || ''); });
+    if (recipes) recipes.forEach(r => { if (!coffeeByName.has(r.name)) coffeeByName.set(r.name, r.code || ''); });
+
+    // Maps the "CODE — NAME" string shown/selected in the datalist back to
+    // the plain coffee name the rest of this modal's logic needs — done via
+    // closure instead of parsing the string back apart on submit, so a name
+    // or code containing " — " itself can never be misparsed.
+    const displayToName = new Map();
+    const sortedCoffeeNames = Array.from(coffeeByName.keys()).sort((a, b) => a.localeCompare(b));
+    const datalistOptions = sortedCoffeeNames.map(name => {
+        const code = coffeeByName.get(name);
+        const display = code ? `${code} — ${name}` : name;
+        displayToName.set(display, name);
+        return `<option value="${display}"></option>`;
+    }).join('');
     const machineOptions = machines.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 
     const sizesHtml = activeSizes.map(sz => `
@@ -4010,7 +4027,8 @@ async function openCustomPackingModal() {
     document.getElementById('modal-custom-packing-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         
-        const coffeeName = document.getElementById('m-custpack-coffee').value.trim();
+        const typedCoffee = document.getElementById('m-custpack-coffee').value.trim();
+        const coffeeName = displayToName.get(typedCoffee) || typedCoffee;
         const machineId = parseInt(document.getElementById('m-custpack-machine').value);
         
         if (!coffeeName || isNaN(machineId)) {

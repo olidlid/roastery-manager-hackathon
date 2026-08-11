@@ -532,7 +532,18 @@ CREATE TABLE IF NOT EXISTS public.packed_coffee_lots (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     packed_date DATE DEFAULT CURRENT_DATE,
     production_lot_id INTEGER REFERENCES public.production_lots(id) ON DELETE SET NULL,  -- V2 1·CHAIN: which production lot this was packed from (populated starting 1G-1)
-    batch_no INTEGER,                           -- V2 FIFO strip code: copied from production_lots.batch_no when linked, else a fresh nextval() for manual/unlinked lots
+    batch_no INTEGER DEFAULT nextval('public.fifo_batch_no_seq'), -- V2 FIFO strip code: copied
+                                                 -- from production_lots.batch_no when linked
+                                                 -- (getOrCreatePackedCoffeeLot passes it explicitly),
+                                                 -- else this DEFAULT assigns a fresh one for
+                                                 -- manual/unlinked lots. Fixed 2026-08-11: this DEFAULT
+                                                 -- was missing from production since the column was
+                                                 -- first added (this file's comment always claimed it
+                                                 -- existed, but information_schema showed NULL) — every
+                                                 -- manual "Add Manual Packed Stock" entry got batch_no
+                                                 -- AND strip_code stuck at NULL ("no code" in Stock by
+                                                 -- Lot) until this was caught and added via
+                                                 -- fix_packed_coffee_lots_batch_no_default migration.
     strip_code TEXT                              -- V2 FIFO strip code: size_digit || lpad(batch_no, 4, '0'), e.g. "10021"
 );
 
