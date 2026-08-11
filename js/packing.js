@@ -3463,18 +3463,13 @@ async function loadPackedCoffeeSection() {
         }
     });
 
-    // Determine the active machine columns to display
-    let hasUnknown = false;
-    Object.values(grouped).forEach(group => {
-        if (group.machines['Unknown'] && Object.values(group.machines['Unknown'].sizes).some(s => s.qty > 0)) {
-            hasUnknown = true;
-        }
-    });
-
+    // Machine columns come straight from the real machines table — no
+    // synthetic "Unknown" column. Stock that couldn't be attributed to a
+    // machine (grouped['...'].machines['Unknown'] above — e.g. old rows from
+    // before manual packing required picking a machine) is not silently
+    // dropped from the table: it's still counted in the Total column below,
+    // just not broken out into its own per-machine column.
     const activeMachinesList = machines.slice().sort((a,b) => a.name.localeCompare(b.name));
-    if (hasUnknown) {
-        activeMachinesList.push({ id: 'unknown', name: 'Unknown' });
-    }
 
     // Update thead — 2-row header (machine name spanning its active-size
     // columns, then a size sub-row) instead of one machine column that
@@ -3482,6 +3477,10 @@ async function loadPackedCoffeeSection() {
     // one column per machine×size combo makes every body row exactly one
     // line tall, so far more coffees fit on screen without scrolling — same
     // rowspan/colspan pattern already used by the Daily Achievement table.
+    // A final "Total" group (one column per size, summed across every
+    // machine bucket including any unattributed "Unknown" stock) closes out
+    // the header/body so the grand total per size is always visible without
+    // needing to add up the machine columns by hand.
     const theadEl = document.getElementById('packed-coffee-stock-table-thead');
     const sizeCount = Math.max(1, activeSizes.length);
     if (theadEl) {
@@ -3490,6 +3489,7 @@ async function loadPackedCoffeeSection() {
             const groupBorder = idx > 0 ? 'border-left: 2px solid var(--border);' : '';
             row1 += `<th colspan="${sizeCount}" class="text-center" style="${groupBorder}">${m.name}</th>`;
         });
+        row1 += `<th colspan="${sizeCount}" class="text-center" style="border-left: 2px solid var(--border); font-weight:700;" data-i18n="col_total">${window.t ? window.t('col_total') : 'Total'}</th>`;
         row1 += `<th rowspan="2" data-i18n="col_action">${window.t ? window.t('col_action') : 'Action'}</th></tr>`;
 
         let row2 = '<tr>';
@@ -3499,13 +3499,17 @@ async function loadPackedCoffeeSection() {
                 row2 += `<th class="text-center" style="background-color: rgba(0,0,0,0.03); font-size: 0.72rem; ${groupBorder}">${sz.gram}g</th>`;
             });
         });
+        activeSizes.forEach((sz, szIdx) => {
+            const groupBorder = szIdx === 0 ? 'border-left: 2px solid var(--border);' : '';
+            row2 += `<th class="text-center" style="background-color: rgba(0,0,0,0.03); font-size: 0.72rem; font-weight:700; ${groupBorder}">${sz.gram}g</th>`;
+        });
         row2 += '</tr>';
 
         theadEl.innerHTML = row1 + row2;
     }
 
     if (Object.keys(grouped).length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${activeMachinesList.length * sizeCount + 2}" class="text-center-muted">${window.t ? window.t("msg_no_packed_avail") : 'No packed coffee available.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${(activeMachinesList.length + 1) * sizeCount + 2}" class="text-center-muted">${window.t ? window.t("msg_no_packed_avail") : 'No packed coffee available.'}</td></tr>`;
         return;
     }
 
@@ -3531,6 +3535,16 @@ async function loadPackedCoffeeSection() {
                 const groupBorder = (mIdx > 0 && szIdx === 0) ? 'border-left: 2px solid var(--border);' : '';
                 html += `<td class="text-center" style="${colorStyle} ${groupBorder}">${qty}</td>`;
             });
+        });
+
+        // Total per size across every machine bucket in this group,
+        // including any "Unknown" (unattributed) stock — see the comment on
+        // activeMachinesList above for why that bucket has no column of its
+        // own but must still be counted here.
+        activeSizes.forEach((sz, szIdx) => {
+            const total = Object.values(group.machines).reduce((sum, md) => sum + (md.sizes[sz.gram] ? md.sizes[sz.gram].qty : 0), 0);
+            const groupBorder = szIdx === 0 ? 'border-left: 2px solid var(--border);' : '';
+            html += `<td class="text-center" style="font-weight:700; ${groupBorder}">${total}</td>`;
         });
 
         html += `
