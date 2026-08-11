@@ -3709,15 +3709,16 @@ async function openPackedLotsModal(coffeeName) {
                 prevGroupKey = groupKey;
             }
             groupTotal += r.remaining;
+            const cell = 'padding:10px 12px; text-align:center; white-space:nowrap;';
             currentBlockRows += `
                 <tr>
-                    <td>${r.stripCode ? `<b>${r.stripCode}</b>` : `<code>${r.lotCode}</code>`}${isNewGroup ? ' <span style="font-size:0.68rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px; margin-left:6px;">PICK FIRST</span>' : ''}</td>
-                    <td>${r.machineName}</td>
-                    <td>${r.sizeG}g</td>
-                    <td>${r.roastDate || '-'}</td>
-                    <td>${r.packedDate || '-'}</td>
-                    <td style="text-align:right;"><strong>${r.remaining}</strong></td>
-                    <td style="text-align:right; white-space:nowrap;">${r.stripCode
+                    <td style="${cell}">${r.stripCode ? `<b>${r.stripCode}</b>` : `<code>${r.lotCode}</code>`}${isNewGroup ? '<br><span style="font-size:0.62rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px;">PICK FIRST</span>' : ''}</td>
+                    <td style="${cell}">${r.machineName}</td>
+                    <td style="${cell}">${r.sizeG}g</td>
+                    <td style="${cell}">${r.roastDate || '-'}</td>
+                    <td style="${cell}">${r.packedDate || '-'}</td>
+                    <td style="${cell}"><strong>${r.remaining}</strong></td>
+                    <td style="${cell}">${r.stripCode
                         ? `<button type="button" class="btn btn-secondary btn-sm btn-print-lot-sticker" data-lot-id="${r.lotId}" title="${canPrintSticker ? 'Print sticker' : ''}"><i class="icon-printer va-middle-mr-1"></i>Sticker</button>`
                         : `<span style="font-size:0.7rem; color:var(--text-muted);" title="This size has no FIFO digit configured (Settings &rarr; Production &rarr; Packaging Sizes), so there is no scannable strip code to print.">no code</span>`}</td>
                 </tr>
@@ -3726,19 +3727,20 @@ async function openPackedLotsModal(coffeeName) {
         flushGroup();
 
         const grandTotal = lotRows.reduce((sum, r) => sum + r.remaining, 0);
+        const headCell = 'padding:10px 12px; text-align:center; white-space:nowrap;';
 
         rowsHtml = `
-            <table class="table" style="width:100%;">
+            <table class="table" style="width:100%; border-collapse:collapse;">
                 <thead><tr>
-                    <th>Strip Code</th><th>Machine</th><th>Size</th><th>Roast Date</th><th>Packed Date</th><th style="text-align:right;">Remaining</th><th></th>
+                    <th style="${headCell}">Strip Code</th><th style="${headCell}">Machine</th><th style="${headCell}">Size</th><th style="${headCell}">Roast Date</th><th style="${headCell}">Packed Date</th><th style="${headCell}">Remaining</th><th style="${headCell}"></th>
                 </tr></thead>
                 <tbody>
                     ${groupBlocks.map(g => g.rows).join('')}
                 </tbody>
                 <tfoot>
                     <tr style="border-top: 2px solid var(--border);">
-                        <td colspan="5" style="text-align:right; font-weight:700;">Total (all lots)</td>
-                        <td style="text-align:right; font-weight:700;">${grandTotal}</td>
+                        <td colspan="5" style="padding:10px 12px; text-align:right; font-weight:700; white-space:nowrap;">Total (all lots)</td>
+                        <td style="padding:10px 12px; text-align:center; font-weight:700; white-space:nowrap;">${grandTotal}</td>
                         <td></td>
                     </tr>
                 </tfoot>
@@ -3749,7 +3751,7 @@ async function openPackedLotsModal(coffeeName) {
     const html = `
         <div>
             <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px;">Packed stock by lot for <strong>${displayName}</strong>, oldest first (FIFO order).</p>
-            <div style="max-height: 400px; overflow-y: auto;">
+            <div style="max-height: 400px; overflow-y: auto; overflow-x: auto;">
                 ${rowsHtml}
             </div>
             <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
