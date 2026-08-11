@@ -778,22 +778,30 @@ async function loadBlendRecipes() {
             <td class="va-middle"><span class="badge ${recipe.is_post_blend ? 'badge-post-blend' : 'badge-pre-blend'}">${recipe.is_post_blend ? window.t('recipes_filter_post') : window.t('recipes_filter_pre')}</span></td>
             <td class="va-middle">
                 <button class="btn btn-secondary btn-sm btn-edit-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
-                <button class="btn btn-danger btn-sm btn-delete-recipe" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+                <button class="btn btn-secondary btn-sm btn-copy-recipe ml-1" data-id="${recipe.id}" title="Copy Recipe"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+                <button class="btn btn-danger btn-sm btn-delete-recipe ml-1" data-id="${recipe.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
                 <button class="btn btn-secondary btn-sm btn-barcode-recipe ml-1" data-id="${recipe.id}" data-name="${recipe.name}" title="Generate Barcodes" ><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="va-middle"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6" y2="16"/><line x1="10" y1="8" x2="10" y2="16"/><line x1="14" y1="8" x2="14" y2="16"/><line x1="18" y1="8" x2="18" y2="16"/></svg></button>
             </td>
         `;
-        
+
         tr.addEventListener('click', (e) => {
             if (e.target.closest('button')) return; // Ignore if clicking action buttons
             openViewRecipeModal(recipe.id);
         });
-        
+
         const btnEdit = tr.querySelector('.btn-edit-recipe');
+        const btnCopy = tr.querySelector('.btn-copy-recipe');
         const btnDelete = tr.querySelector('.btn-delete-recipe');
         if (btnEdit) {
             btnEdit.addEventListener('click', (e) => {
                 e.stopPropagation();
                 openRecipeModal(recipe.id);
+            });
+        }
+        if (btnCopy) {
+            btnCopy.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openRecipeModal(null, recipe.id);
             });
         }
         if (btnDelete) {
@@ -889,7 +897,13 @@ async function openViewRecipeModal(id) {
 }
 
 // --- modal: ADD / EDIT BLEND RECIPE ---
-async function openRecipeModal(id = null) {
+// `copyFromId`: opens this as a CREATE flow (id stays null, so submit always
+// inserts a new row) but pre-fills every field — code, post-blend flag,
+// components, description — from the source recipe. Only `name` is left
+// blank, since the whole point of Copy is a new recipe with the same
+// composition under a different name; the duplicate-name check below would
+// reject saving with the source's own name unchanged anyway.
+async function openRecipeModal(id = null, copyFromId = null) {
     const [
         { data: machines },
         { data: greenbeansRaw },
@@ -926,6 +940,15 @@ async function openRecipeModal(id = null) {
         const { data: recipes } = await fetchData('blend_recipes');
         recipe = recipes.find(r => r.id === id) || recipe;
         recipeIngs = ingredients.filter(ing => ing.blend_recipe_id === id);
+    } else if (copyFromId) {
+        const { data: recipes } = await fetchData('blend_recipes');
+        const source = recipes.find(r => r.id === copyFromId);
+        if (source) {
+            // Same code/description/post-blend flag and the exact same
+            // component rows as the source — only name is left blank.
+            recipe = { code: source.code || '', name: '', description: source.description || '', is_post_blend: source.is_post_blend };
+        }
+        recipeIngs = ingredients.filter(ing => ing.blend_recipe_id === copyFromId);
     } else {
         // Create an initial empty component row
         recipeIngs = [{ green_coffee_id: greenbeans[0]?.id || '', percentage: 0.0 }];
@@ -947,7 +970,7 @@ async function openRecipeModal(id = null) {
 
             <div class="form-group" style="margin-top: 4px;">
                 <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:500;">
-                    <input type="checkbox" id="m-rec-post-blend" ${(id && recipe.is_post_blend) ? 'checked' : ''}>
+                    <input type="checkbox" id="m-rec-post-blend" ${((id || copyFromId) && recipe.is_post_blend) ? 'checked' : ''}>
                     Post-Blend (mix already-roasted singles, instead of roasting the greens together)
                 </label>
             </div>
@@ -977,7 +1000,7 @@ async function openRecipeModal(id = null) {
         </form>
     `;
 
-    openModal(id ? 'Edit Coffee Blend Recipe' : 'Create Custom Blend Recipe', html, '550px');
+    openModal(id ? 'Edit Coffee Blend Recipe' : (copyFromId ? 'Copy Coffee Blend Recipe' : 'Create Custom Blend Recipe'), html, '550px');
 
     const componentsList = document.getElementById('recipe-components-list');
     const ratioSumLbl = document.getElementById('ratio-sum-lbl');
@@ -1073,11 +1096,28 @@ async function openRecipeModal(id = null) {
             return;
         }
 
+        // 1b. Name must be unique (case/whitespace-insensitive) across every
+        // OTHER recipe — re-fetched fresh here rather than reusing the list
+        // loaded when the modal opened, so a name someone else just saved in
+        // another tab is still caught. Excludes this recipe's own id when
+        // editing, so saving with its existing name unchanged is still fine;
+        // a Copy has no id yet, so its source's own name is correctly
+        // rejected if left unchanged.
+        const typedName = document.getElementById('m-rec-name').value.trim();
+        const { data: allRecipesNow } = await fetchData('blend_recipes');
+        const nameTaken = (allRecipesNow || []).some(r =>
+            r.id !== id && (r.name || '').trim().toLowerCase() === typedName.toLowerCase()
+        );
+        if (nameTaken) {
+            alert(window.t("alert_blend_name_duplicate").replace("{name}", typedName));
+            return;
+        }
+
         // 2. Save recipe metadata
         const recipeRecord = {
             id: id || undefined,
             code: document.getElementById('m-rec-code').value,
-            name: document.getElementById('m-rec-name').value,
+            name: typedName,
             machine_id: null,
             batch_size_g: 0,
             is_post_blend: document.getElementById('m-rec-post-blend').checked,
