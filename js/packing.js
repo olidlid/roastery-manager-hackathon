@@ -4983,14 +4983,16 @@ async function openNewStockReleaseModal() {
         { data: roastBatches },
         { data: greenbeans },
         { data: recipes },
-        { data: salesAgents }
+        { data: salesAgents },
+        { data: machines }
     ] = await Promise.all([
         fetchData('packed_coffee'),
         fetchData('packed_coffee_lots'),
         fetchData('roast_batches'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
-        fetchData('sales_agents')
+        fetchData('sales_agents'),
+        fetchData('machines')
     ]);
 
     // Same identity resolution as openNewRepackModal / openPackedLotsModal, so
@@ -5023,6 +5025,7 @@ async function openNewStockReleaseModal() {
             groupMap.set(item.groupKey, { label: item.groupKey, coffeeName: item.rawName, lots: [] });
         }
         const group = groupMap.get(item.groupKey);
+        const machine = item.machine_id ? (machines || []).find(m => m.id === item.machine_id) : null;
         lotsForItem.forEach(l => {
             group.lots.push({
                 lotId: l.id,
@@ -5032,6 +5035,7 @@ async function openNewStockReleaseModal() {
                 packedDate: l.packed_date,
                 remaining: parseInt(l.remaining_pcs) || 0,
                 packedCoffeeId: item.id,
+                machineName: machine ? machine.name : 'Unknown',
                 // Carried on the LOT, not just the group: cart lines are built
                 // from selectedLot() (the Add button and, after switching, the
                 // scan path), which reads straight out of group.lots and never
@@ -5084,76 +5088,82 @@ async function openNewStockReleaseModal() {
         .join('');
     const coffeeOptions = groups.map((g, idx) => `<option value="${idx}">${g.code ? g.code + ' — ' + g.label : g.label}</option>`).join('');
 
+    // Tightened spacing throughout (8px between fields instead of the
+    // default 16px .form-group margin) so the whole form fits with less
+    // scrolling — this modal has a lot of fields stacked vertically. Coffee
+    // and Lot are each their own full-width row (not paired side by side
+    // like before) specifically so the Lot select has the full modal width
+    // to show strip code, machine, size, remaining stock and packed date on
+    // one line without truncating — see renderLotOptions above.
+    const fg = 'style="margin-bottom:8px;"';
     const html = `
         <form id="modal-stock-release-form">
-            <div class="form-row">
-                <div class="form-group">
+            <div class="form-row" style="gap:10px; margin-bottom:8px;">
+                <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label" data-i18n="lbl_sr_date">Date</label>
                     <input type="date" id="sr-date" class="form-control" value="${todayStr}" required>
                 </div>
-                <div class="form-group">
+                <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label" data-i18n="lbl_sr_category">Category</label>
                     <select id="sr-category" class="form-control">${categoryOptions}</select>
                 </div>
             </div>
 
-            <div id="sr-sales-name-wrap" class="form-group hidden" style="background: var(--primary-glow); border-radius: 8px; padding: 10px 11px;">
+            <div id="sr-sales-name-wrap" class="form-group hidden" style="margin-bottom:8px; background: var(--primary-glow); border-radius: 8px; padding: 8px 10px;">
                 <label class="form-label" data-i18n="lbl_sr_sales_name">Sales Name</label>
                 <input type="text" id="sr-sales-name" class="form-control" list="sr-agent-list" autocomplete="off" placeholder="e.g. Budi">
                 <datalist id="sr-agent-list">${agentOptions}</datalist>
-                <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;" data-i18n="hint_sr_sales_name">Pick a registered sales agent, or type a new name.</div>
+                <div style="font-size:0.72rem; color:var(--text-muted); margin-top:3px;" data-i18n="hint_sr_sales_name">Pick a registered sales agent, or type a new name.</div>
             </div>
 
-            <div class="form-group">
+            <div class="form-group" ${fg}>
                 <label class="form-label" data-i18n="lbl_sr_scan">Scan strip code, then Enter</label>
                 <input type="text" id="sr-scan-input" class="form-control" placeholder="20037" autocomplete="off">
             </div>
 
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label" data-i18n="lbl_sr_coffee">Coffee</label>
-                    <select id="sr-coffee-select" class="form-control">${coffeeOptions}</select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" data-i18n="lbl_sr_lot">Lot</label>
-                    <select id="sr-lot-select" class="form-control"></select>
-                </div>
+            <div class="form-group" ${fg}>
+                <label class="form-label" data-i18n="lbl_sr_coffee">Coffee</label>
+                <select id="sr-coffee-select" class="form-control">${coffeeOptions}</select>
             </div>
-            <div class="form-row" style="align-items: flex-end;">
-                <div class="form-group">
+            <div class="form-group" ${fg}>
+                <label class="form-label" data-i18n="lbl_sr_lot">Lot</label>
+                <select id="sr-lot-select" class="form-control"></select>
+            </div>
+            <div class="form-row" style="gap:10px; margin-bottom:8px; align-items: flex-end;">
+                <div class="form-group" style="margin-bottom:0;">
                     <label class="form-label" data-i18n="lbl_sr_qty">Qty (pcs)</label>
                     <input type="number" id="sr-qty" class="form-control" value="1" min="1">
-                    <div id="sr-stock-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;"></div>
+                    <div id="sr-stock-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:3px;"></div>
                 </div>
-                <div class="form-group">
+                <div class="form-group" style="margin-bottom:0;">
                     <button type="button" id="sr-btn-add" class="btn btn-secondary" style="width:100%;"><i class="icon-plus va-middle-mr-1"></i><span data-i18n="btn_sr_add">Add to list</span></button>
                 </div>
             </div>
 
-            <div style="margin-top: 4px;">
+            <div style="margin-bottom:8px;">
                 <label class="form-label" data-i18n="lbl_sr_cart">Items to release</label>
                 <div id="sr-cart" style="border:1px solid var(--border); border-radius:8px; overflow:hidden;"></div>
             </div>
 
-            <div class="form-group" style="margin-top: 14px;">
+            <div class="form-group" ${fg}>
                 <label class="form-label" data-i18n="lbl_sr_notes">Notes</label>
                 <input type="text" id="sr-notes" class="form-control" placeholder="optional">
-                <div id="sr-notes-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;"></div>
+                <div id="sr-notes-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:3px;"></div>
             </div>
 
-            <div style="display:flex; align-items:baseline; justify-content:space-between; border-top:1px solid var(--border); padding-top:12px; margin-top:6px;">
+            <div style="display:flex; align-items:baseline; justify-content:space-between; border-top:1px solid var(--border); padding-top:8px;">
                 <span style="font-size:0.8rem; color:var(--text-secondary);" data-i18n="lbl_sr_total">Total released</span>
                 <span id="sr-total" style="font-size:1.5rem; font-weight:700; color:var(--primary);">0 pcs</span>
             </div>
 
-            <div class="modal-footer-actions-lg">
+            <div class="modal-footer-actions-lg" style="margin-top:14px;">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
                 <button type="submit" class="btn btn-primary" data-i18n="btn_sr_submit">Record Release</button>
             </div>
         </form>
     `;
 
-    openModal(window.t ? window.t('title_new_stock_release') : 'New Stock Release', html, '640px');
+    openModal(window.t ? window.t('title_new_stock_release') : 'New Stock Release', html, '720px');
 
     const selCoffee = document.getElementById('sr-coffee-select');
     const selLot = document.getElementById('sr-lot-select');
@@ -5180,11 +5190,16 @@ async function openNewStockReleaseModal() {
         return groups[parseInt(selCoffee.value) || 0];
     }
 
+    // Full info in one line — machine and remaining stock included (not just
+    // strip code/size/date) so the operator can tell same-name lots on
+    // different machines apart without leaving this dropdown. The oldest
+    // lot (FIFO pick) is flagged with a leading ★ instead of an appended
+    // "— PICK FIRST" suffix — same information, but ~11 fewer characters,
+    // which is what keeps the line from getting cut off in the select box.
     function renderLotOptions() {
         const group = currentGroup();
-        const pickFirst = window.t ? window.t('badge_pick_first') : 'PICK FIRST';
         selLot.innerHTML = group.lots.map((l, idx) =>
-            `<option value="${l.lotId}">${l.stripCode || l.lotCode} · ${l.sizeG}g · ${l.packedDate || '-'}${idx === 0 ? ' — ' + pickFirst : ''}</option>`
+            `<option value="${l.lotId}">${idx === 0 ? '★ ' : ''}${l.stripCode || l.lotCode} · ${l.machineName} · ${l.sizeG}g · ${l.remaining} pcs · ${l.packedDate || '-'}</option>`
         ).join('');
         updateStockHint();
     }
