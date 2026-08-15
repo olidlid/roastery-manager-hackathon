@@ -221,6 +221,14 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     const postBlendBadge = (bulk) => bulk.is_post_blend
         ? ' <span class="badge-post-blend" style="font-size:0.65rem; font-weight:700; text-transform:uppercase; border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>'
         : '';
+    // Post-blend/custom blend cards only — coffee_name for these is a
+    // freely-typed label entered in the Add Custom Blend modal (or a plan's
+    // finalized name), not derived from a green_coffee/blend_recipes row
+    // like every other card, so it's the one card type where a rename
+    // afterwards makes sense without touching any other table.
+    const editNameButtonFor = (bulk) => bulk.is_post_blend
+        ? ` <button type="button" class="btn-edit-blend-name" data-bulk-id="${bulk.id}" title="${window.t ? window.t('tt_edit_blend_name') : 'Edit name'}" style="background:none; border:none; padding:0; margin-left:2px; cursor:pointer; color:var(--text-muted); vertical-align:middle; line-height:0;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>`
+        : '';
     // V2 Repack: rose badge — see css/styles.css .badge-repack, deliberately
     // the one hue not already used by any other badge in this app (single,
     // blend, pre-blend, post-blend), and reused as-is for the New Repack
@@ -277,7 +285,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         return `
             <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
                 <div>
-                    <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}${postBlendBadge(bulk)}${repackBadge(bulk)}</div>
+                    <div style="font-weight: 700; font-size: 1rem;">${bulk.coffee_name}${postBlendBadge(bulk)}${repackBadge(bulk)}${editNameButtonFor(bulk)}</div>
                     <div style="font-size: 0.8rem; color: var(--text-muted);">${machineLabel(bulk)}</div>
                     <div style="font-size: 0.8rem; color: var(--text-muted);">${bulk.production_date || '-'}</div>
                     ${repackProvenanceHtmlFor(bulk)}
@@ -384,6 +392,10 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     });
     container.querySelectorAll('.btn-close-lot').forEach(btn => {
         btn.addEventListener('click', () => openCloseLotModal(parseInt(btn.getAttribute('data-bulk-id'))));
+        btn.style.display = hasPermission('packing_daily') ? '' : 'none';
+    });
+    container.querySelectorAll('.btn-edit-blend-name').forEach(btn => {
+        btn.addEventListener('click', () => openEditBlendNameModal(parseInt(btn.getAttribute('data-bulk-id'))));
         btn.style.display = hasPermission('packing_daily') ? '' : 'none';
     });
     if (window.translatePage) window.translatePage();
@@ -504,6 +516,46 @@ function applyReadyToPackFilters() {
         countEl.textContent = template.replace('{n}', visibleCount).replace('{total}', RTP_FILTER_DATA.length);
     }
     if (noMatchEl) noMatchEl.classList.toggle('hidden', visibleCount > 0 || RTP_FILTER_DATA.length === 0);
+}
+
+// Renames a post-blend/custom blend's display name (bulk_roasted_coffee.
+// coffee_name) — the one card type whose name was freely typed at creation
+// time (Add Custom Blend modal) rather than looked up from green_coffee/
+// blend_recipes, so a typo or a later rename request has nowhere else to be
+// fixed. Only touches this bulk row; already-printed labels or already-
+// packed stock keep whatever name they were created with (see coffee_name
+// snapshots at packedRow creation elsewhere in this file) — this is a
+// forward-looking rename of the still-unpacked bulk lot only.
+async function openEditBlendNameModal(bulkId) {
+    const { data: bulkList } = await fetchData('bulk_roasted_coffee');
+    const bulk = (bulkList || []).find(b => b.id === bulkId);
+    if (!bulk) return;
+
+    const html = `
+        <div class="form-group">
+            <label data-i18n="lbl_blend_name">Blend Name</label>
+            <input type="text" id="ebn-name" class="form-control" value="${(bulk.coffee_name || '').replace(/"/g, '&quot;')}" maxlength="100">
+        </div>
+        <button type="button" id="ebn-save" class="btn btn-primary" style="width:100%; margin-top:12px;" data-i18n="btn_save_name">Save</button>
+    `;
+    openModal(window.t ? window.t('title_edit_blend_name') : 'Edit Blend Name', html, '420px');
+
+    document.getElementById('ebn-save').addEventListener('click', async () => {
+        const newName = document.getElementById('ebn-name').value.trim();
+        if (!newName) {
+            alert(window.t ? window.t('alert_blend_name_empty') : 'Name cannot be empty.');
+            return;
+        }
+        const { error } = await saveData('bulk_roasted_coffee', { id: bulk.id, coffee_name: newName });
+        if (error) {
+            alert('Failed to update name: ' + error.message);
+            return;
+        }
+        const closeBtn = document.getElementById('btn-close-modal');
+        if (closeBtn) closeBtn.click();
+        await showWarningModal(window.t ? window.t('msg_blend_name_updated') : 'Name updated.', false, null, null, 'success');
+        await loadPackingSection();
+    });
 }
 
 // Retires a bulk lot whose physical stock is finished while the system still
