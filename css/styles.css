@@ -1417,6 +1417,21 @@ tbody tr:hover {
     border-color: rgba(244, 114, 182, 0.35) !important;
 }
 
+/* Ready to Pack cards for assembled/custom blends (bulk.is_post_blend) —
+   same amber already reserved for "Post-Blend" everywhere else in the app
+   (see .badge-post-blend above, used on the Blend Recipes table), just
+   extended to the card surface itself the same way .card-repack extends
+   .badge-repack's rose to the whole card. */
+.card-post-blend {
+    background: rgba(180, 83, 9, 0.06);
+    border: 1px solid rgba(180, 83, 9, 0.35) !important;
+}
+
+[data-theme="dark"] .card-post-blend {
+    background: rgba(251, 191, 36, 0.08);
+    border-color: rgba(251, 191, 36, 0.35) !important;
+}
+
 .text-repack {
     color: #be185d;
 }

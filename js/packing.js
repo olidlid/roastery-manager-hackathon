@@ -219,7 +219,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     const lotCodeFor = (bulk) => bulk.custom_blend_code
         || buildLotCode(bulk, machines, greenbeans, recipes, bulk.production_date);
     const postBlendBadge = (bulk) => bulk.is_post_blend
-        ? ' <span style="font-size:0.65rem; font-weight:700; text-transform:uppercase; color:var(--primary); background:var(--primary-glow); border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>'
+        ? ' <span class="badge-post-blend" style="font-size:0.65rem; font-weight:700; text-transform:uppercase; border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>'
         : '';
     // V2 Repack: rose badge — see css/styles.css .badge-repack, deliberately
     // the one hue not already used by any other badge in this app (single,
@@ -352,7 +352,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     RTP_FILTER_DATA = [];
     groups.forEach(rows => {
         const card = document.createElement('div');
-        card.className = rows[0].is_repack ? 'card card-repack' : 'card';
+        card.className = rows[0].is_repack ? 'card card-repack' : (rows[0].is_post_blend ? 'card card-post-blend' : 'card');
         card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px;';
         card.innerHTML = rows.length === 1 ? buildSingleCard(rows[0]) : buildGroupedCard(rows);
         container.appendChild(card);
