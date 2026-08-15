@@ -1209,9 +1209,17 @@
                                 </button>
                             </div>
                         </div>
+                        <div id="rtp-filter-bar" class="hidden" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 11px; background: var(--bg-app); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 16px;">
+                            <input type="text" id="rtp-filter-search" class="form-control" data-i18n-placeholder="ph_search_ready_to_pack" placeholder="Search coffee, code, lot, machine..." autocomplete="off" style="flex: 1; min-width: 190px; height: 34px; font-size: 0.8rem;">
+                            <select id="rtp-filter-coffee" class="form-control" style="width: auto; height: 34px; font-size: 0.8rem;"></select>
+                            <select id="rtp-filter-machine" class="form-control" style="width: auto; height: 34px; font-size: 0.8rem;"></select>
+                            <select id="rtp-filter-date" class="form-control" style="width: auto; height: 34px; font-size: 0.8rem;"></select>
+                            <span id="rtp-filter-count" style="font-size: 0.75rem; color: var(--text-muted); margin-left: auto; white-space: nowrap;"></span>
+                        </div>
                         <div id="ready-to-pack-cards" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;">
                             <!-- Dynamic bulk-roasted-coffee cards -->
                         </div>
+                        <div id="ready-to-pack-no-match" class="text-center-muted hidden" style="padding: 24px 0;" data-i18n="ready_to_pack_no_match">No cards match the current filters.</div>
                         <div id="ready-to-pack-empty" class="text-center-muted hidden" style="padding: 24px 0;" data-i18n="ready_to_pack_empty">No bulk roasted coffee available for packing right now.</div>
                     </div>
                 </div>
@@ -2604,7 +2612,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=28"></script>
+    <script src="js/translations.js?v=29"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
@@ -2612,7 +2620,7 @@
     <script src="js/auth.js?v=11"></script>
     <script src="js/greenbean.js?v=12"></script>
     <script src="js/roasting.js?v=33"></script>
-    <script src="js/packing.js?v=86"></script>
+    <script src="js/packing.js?v=87"></script>
     <script src="js/sales.js?v=18"></script>
     <script src="js/settings.js?v=21"></script>
     <script src="js/tracking.js?v=8"></script>

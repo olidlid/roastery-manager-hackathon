@@ -106,6 +106,8 @@ async function loadPackingSection() {
 function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources) {
     const container = document.getElementById('ready-to-pack-cards');
     const emptyEl = document.getElementById('ready-to-pack-empty');
+    const filterBar = document.getElementById('rtp-filter-bar');
+    const noMatchEl = document.getElementById('ready-to-pack-no-match');
     if (!container) return;
     container.innerHTML = '';
 
@@ -117,9 +119,12 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
 
     if (activeBulk.length === 0) {
         if (emptyEl) emptyEl.classList.remove('hidden');
+        if (filterBar) filterBar.classList.add('hidden');
+        if (noMatchEl) noMatchEl.classList.add('hidden');
         return;
     }
     if (emptyEl) emptyEl.classList.add('hidden');
+    if (filterBar) filterBar.classList.remove('hidden');
 
     // Post-blends and repacks are deliberately never grouped: a post-blend
     // carries its own custom_blend_code (CB-/PB-) and a repack's identity is
@@ -337,12 +342,26 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         `;
     }
 
+    // Filter metadata, one entry per rendered card — kept in a module-level
+    // array (not re-derived from the DOM) so the filter bar can re-evaluate
+    // instantly on every keystroke/dropdown change without re-fetching or
+    // re-rendering. Cards stay exactly as built (Option A, per user
+    // decision): a card matches the Roast Date filter if ANY of its dates
+    // matches, so a grouped card's own "N roast dates" summary never lies —
+    // filtering only ever hides/shows whole cards.
+    RTP_FILTER_DATA = [];
     groups.forEach(rows => {
         const card = document.createElement('div');
         card.className = rows[0].is_repack ? 'card card-repack' : 'card';
         card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px;';
         card.innerHTML = rows.length === 1 ? buildSingleCard(rows[0]) : buildGroupedCard(rows);
         container.appendChild(card);
+        RTP_FILTER_DATA.push({
+            el: card,
+            coffeeLabel: rows[0].coffee_name,
+            machineName: machineLabel(rows[0]),
+            dates: new Set(rows.map(r => r.production_date).filter(Boolean))
+        });
     });
 
     container.querySelectorAll('.btn-rtp-dates-toggle').forEach(btn => {
@@ -368,6 +387,123 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         btn.style.display = hasPermission('packing_daily') ? '' : 'none';
     });
     if (window.translatePage) window.translatePage();
+
+    initReadyToPackFilters();
+    populateReadyToPackFilterDropdowns();
+    applyReadyToPackFilters();
+}
+
+// Module-level so the filter bar (search + 3 cascading dropdowns) can react
+// instantly to input without re-fetching — rebuilt fresh on every
+// renderReadyToPackCards call, read by populate/apply below.
+let RTP_FILTER_DATA = [];
+let RTP_FILTERS_INITED = false;
+
+// Wires the search box + 3 selects once (idempotent guard, same pattern as
+// btn-custom-packing elsewhere in this file) — renderReadyToPackCards runs
+// on every Packing tab load/refresh, so this must not accumulate listeners.
+function initReadyToPackFilters() {
+    if (RTP_FILTERS_INITED) return;
+    RTP_FILTERS_INITED = true;
+
+    const searchInput = document.getElementById('rtp-filter-search');
+    const selCoffee = document.getElementById('rtp-filter-coffee');
+    const selMachine = document.getElementById('rtp-filter-machine');
+    const selDate = document.getElementById('rtp-filter-date');
+
+    if (searchInput) searchInput.addEventListener('input', applyReadyToPackFilters);
+    [selCoffee, selMachine, selDate].forEach(sel => {
+        if (!sel) return;
+        sel.addEventListener('change', () => {
+            // Any dropdown change can invalidate the OTHER two dropdowns'
+            // current selection (their available options are computed from
+            // the other filters), so all three are always repopulated
+            // together rather than just the one that changed.
+            populateReadyToPackFilterDropdowns();
+            applyReadyToPackFilters();
+        });
+    });
+}
+
+// Two-way cascading: each dropdown's option list is computed from the OTHER
+// two filters' current values (never its own), so picking any dropdown
+// first still narrows the rest — there's no dead-end combination that zeros
+// out a dropdown's own options. If a dropdown's current selection is no
+// longer among its recomputed options, it resets to "All" for that
+// dimension only, rather than leaving a stale value selected that could no
+// longer possibly match anything.
+function populateReadyToPackFilterDropdowns() {
+    const selCoffee = document.getElementById('rtp-filter-coffee');
+    const selMachine = document.getElementById('rtp-filter-machine');
+    const selDate = document.getElementById('rtp-filter-date');
+    if (!selCoffee || !selMachine || !selDate) return;
+
+    const curCoffee = selCoffee.value;
+    const curMachine = selMachine.value;
+    const curDate = selDate.value;
+
+    function optionsFor(dimension) {
+        const matches = RTP_FILTER_DATA.filter(g => {
+            if (dimension !== 'coffee' && curCoffee && g.coffeeLabel !== curCoffee) return false;
+            if (dimension !== 'machine' && curMachine && g.machineName !== curMachine) return false;
+            if (dimension !== 'date' && curDate && !g.dates.has(curDate)) return false;
+            return true;
+        });
+        if (dimension === 'date') {
+            const all = new Set();
+            matches.forEach(g => g.dates.forEach(d => all.add(d)));
+            return [...all].sort((a, b) => b.localeCompare(a)); // newest first
+        }
+        const key = dimension === 'coffee' ? 'coffeeLabel' : 'machineName';
+        return [...new Set(matches.map(g => g[key]))].sort((a, b) => a.localeCompare(b));
+    }
+
+    function rebuild(sel, values, currentVal, allLabelKey, allLabelFallback) {
+        const stillValid = currentVal && values.includes(currentVal);
+        const allLabel = window.t ? window.t(allLabelKey) : allLabelFallback;
+        sel.innerHTML = `<option value="">${allLabel}</option>` + values.map(v => `<option value="${v}">${v}</option>`).join('');
+        sel.value = stillValid ? currentVal : '';
+    }
+
+    rebuild(selCoffee, optionsFor('coffee'), curCoffee, 'rtp_filter_all_coffee', 'All Coffees');
+    rebuild(selMachine, optionsFor('machine'), curMachine, 'rtp_filter_all_machine', 'All Machines');
+    rebuild(selDate, optionsFor('date'), curDate, 'rtp_filter_all_date', 'All Roast Dates');
+}
+
+// Show/hide pass — search is a substring match against the card's full
+// rendered text (so it also reaches dates/lot codes hidden inside a
+// collapsed grouped card), ANDed with the 3 dropdowns.
+function applyReadyToPackFilters() {
+    const searchInput = document.getElementById('rtp-filter-search');
+    const selCoffee = document.getElementById('rtp-filter-coffee');
+    const selMachine = document.getElementById('rtp-filter-machine');
+    const selDate = document.getElementById('rtp-filter-date');
+    const countEl = document.getElementById('rtp-filter-count');
+    const noMatchEl = document.getElementById('ready-to-pack-no-match');
+    if (!selCoffee || !selMachine || !selDate) return;
+
+    const term = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    const coffee = selCoffee.value;
+    const machine = selMachine.value;
+    const date = selDate.value;
+
+    let visibleCount = 0;
+    RTP_FILTER_DATA.forEach(g => {
+        let matches = true;
+        if (coffee && g.coffeeLabel !== coffee) matches = false;
+        if (machine && g.machineName !== machine) matches = false;
+        if (date && !g.dates.has(date)) matches = false;
+        if (matches && term && !g.el.textContent.toLowerCase().includes(term)) matches = false;
+
+        g.el.style.display = matches ? '' : 'none';
+        if (matches) visibleCount++;
+    });
+
+    if (countEl) {
+        const template = window.t ? window.t('rtp_filter_count') : '{n} of {total}';
+        countEl.textContent = template.replace('{n}', visibleCount).replace('{total}', RTP_FILTER_DATA.length);
+    }
+    if (noMatchEl) noMatchEl.classList.toggle('hidden', visibleCount > 0 || RTP_FILTER_DATA.length === 0);
 }
 
 // Retires a bulk lot whose physical stock is finished while the system still
