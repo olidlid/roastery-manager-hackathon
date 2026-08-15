@@ -1377,6 +1377,10 @@ async function loadRoastingBatches() {
         paginationContainerId: 'batch-pagination-pages',
         infoElId: 'batch-page-info'
     });
+    // Free-text search box next to the title — its oninput (set in index.html)
+    // just re-runs applyFiltersForTable, which reads this registration to fold
+    // the search term into the same filter pass as the column checkboxes.
+    registerSearchInput('tab-roast-logs', 'batch-search-input');
 
     // Highlight active page size
     const sizeOpts = document.querySelectorAll('#batch-page-size-selector .page-size-opt');

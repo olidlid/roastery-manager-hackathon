@@ -789,8 +789,9 @@
                     <!-- TAB 2: Roasting Batch Logs -->
                     <div id="tab-roast-logs" class="tab-content hidden">
                         <div class="card">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 12px; flex-wrap: wrap;">
                                 <h3 class="card-title" style="margin-bottom: 0;" data-i18n="batch_title">Roasting Batch Logs</h3>
+                                <input type="text" id="batch-search-input" class="form-control" data-i18n-placeholder="ph_search_batches" placeholder="Search batch code, coffee, machine..." style="width: 260px; height: 32px; font-size: 0.8rem;" autocomplete="off" oninput="applyFiltersForTable(document.querySelector('#tab-roast-logs table'))">
                                 <div style="display: flex; gap: 8px; align-items: center;">
                                     <button id="btn-export-batches" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -2603,18 +2604,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=27"></script>
+    <script src="js/translations.js?v=28"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=2"></script>
     <script src="js/auth.js?v=11"></script>
     <script src="js/greenbean.js?v=12"></script>
-    <script src="js/roasting.js?v=32"></script>
+    <script src="js/roasting.js?v=33"></script>
     <script src="js/packing.js?v=86"></script>
     <script src="js/sales.js?v=18"></script>
     <script src="js/settings.js?v=21"></script>
     <script src="js/tracking.js?v=8"></script>
-    <script src="js/app.js?v=80"></script>
+    <script src="js/app.js?v=81"></script>
 </body>
 </html>

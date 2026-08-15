@@ -1875,6 +1875,17 @@ let currentFilterContext = null; // Stores { table, colIndex, filterKey }
 // not over "everything, independent of the filter".
 const PAGINATED_FILTER_TABLES = {};
 
+// Registry for a table's free-text search box (id of the <input>), keyed by
+// tableId same as PAGINATED_FILTER_TABLES — lets applyFiltersForTable (any
+// table, not just this one) fold a substring match over the whole row's
+// text into the same pass as the column checkbox filters, instead of a
+// separate search mechanism that would fight pagination/filter state.
+const SEARCH_INPUT_FOR_TABLE = {};
+
+function registerSearchInput(tableId, inputId) {
+    SEARCH_INPUT_FOR_TABLE[tableId] = inputId;
+}
+
 function registerPaginatedFilterTable(tableId, config) {
     // config: { getPage, setPage, getPageSize, paginationContainerId, infoElId }
     PAGINATED_FILTER_TABLES[tableId] = config;
@@ -1954,6 +1965,10 @@ function applyFiltersForTable(table) {
     // Skip warning/"no items" placeholder rows from both filtering and pagination math.
     const dataRows = allRows.filter(row => !(row.cells.length <= 1 && row.querySelector('td[colspan]')));
 
+    const searchInputId = SEARCH_INPUT_FOR_TABLE[tableId];
+    const searchInput = searchInputId ? document.getElementById(searchInputId) : null;
+    const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : '';
+
     const rowMatches = (row) => {
         let matches = true;
         ths.forEach(th => {
@@ -1972,6 +1987,13 @@ function applyFiltersForTable(table) {
                 }
             }
         });
+        // Free-text search (if this table has one registered): substring
+        // match against the row's full visible text, so one box searches
+        // batch code, coffee name, machine, date, etc. at once instead of
+        // needing a separate input per column.
+        if (matches && searchTerm && !row.textContent.toLowerCase().includes(searchTerm)) {
+            matches = false;
+        }
         return matches;
     };
 
