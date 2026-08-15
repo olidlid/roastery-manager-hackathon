@@ -139,6 +139,22 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         groups[groupPos.get(k)].push(b);
     });
 
+    // Newest-first at the card-grid level (explicit user request) — each
+    // group's own rows stay oldest-first internally (the FIFO "pick first"
+    // logic in buildGroupedCard depends on that ordering), this only
+    // reorders which group's card appears first in the grid. "Newest" =
+    // the group's most recent production/roast date (its last row, since
+    // rows arrive oldest-first from the sort above), tied by the highest
+    // bulk_roasted_coffee id (the most recently inserted row wins).
+    groups.sort((rowsA, rowsB) => {
+        const dateA = rowsA[rowsA.length - 1].production_date || '';
+        const dateB = rowsB[rowsB.length - 1].production_date || '';
+        if (dateA !== dateB) return dateB.localeCompare(dateA);
+        const idA = Math.max(...rowsA.map(r => r.id));
+        const idB = Math.max(...rowsB.map(r => r.id));
+        return idB - idA;
+    });
+
     // ---- per-bulk fragments shared by both card shapes ----
 
     // Composition breakdown shown on post-blend cards as a mixing reference —
