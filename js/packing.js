@@ -677,13 +677,15 @@ async function openCustomBlendModal() {
         { data: packedList },
         { data: packedLots },
         { data: machines },
-        { data: greenbeans }
+        { data: greenbeans },
+        { data: recipes }
     ] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
         fetchData('packed_coffee'),
         fetchData('packed_coffee_lots'),
         fetchData('machines'),
-        fetchData('green_coffee')
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
     ]);
 
     function machineName(id) {
@@ -705,28 +707,49 @@ async function openCustomBlendModal() {
         });
     }
 
-    // packed_coffee doesn't reliably carry single_coffee_id for rows created
-    // outside the roast-log flow (e.g. getOrCreatePackedCoffeeRow) — same
-    // name-matching convention used elsewhere (packing.js resolvePackedIdentity).
-    function resolvePackedGreenCoffeeId(p) {
-        if (p.single_coffee_id) return p.single_coffee_id;
-        const cleanName = (p.custom_coffee_name || '').replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
-        const gb = (greenbeans || []).find(g => g.name === cleanName);
-        return gb ? gb.id : null;
+    // Clean (unsuffixed) display name for a Single/Blend identity — "(Single)"/
+    // "(Blend)" is added explicitly by the caller below instead of relying on
+    // whatever suffix state the raw stored name happens to carry, so the tag
+    // is always present and consistent regardless of source.
+    function resolveCoffeeName(type, id) {
+        if (type === 'Single') return (greenbeans || []).find(g => g.id === id)?.name || null;
+        if (type === 'Blend') return (recipes || []).find(r => r.id === id)?.name || null;
+        return null;
     }
 
-    // Every available SOURCE POOL, single-origin only (a custom blend's
-    // ingredients are green-coffee origins, same as a recipe's) — one entry
-    // per bulk item, one per packed item+size, each tagged with its
-    // underlying green coffee so picks for the same ingredient can be
-    // grouped/filtered by it.
+    // packed_coffee doesn't reliably carry single_coffee_id/blend_recipe_id
+    // for rows created outside the roast-log flow (e.g.
+    // getOrCreatePackedCoffeeRow) — same name-matching convention used
+    // elsewhere (packing.js resolvePackedIdentity), tried against green
+    // coffee first and blend recipes second.
+    function resolvePackedCoffeeIdentity(p) {
+        if (p.single_coffee_id) return { type: 'Single', id: p.single_coffee_id };
+        if (p.blend_recipe_id) return { type: 'Blend', id: p.blend_recipe_id };
+        const cleanName = (p.custom_coffee_name || '').replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+        const gb = (greenbeans || []).find(g => g.name === cleanName);
+        if (gb) return { type: 'Single', id: gb.id };
+        const r = (recipes || []).find(rec => rec.name === cleanName);
+        if (r) return { type: 'Blend', id: r.id };
+        return null;
+    }
+
+    // Every available SOURCE POOL — single-origin AND already-blended stock
+    // both qualify (a custom blend can be built from raw green-coffee
+    // origins, from another blend, or a mix of both) — one entry per bulk
+    // item, one per packed item+size, each tagged with its coffee identity
+    // (`coffeeKey`, e.g. "Single:12" or "Blend:5") so picks for the same
+    // ingredient can be grouped/filtered by it. Post-blend bulk (already an
+    // assembled mix, not a single recipe/origin) stays excluded either way —
+    // that's a separate concept from coffee_type and applies regardless of
+    // Single vs Blend.
     const bulkOptions = (bulkList || [])
-        .filter(b => b.coffee_type === 'Single' && parseFloat(b.bulk_available) > 0.005 && !b.is_post_blend)
+        .filter(b => (b.coffee_type === 'Single' || b.coffee_type === 'Blend') && parseFloat(b.bulk_available) > 0.005 && !b.is_post_blend)
         .map(b => {
-            const name = (greenbeans || []).find(g => g.id === b.single_coffee_id)?.name || b.coffee_name;
+            const id = b.coffee_type === 'Single' ? b.single_coffee_id : b.blend_recipe_id;
+            const name = resolveCoffeeName(b.coffee_type, id) || b.coffee_name;
             return {
-                key: `bulk:${b.id}`, kind: 'bulk', refId: b.id, greenCoffeeId: b.single_coffee_id, sortName: name,
-                label: `${toBoldUnicode(name)} — Bulk (${machineName(b.machine_id)}, roasted ${b.production_date || '-'})`,
+                key: `bulk:${b.id}`, kind: 'bulk', refId: b.id, coffeeKey: `${b.coffee_type}:${id}`, sortName: name,
+                label: `${toBoldUnicode(name)} (${b.coffee_type}) — Bulk (${machineName(b.machine_id)}, roasted ${b.production_date || '-'})`,
                 availableKg: parseFloat(b.bulk_available) || 0
             };
         });
@@ -734,18 +757,17 @@ async function openCustomBlendModal() {
     const packedOptions = (packedList || [])
         .filter(p => (parseInt(p.quantity) || 0) > 0)
         .map(p => {
-            const gcId = resolvePackedGreenCoffeeId(p);
-            if (!gcId) return null;
-            const gb = (greenbeans || []).find(g => g.id === gcId);
-            const name = gb ? gb.name : (p.custom_coffee_name || 'Roasted Coffee');
+            const identity = resolvePackedCoffeeIdentity(p);
+            if (!identity) return null;
+            const name = resolveCoffeeName(identity.type, identity.id) || p.custom_coffee_name || 'Roasted Coffee';
             const lotsForThis = (packedLots || [])
                 .filter(l => l.packed_coffee_id === p.id && (parseInt(l.remaining_pcs) || 0) > 0)
                 .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id);
             const availPcs = lotsForThis.reduce((s, l) => s + (parseInt(l.remaining_pcs) || 0), 0);
             const bagSizeG = parseFloat(p.bag_size_g) || 0;
             return {
-                key: `packed:${p.id}`, kind: 'packed', refId: p.id, greenCoffeeId: gcId, bagSizeG, sortName: name,
-                label: `${toBoldUnicode(name)} — Packed ${p.bag_size_g || '-'}g (${machineName(p.machine_id)})`,
+                key: `packed:${p.id}`, kind: 'packed', refId: p.id, coffeeKey: `${identity.type}:${identity.id}`, bagSizeG, sortName: name,
+                label: `${toBoldUnicode(name)} (${identity.type}) — Packed ${p.bag_size_g || '-'}g (${machineName(p.machine_id)})`,
                 availableKg: availPcs * (bagSizeG / 1000),
                 lots: lotsForThis.map(l => ({ id: l.id, lotCode: l.lot_code, packedDate: l.packed_date, remainingPcs: parseInt(l.remaining_pcs) || 0 }))
             };
@@ -758,13 +780,13 @@ async function openCustomBlendModal() {
         .sort((a, b) => a.sortName.localeCompare(b.sortName));
 
     if (allOptions.length === 0) {
-        await showWarningModal('No single-origin bulk or packed stock available to build a custom blend from yet.', false);
+        await showWarningModal('No single-origin or blend bulk/packed stock available to build a custom blend from yet.', false);
         return;
     }
 
     function optionByKey(key) { return allOptions.find(o => o.key === key); }
-    function optionsHtml(greenCoffeeId, selectedKey) {
-        const list = greenCoffeeId ? allOptions.filter(o => o.greenCoffeeId === greenCoffeeId) : allOptions;
+    function optionsHtml(coffeeKey, selectedKey) {
+        const list = coffeeKey ? allOptions.filter(o => o.coffeeKey === coffeeKey) : allOptions;
         const rows = list.map(o => {
             const lotsNote = o.kind === 'packed' ? ` (${o.lots.length} lot${o.lots.length === 1 ? '' : 's'})` : '';
             return `<option value="${o.key}" ${o.key === selectedKey ? 'selected' : ''}>${o.label} — ${o.availableKg.toFixed(2)}kg avail.${lotsNote}</option>`;
