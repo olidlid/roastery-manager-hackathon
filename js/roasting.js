@@ -773,7 +773,7 @@ async function loadBlendRecipes() {
         tr.className = 'table-row-hover';
         tr.innerHTML = `
             <td class="va-middle"><code>${recipe.code}</code></td>
-            <td class="va-middle"><strong>${recipe.name}</strong></td>
+            <td class="va-middle"><strong>${recipe.name}</strong><div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">${recipe.created_at ? (window.t ? window.t('lbl_recipe_created').replace('{date}', recipe.created_at.split('T')[0]) : `Created ${recipe.created_at.split('T')[0]}`) : ''}</div></td>
             <td class="va-middle"><div style="display: flex; flex-direction: column;">${ingTexts || '<span style="color: var(--text-muted)">No Ingredients</span>'}</div></td>
             <td class="va-middle"><span class="badge ${recipe.is_post_blend ? 'badge-post-blend' : 'badge-pre-blend'}">${recipe.is_post_blend ? window.t('recipes_filter_post') : window.t('recipes_filter_pre')}</span></td>
             <td class="va-middle">
