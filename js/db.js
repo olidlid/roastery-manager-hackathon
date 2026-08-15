@@ -31,15 +31,33 @@ function invalidateCache(table) {
     _dbCache.delete(table);
 }
 
-// Fetch helper that handles both Live and Mock databases
+// Fetch helper that handles both Live and Mock databases.
+//
+// Live mode pages through .range() in chunks of PAGE_SIZE instead of a bare
+// .select('*') — PostgREST silently caps an unranged select at 1000 rows
+// (Supabase's default db-max-rows), so any table that grows past 1000 rows
+// would have its newest rows quietly missing from every fetchData caller,
+// with no error anywhere. Found 2026-08-15: roast_batches had crossed 1000
+// rows and the newest logged batch (id 1094) never reached the browser —
+// not a rendering bug, the row simply never arrived in the response. Paging
+// here (rather than at each of the ~40 call sites) fixes it for every table
+// at once, including ones that haven't hit the cap yet but will over time.
 async function fetchData(table) {
     if (isMockMode) {
         return { data: getCachedTable(table), error: null };
     } else {
         try {
-            const { data, error } = await window.supabaseClient.from(table).select('*');
-            if (error) throw error;
-            return { data, error: null };
+            const PAGE_SIZE = 1000;
+            let allData = [];
+            let from = 0;
+            while (true) {
+                const { data, error } = await window.supabaseClient.from(table).select('*').range(from, from + PAGE_SIZE - 1);
+                if (error) throw error;
+                allData = allData.concat(data || []);
+                if (!data || data.length < PAGE_SIZE) break;
+                from += PAGE_SIZE;
+            }
+            return { data: allData, error: null };
         } catch (e) {
             console.error(`Supabase fetch failed for ${table}, switching to mock:`, e);
             return { data: getCachedTable(table), error: e };
