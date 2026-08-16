@@ -684,6 +684,23 @@ CREATE TABLE IF NOT EXISTS public.stock_release_items (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- V2 Sales fulfillment (applied 2026-08-16): reserves kg of a
+-- bulk_roasted_coffee row for a specific request_order_item at approval
+-- time, so a later order can't be offered/consume the same stock. Purely a
+-- bookkeeping claim — does NOT move any physical stock; bulk_available only
+-- actually decreases once the reserved portion is really packed
+-- (js/packing.js openPackBulkModal), at which point the matching
+-- reservation row should be deleted/reduced. One bulk row can be split
+-- across several orders' reservations, same many-to-one pattern as
+-- post_blend_components above.
+CREATE TABLE IF NOT EXISTS public.bulk_reservations (
+    id SERIAL PRIMARY KEY,
+    bulk_roasted_coffee_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE CASCADE,
+    request_order_item_id INTEGER REFERENCES public.request_order_items(id) ON DELETE CASCADE,
+    kg NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ----------------------------------------------------------------------------
@@ -707,7 +724,8 @@ BEGIN
     'roast_batch_green_lots','production_lot_batches',
     'dispatch_lot_items','post_blend_components','code_definitions',
     'repack_sources', -- applied to production 2026-08-03
-    'stock_releases','stock_release_items' -- applied to production 2026-08-03
+    'stock_releases','stock_release_items', -- applied to production 2026-08-03
+    'bulk_reservations' -- applied to production 2026-08-16
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);

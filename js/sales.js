@@ -1694,7 +1694,9 @@ async function openSalesRequestModal(orderId = null) {
         { data: roastBatches },
         { data: machines },
         { data: packagingSizes },
-        { data: codeDefinitions }
+        { data: codeDefinitions },
+        { data: bulkList },
+        { data: bulkReservations }
     ] = await Promise.all([
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
@@ -1706,7 +1708,9 @@ async function openSalesRequestModal(orderId = null) {
         fetchData('roast_batches'),
         fetchData('machines'),
         fetchData('packaging_sizes'),
-        fetchData('code_definitions')
+        fetchData('code_definitions'),
+        fetchData('bulk_roasted_coffee'),
+        fetchData('bulk_reservations')
     ]);
 
     // Trade-name grouping (V2): Sales only orders by code_definitions.name —
@@ -1826,6 +1830,48 @@ async function openSalesRequestModal(orderId = null) {
     });
     Object.keys(perMachinePackedStocks).forEach(k => {
         perMachinePackedStocks[k] = Math.max(0, perMachinePackedStocks[k] - (committedPackedMapByMachine[k] || 0));
+    });
+
+    // ── Build bulk (already-roasted, not-yet-packed) stock snapshot, per
+    // coffee+machine in KG — not size-partitioned like packed stock,
+    // since bulk hasn't been portioned into bag sizes yet (see V2 "3-tier
+    // stock" work: sales previously only saw packed stock + raw green bean
+    // potential, with the entire already-roasted bulk pool invisible —
+    // orders that could be fulfilled same-day by packing existing bulk were
+    // silently sent through the full roasting queue instead). Post-blend/
+    // custom-blend bulk is a different, ad-hoc product identity (no
+    // single_coffee_id/blend_recipe_id in the ad-hoc case) and is excluded,
+    // same filter openCustomBlendModal's bulkOptions already uses.
+    const perMachineBulkKg = {}; // {type}-{coffeeId}-{machineId} -> kg
+    (bulkList || []).forEach(b => {
+        if (b.is_post_blend) return;
+        const avail = parseFloat(b.bulk_available) || 0;
+        if (avail <= 0.005) return;
+        const cId = b.coffee_type === 'Single' ? b.single_coffee_id : b.blend_recipe_id;
+        if (!cId || !b.machine_id) return;
+        const key = `${b.coffee_type}-${cId}-${b.machine_id}`;
+        perMachineBulkKg[key] = (perMachineBulkKg[key] || 0) + avail;
+    });
+
+    // Subtract kg already reserved for OTHER orders (bulk_reservations,
+    // created at approval time — see approveSalesOrder) so a second order
+    // can't be shown/offered the same bulk a first order already claimed.
+    // This order's own reservations (when editing an already-approved
+    // order) are excluded, same "don't self-block" rule committedPackedMap
+    // above already applies via the `orderId` check.
+    const bulkById = {};
+    (bulkList || []).forEach(b => { bulkById[b.id] = b; });
+    (bulkReservations || []).forEach(res => {
+        const resItem = (requestOrderItems || []).find(i => i.id === res.request_order_item_id);
+        if (orderId !== null && resItem && resItem.request_order_id === orderId) return;
+        const b = bulkById[res.bulk_roasted_coffee_id];
+        if (!b) return;
+        const cId = b.coffee_type === 'Single' ? b.single_coffee_id : b.blend_recipe_id;
+        if (!cId || !b.machine_id) return;
+        const key = `${b.coffee_type}-${cId}-${b.machine_id}`;
+        if (perMachineBulkKg[key] !== undefined) {
+            perMachineBulkKg[key] = Math.max(0, perMachineBulkKg[key] - (parseFloat(res.kg) || 0));
+        }
     });
 
     // ── Layer 3: Calculate Greenbean Allocations from OTHER rows ────────────
@@ -2069,6 +2115,29 @@ async function openSalesRequestModal(orderId = null) {
         return alloc;
     }
 
+    // Same idea as getAllocations() above, but keyed by coffee+machine ONLY
+    // (in kg) — bulk hasn't been portioned into bag sizes yet, so two rows
+    // for the same coffee+machine at different sizes still compete for the
+    // same kg pool, unlike packed stock which is already split by size.
+    function getBulkAllocations() {
+        const alloc = {};
+        itemsList.querySelectorAll('.sales-item-row').forEach(row => {
+            const sel = row.querySelector('.item-select');
+            const sizeEl = row.querySelector('.item-size');
+            const qtyEl = row.querySelector('.item-qty');
+            const machineEl = row.querySelector('.item-machine');
+            if (!sel.value) return;
+            const qty = parseInt(qtyEl.value) || 0;
+            if (qty <= 0) return;
+            const machineId = machineEl && machineEl.value ? machineEl.value : 'none';
+            const sizeG = parseInt(sizeEl.value) || 250;
+            const kg = (qty * sizeG) / 1000;
+            const key = `${sel.value}-${machineId}`;
+            alloc[key] = (alloc[key] || 0) + kg;
+        });
+        return alloc;
+    }
+
     let checkStockTimer = null;
 
     function updateAllRowsStockDisplays() {
@@ -2089,7 +2158,8 @@ async function openSalesRequestModal(orderId = null) {
         
         checkStockTimer = setTimeout(() => {
             const totalAlloc = getAllocations();
-            
+            const totalBulkAlloc = getBulkAllocations();
+
             itemsList.querySelectorAll('.sales-item-row').forEach(currentRow => {
                 const sel = currentRow.querySelector('.item-select');
                 const machineEl = currentRow.querySelector('.item-machine');
@@ -2179,21 +2249,70 @@ async function openSalesRequestModal(orderId = null) {
                     currentSizeAvailPacked = Math.max(0, totalPacked - otherAlloc);
                 }
 
-                // 2. Potential production in KG
+                // 2. Bulk (already-roasted, tinggal packing) — pooled by kg
+                // per coffee+machine (not size-partitioned, since bulk isn't
+                // portioned into bag sizes until it's actually packed).
+                let currentBulkBags = 0;
+                let availBulkKg = 0;
+                {
+                    const bulkKey = `${sel.value}-${selectedMachineId || 'none'}`;
+                    const totalBulkAllocForKey = totalBulkAlloc[bulkKey] || 0;
+                    const thisRowBulkKg = (currentQty * sizeG) / 1000;
+                    const otherBulkAlloc = Math.max(0, totalBulkAllocForKey - thisRowBulkKg);
+                    const totalBulkKg = selectedMachineId
+                        ? (isGroup
+                            ? groupIds.reduce((sum, gid) => sum + (perMachineBulkKg[`${type}-${gid}-${selectedMachineId}`] || 0), 0)
+                            : (perMachineBulkKg[`${type}-${coffeeId}-${selectedMachineId}`] || 0))
+                        : 0;
+                    availBulkKg = Math.max(0, totalBulkKg - otherBulkAlloc);
+                    currentBulkBags = Math.floor((availBulkKg * 1000) / sizeG);
+                }
+
+                // 3. Potential production in KG (raw green bean, needs roasting)
                 const gbAllocFromOtherRows = getGreenbeanAllocations(currentRow);
                 const potentialBags = getPotentialBags(type, coffeeId, sizeG, gbAllocFromOtherRows);
-                const potentialKg = ((potentialBags * sizeG) / 1000).toFixed(2);
 
-                // Build UI
-                const potLbl = window.t ? window.t('lbl_potential_prod') : 'Potential Prod';
+                // Three-tier coverage of THIS row's own requested qty, in the
+                // same waterfall order the leader sees again at approval:
+                // packed first, then bulk, then roasting. Lets sales see
+                // whether an order will need production before it's even
+                // submitted, instead of only finding out at approval.
+                const tierPacked = Math.min(currentQty, currentSizeAvailPacked);
+                const tierBulk = Math.min(Math.max(currentQty - currentSizeAvailPacked, 0), currentBulkBags);
+                const tierRoast = Math.min(Math.max(currentQty - currentSizeAvailPacked - currentBulkBags, 0), potentialBags);
+                const tierShort = Math.max(currentQty - currentSizeAvailPacked - currentBulkBags - potentialBags, 0);
+                const barTotal = Math.max(currentQty, 1);
+
+                let barHtml = '<div style="display:flex; height:7px; border-radius:4px; overflow:hidden; margin-top:6px; background:rgba(255,255,255,0.08);">';
+                if (tierPacked > 0) barHtml += `<div style="background:#1D9E75; width:${(tierPacked / barTotal * 100).toFixed(1)}%;"></div>`;
+                if (tierBulk > 0) barHtml += `<div style="background:#EF9F27; width:${(tierBulk / barTotal * 100).toFixed(1)}%;"></div>`;
+                if (tierRoast > 0) barHtml += `<div style="background:#8a8a8a; width:${(tierRoast / barTotal * 100).toFixed(1)}%;"></div>`;
+                if (tierShort > 0) barHtml += `<div style="background:#E24B4A; width:${(tierShort / barTotal * 100).toFixed(1)}%;"></div>`;
+                barHtml += '</div>';
+
+                const readyLbl = window.t ? window.t('lbl_tier_ready') : 'ready';
+                const bulkLbl = window.t ? window.t('lbl_tier_bulk') : 'from bulk';
+                const roastLbl = window.t ? window.t('lbl_tier_roast') : 'needs roasting';
+                const shortLbl = window.t ? window.t('lbl_tier_short') : 'short by';
+
+                const parts = [];
+                if (tierPacked > 0) parts.push(`<span style="color:#5DCAA5; font-weight:700;">${tierPacked}</span> ${readyLbl}`);
+                if (tierBulk > 0) parts.push(`<span style="color:#EF9F27; font-weight:700;">${tierBulk}</span> ${bulkLbl} <span style="color:var(--text-muted);">(${availBulkKg.toFixed(1)}kg)</span>`);
+                if (tierRoast > 0) parts.push(`<span style="color:#b0b0b0; font-weight:700;">${tierRoast}</span> ${roastLbl}`);
+                let tierLine = parts.length ? parts.join(' &middot; ') : '';
+                if (tierShort > 0) {
+                    tierLine += `${tierLine ? ' &middot; ' : ''}<span style="color:#E24B4A; font-weight:700;">${tierShort} ${shortLbl}</span>`;
+                }
 
                 infoBox.innerHTML = `
                     ${machineCardsHtml}
-                    <div style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 0.75rem; line-height: 1.2;"><strong style="color: var(--primary);">${potLbl}:</strong> ~${potentialKg} kg</div>
+                    <div style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 0.75rem; line-height: 1.2;">${tierLine}</div>
+                    ${barHtml}
                 `;
 
                 // Store for submit validation
                 currentRow.dataset.packedStock = currentSizeAvailPacked;
+                currentRow.dataset.bulkBags = currentBulkBags;
                 currentRow.dataset.potentialBags = potentialBags;
 
             });
@@ -2340,11 +2459,15 @@ async function openSalesRequestModal(orderId = null) {
         
         for (const r of rows) {
             const packed = parseInt(r.dataset.packedStock) || 0;
+            const bulk = parseInt(r.dataset.bulkBags) || 0;
             const potential = parseInt(r.dataset.potentialBags) || 0;
             const qty = parseInt(r.querySelector('.item-qty').value);
-            
-            if (qty > packed) {
-                if (qty <= (packed + potential)) {
+
+            // Bulk (already-roasted, tinggal packing) counts as "already
+            // available" alongside packed — only the shortfall past packed
+            // AND bulk actually needs a roasting queue entry.
+            if (qty > packed + bulk) {
+                if (qty <= (packed + bulk + potential)) {
                     needsRoastingQueue = true;
                 } else {
                     blocked = true;
