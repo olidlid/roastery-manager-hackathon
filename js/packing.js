@@ -816,7 +816,7 @@ async function openCustomBlendModal() {
             const id = b.coffee_type === 'Single' ? b.single_coffee_id : b.blend_recipe_id;
             const name = resolveCoffeeName(b.coffee_type, id) || b.coffee_name;
             return {
-                key: `bulk:${b.id}`, kind: 'bulk', refId: b.id, coffeeKey: `${b.coffee_type}:${id}`, sortName: name,
+                key: `bulk:${b.id}`, kind: 'bulk', refId: b.id, coffeeKey: `${b.coffee_type}:${id}`, sortName: name, machineId: b.machine_id || null,
                 label: `${toBoldUnicode(name)} (${b.coffee_type}) — Bulk (${machineName(b.machine_id)}, roasted ${b.production_date || '-'})`,
                 availableKg: parseFloat(b.bulk_available) || 0
             };
@@ -834,7 +834,7 @@ async function openCustomBlendModal() {
             const availPcs = lotsForThis.reduce((s, l) => s + (parseInt(l.remaining_pcs) || 0), 0);
             const bagSizeG = parseFloat(p.bag_size_g) || 0;
             return {
-                key: `packed:${p.id}`, kind: 'packed', refId: p.id, coffeeKey: `${identity.type}:${identity.id}`, bagSizeG, sortName: name,
+                key: `packed:${p.id}`, kind: 'packed', refId: p.id, coffeeKey: `${identity.type}:${identity.id}`, bagSizeG, sortName: name, machineId: p.machine_id || null,
                 label: `${toBoldUnicode(name)} (${identity.type}) — Packed ${p.bag_size_g || '-'}g (${machineName(p.machine_id)})`,
                 availableKg: availPcs * (bagSizeG / 1000),
                 lots: lotsForThis.map(l => ({ id: l.id, lotCode: l.lot_code, packedDate: l.packed_date, remainingPcs: parseInt(l.remaining_pcs) || 0 }))
@@ -886,6 +886,12 @@ async function openCustomBlendModal() {
 
         <div id="cb-stock-banner" class="hidden" style="background:rgba(220,38,38,0.1); border:1px solid #dc2626; color:#dc2626; padding:8px 12px; border-radius:6px; font-size:0.8rem; margin-top:12px;">One or more ingredients exceed available stock — reduce the amount or pick a different lot.</div>
 
+        <div class="form-group" style="margin-top:12px; background:var(--primary-glow); border-radius:8px; padding:10px 12px;">
+            <label class="form-label">Produce As <span style="color:var(--danger-color, #dc2626); font-weight:700;">*</span></label>
+            <select id="cb-produce-as" class="form-control"></select>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;">Which machine this blend counts as, so it shows up correctly in packed stock later.</div>
+        </div>
+
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:12px; border-top:1px solid var(--border-color);">
             <div style="color:var(--text-muted); font-size:0.85rem;">Total blend size <strong id="cb-total-kg" style="color:var(--text-primary); font-family:monospace;">0.00 kg</strong></div>
             <button type="button" id="cb-submit" class="btn btn-primary">Create Blend</button>
@@ -900,6 +906,54 @@ async function openCustomBlendModal() {
     // Ingredient"; there's no nested "picks" sub-list to manage anymore.
     const ingredients = new Map();
     let ingSeq = 0;
+
+    // "Produce As" (V2 explicit user request): required so a Custom Blend's
+    // resulting bulk_roasted_coffee row gets a real machine_id instead of
+    // the null it always got before — that null is exactly why these items
+    // showed no code/machine breakdown in the Packed Coffee Stock table
+    // (only ever landing in its silent "Unknown" bucket, counted in Total
+    // only). `manualMachineId` is the user's explicit override (null = "no
+    // override, follow auto-detection"); `selectedMachineId` is the
+    // resolved value actually saved on submit.
+    let manualMachineId = null;
+    let selectedMachineId = null;
+
+    // Only offers "same as source machine" when every picked ingredient
+    // traces back to one single machine — mixed-machine or packed-with-no-
+    // machine ingredients return null, forcing a manual pick instead of
+    // guessing.
+    function detectCommonMachineId() {
+        let common;
+        let any = false;
+        for (const ing of ingredients.values()) {
+            if (!ing.optionKey) continue;
+            const opt = optionByKey(ing.optionKey);
+            if (!opt || !opt.machineId) return null;
+            any = true;
+            if (common === undefined) common = opt.machineId;
+            else if (common !== opt.machineId) return null;
+        }
+        return any ? common : null;
+    }
+
+    function renderProduceAs() {
+        const sel = document.getElementById('cb-produce-as');
+        if (!sel) return;
+        const detected = detectCommonMachineId();
+        let optsHtml = '';
+        if (detected) optsHtml += `<option value="same">Same as source machine (${machineName(detected)})</option>`;
+        optsHtml += (machines || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+        sel.innerHTML = `<option value="" disabled>Select a machine…</option>${optsHtml}`;
+
+        if (manualMachineId !== null && (machines || []).some(m => m.id === manualMachineId)) {
+            sel.value = String(manualMachineId);
+        } else if (detected) {
+            sel.value = 'same';
+        } else {
+            sel.value = '';
+        }
+        selectedMachineId = sel.value === 'same' ? detected : (sel.value ? parseInt(sel.value) : null);
+    }
 
     function totalAvailableKg(opt, lotId) {
         if (!opt) return 0;
@@ -1035,16 +1089,25 @@ async function openCustomBlendModal() {
         if (banner) banner.classList.toggle('hidden', !anyOver);
 
         const submitBtn = document.getElementById('cb-submit');
-        if (submitBtn) submitBtn.disabled = anyIncomplete || anyOver || totalKg <= 0;
+        if (submitBtn) submitBtn.disabled = anyIncomplete || anyOver || totalKg <= 0 || !selectedMachineId;
     }
 
     function renderAll() {
         renderIngredients();
+        renderProduceAs();
+        updateAnnotations();
     }
 
     document.getElementById('cb-add-ingredient').addEventListener('click', () => {
         ingredients.set(++ingSeq, { optionKey: '', lotId: null, amount: 0 });
         renderAll();
+    });
+
+    document.getElementById('cb-produce-as').addEventListener('change', () => {
+        const sel = document.getElementById('cb-produce-as');
+        manualMachineId = sel.value === 'same' ? null : (sel.value ? parseInt(sel.value) : null);
+        selectedMachineId = sel.value === 'same' ? detectCommonMachineId() : manualMachineId;
+        updateAnnotations();
     });
 
     renderAll();
@@ -1056,6 +1119,7 @@ async function openCustomBlendModal() {
         if (!name) { await showWarningModal('Please enter a blend name.', false); return; }
         if (!coffeeCode) { await showWarningModal('Coffee Code is required.', false); return; }
         if (ingredients.size === 0) { await showWarningModal('Add at least one ingredient.', false); return; }
+        if (!selectedMachineId) { await showWarningModal('Please select which machine to produce this blend as.', false); return; }
 
         let anyIncomplete = false;
         let anyOver = false;
@@ -1073,11 +1137,11 @@ async function openCustomBlendModal() {
             sourceRows.push({ kind: opt.kind, refId: opt.refId, lotId: ing.lotId, amountKg: ing.amount });
         });
 
-        await submitCustomBlend({ name, coffeeCode, sourceRows });
+        await submitCustomBlend({ name, coffeeCode, sourceRows, machineId: selectedMachineId });
     });
 }
 
-async function submitCustomBlend({ name, coffeeCode, sourceRows }) {
+async function submitCustomBlend({ name, coffeeCode, sourceRows, machineId }) {
     // Re-fetch fresh right before mutating, same idiom used elsewhere (e.g.
     // openPackBulkModal's bulk_available decrement), to avoid acting on a
     // stale snapshot.
@@ -1152,7 +1216,7 @@ async function submitCustomBlend({ name, coffeeCode, sourceRows }) {
         custom_blend_code: code,
         custom_coffee_code: coffeeCode,
         bulk_available: totalKg,
-        machine_id: null,
+        machine_id: machineId || null,
         single_coffee_id: null,
         blend_recipe_id: null,
         production_date: todayStr
@@ -3580,14 +3644,16 @@ async function loadPackedCoffeeSection() {
         { data: greenbeans },
         { data: recipes },
         { data: machines },
-        { data: sizes }
+        { data: sizes },
+        { data: bulkRows }
     ] = await Promise.all([
         fetchData('packed_coffee'),
         fetchData('roast_batches'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
         fetchData('machines'),
-        fetchData('packaging_sizes')
+        fetchData('packaging_sizes'),
+        fetchData('bulk_roasted_coffee')
     ]);
     const activeSizes = (sizes || []).filter(s => s.is_visible).sort((a, b) => a.gram - b.gram);
     const tbody = document.getElementById('packed-coffee-stock-table-body');
@@ -3631,10 +3697,15 @@ async function loadPackedCoffeeSection() {
         // Custom/manual packing entries have no roast_batch_id to resolve a
         // code from directly — fall back to matching by name against the
         // greenbean/recipe lists, same identity loadPackedCoffeeSection groups by.
+        // Custom Blend/Post-Blend items match neither (their name is freely
+        // typed, not a real green_coffee/blend_recipes row) — their code
+        // lives on the originating bulk_roasted_coffee row's
+        // custom_coffee_code instead, matched by the same coffee_name.
         if (!coffeeCode) {
             const gbMatch = greenbeans.find(g => g.name === coffeeName);
             const rMatch = recipes.find(r => r.name === coffeeName);
-            coffeeCode = (gbMatch && gbMatch.code) || (rMatch && rMatch.code) || '';
+            const pbMatch = (bulkRows || []).find(b => b.is_post_blend && b.coffee_name === coffeeName);
+            coffeeCode = (gbMatch && gbMatch.code) || (rMatch && rMatch.code) || (pbMatch && pbMatch.custom_coffee_code) || '';
         }
 
         return { ...item, coffeeName, coffeeCode };
