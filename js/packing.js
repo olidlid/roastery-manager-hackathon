@@ -76,7 +76,8 @@ async function loadPackingSection() {
         { data: packedLots },
         { data: packedList },
         { data: roastingPlans },
-        { data: repackSources }
+        { data: repackSources },
+        { data: roastBatches }
     ] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
         fetchData('machines'),
@@ -86,10 +87,11 @@ async function loadPackingSection() {
         fetchData('packed_coffee_lots'),
         fetchData('packed_coffee'),
         fetchData('roasting_plans'),
-        fetchData('repack_sources')
+        fetchData('repack_sources'),
+        fetchData('roast_batches')
     ]);
 
-    renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources);
+    renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches);
     // btn-custom-packing's click handler (openCustomPackingModal) is already
     // wired once at parse time in roasting.js — not re-wired here to avoid
     // attaching a second listener that would fire the modal twice per click.
@@ -103,7 +105,7 @@ async function loadPackingSection() {
 // showing the combined kg plus an expandable list of its dates, oldest first
 // (FIFO order). Print Barcode / Pack stay per roast date either way — each
 // date is its own lot and must never be conflated.
-function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources) {
+function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches) {
     const container = document.getElementById('ready-to-pack-cards');
     const emptyEl = document.getElementById('ready-to-pack-empty');
     const filterBar = document.getElementById('rtp-filter-bar');
@@ -233,7 +235,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         return machine ? machine.name : (bulk.is_post_blend ? 'Assembled blend' : 'Unknown Machine');
     };
     const lotCodeFor = (bulk) => bulk.custom_blend_code
-        || buildLotCode(bulk, machines, greenbeans, recipes, bulk.production_date);
+        || buildPreviewLotCode(bulk, machines, greenbeans, recipes, roastBatches, bulk.production_date);
     const postBlendBadge = (bulk) => bulk.is_post_blend
         ? ' <span class="badge-post-blend" style="font-size:0.65rem; font-weight:700; text-transform:uppercase; border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>'
         : '';
@@ -583,18 +585,19 @@ async function openEditBlendNameModal(bulkId) {
 // > 0.005) and the leftover is written to waste_inventory, keeping the
 // discrepancy visible rather than silently absorbed.
 async function openCloseLotModal(bulkId) {
-    const [{ data: bulkList }, { data: machines }, { data: greenbeans }, { data: recipes }] = await Promise.all([
+    const [{ data: bulkList }, { data: machines }, { data: greenbeans }, { data: recipes }, { data: roastBatches }] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
         fetchData('machines'),
         fetchData('green_coffee'),
-        fetchData('blend_recipes')
+        fetchData('blend_recipes'),
+        fetchData('roast_batches')
     ]);
     const bulk = (bulkList || []).find(b => b.id === bulkId);
     if (!bulk) return;
 
     const leftoverKg = parseFloat(bulk.bulk_available) || 0;
     const machine = (machines || []).find(m => m.id === bulk.machine_id);
-    const lotCode = bulk.custom_blend_code || buildLotCode(bulk, machines, greenbeans, recipes, bulk.production_date);
+    const lotCode = bulk.custom_blend_code || buildPreviewLotCode(bulk, machines, greenbeans, recipes, roastBatches, bulk.production_date);
     // Anything sizeable is far more likely a mis-click or a real stock
     // discrepancy than end-of-lot residue — say so and point at Stock Take.
     const BIG_LEFTOVER_KG = 1;
@@ -2679,6 +2682,44 @@ function buildLotCode(bulk, machines, greenbeans, recipes, dateStr, lotNumber) {
     // trailing lot number) as a preview badge before a lot actually exists.
     const base = `${sanitize(coffeeCode)}-${sanitize(machineCode)}${mmddyy}`;
     return (lotNumber === undefined || lotNumber === null) ? base : `${base}${lotNumber}`;
+}
+
+// Ready to Pack / Close Lot preview badge ONLY (explicit user request) —
+// deliberately a separate function from buildLotCode above, which stays
+// untouched since it also generates the PERMANENT production_lots.lot_code
+// once Print Barcode is clicked (already printed on physical labels,
+// referenced by Tracking lookups and packed_coffee_lots provenance — not
+// safe to reformat). Format: {coffeeCode}-{machineCode}{ddmmyy}-{totalBatches}
+// — day-month-year (swapped from buildLotCode's month-day-year), plus a
+// trailing count of every roast_batches row that fed this exact bulk
+// lot (same coffee+machine+day match getOrCreateProductionLot already uses
+// to find them). This count is live, not stored — it's read fresh on every
+// render, so it grows if one more batch gets logged for the same day later.
+function buildPreviewLotCode(bulk, machines, greenbeans, recipes, roastBatches, dateStr) {
+    const sanitize = (s) => (s || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'X';
+    const machine = (machines || []).find(m => m.id === bulk.machine_id);
+    const machineCode = machine ? (machine.code || machine.name) : 'M';
+
+    let coffeeCode;
+    if (bulk.coffee_type === 'Single') {
+        const gb = (greenbeans || []).find(g => g.id === bulk.single_coffee_id);
+        coffeeCode = gb ? (gb.code || gb.name) : bulk.coffee_name;
+    } else {
+        const r = (recipes || []).find(rec => rec.id === bulk.blend_recipe_id);
+        coffeeCode = r ? (r.code || r.name) : bulk.coffee_name;
+    }
+
+    const [y, m, d] = dateStr.split('-');
+    const ddmmyy = `${d}${m}${y.slice(2)}`;
+
+    const totalBatches = (roastBatches || []).filter(b =>
+        b.coffee_type === bulk.coffee_type &&
+        (bulk.coffee_type === 'Single' ? b.single_coffee_id === bulk.single_coffee_id : b.blend_recipe_id === bulk.blend_recipe_id) &&
+        b.machine_id === bulk.machine_id &&
+        b.roast_date === dateStr
+    ).length;
+
+    return `${sanitize(coffeeCode)}-${sanitize(machineCode)}${ddmmyy}-${totalBatches}`;
 }
 
 // One production_lots row per (bulk item, day) — reuses the lot already
