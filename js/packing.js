@@ -3253,6 +3253,16 @@ async function openPackBulkModal(bulkId) {
                 await saveData('bulk_roasted_coffee', freshBulk);
             }
 
+            // Release whatever sales-order reservation(s) this bulk carried
+            // (see database bulk_reservations comment / js/sales.js
+            // approveSalesOrder) — the kg just packed is no longer "loose
+            // bulk waiting to be packed", so it shouldn't keep counting
+            // against what a future order sees as reserved-and-unavailable.
+            // Oldest reservation first, same FIFO convention used
+            // everywhere else in this file; a reservation not fully covered
+            // by this pack just shrinks instead of clearing.
+            await releaseBulkReservations(bulk.id, totalKg);
+
             const packingDate = new Date().toISOString().split('T')[0];
 
             // V2 1G-1 (packed_coffee_lots foundation): resolve/create today's
@@ -3293,6 +3303,35 @@ async function openPackBulkModal(bulkId) {
             alert('Error during packing save: ' + err.message);
         }
     });
+}
+
+// Shrinks/deletes bulk_reservations rows for one bulk_roasted_coffee_id by
+// `kgToRelease`, oldest reservation first — called whenever that bulk
+// actually gets packed (openPackBulkModal above). Without this, a
+// reservation never clears once the physical stock it was protecting has
+// already turned into packed_coffee, permanently hiding that kg from every
+// future order even though it was never really lost, just already
+// accounted for a different way (packed stock's own order-linkage, via
+// dispatch checkout).
+async function releaseBulkReservations(bulkId, kgToRelease) {
+    let remaining = kgToRelease;
+    if (remaining <= 0.0001) return;
+    const { data: reservations } = await fetchData('bulk_reservations');
+    const mine = (reservations || [])
+        .filter(r => r.bulk_roasted_coffee_id === bulkId)
+        .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0) || a.id - b.id);
+    for (const res of mine) {
+        if (remaining <= 0.0001) break;
+        const kg = parseFloat(res.kg) || 0;
+        if (kg <= 0.0001) continue;
+        if (kg <= remaining) {
+            await deleteData('bulk_reservations', res.id);
+            remaining -= kg;
+        } else {
+            await saveData('bulk_reservations', { id: res.id, kg: kg - remaining });
+            remaining = 0;
+        }
+    }
 }
 
 // V2 barcode label fix: Print Barcode and Pack are deliberately kept as two

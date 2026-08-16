@@ -1103,7 +1103,9 @@ async function approveSalesOrder(orderId) {
         { data: codeDefinitions },
         { data: greenCoffeeLots },
         { data: packedCoffeeLots },
-        { data: ingredients }
+        { data: ingredients },
+        { data: bulkList },
+        { data: bulkReservations }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
@@ -1115,7 +1117,9 @@ async function approveSalesOrder(orderId) {
         fetchData('code_definitions'),
         fetchData('green_coffee_lots'),
         fetchData('packed_coffee_lots'),
-        fetchData('blend_ingredients')
+        fetchData('blend_ingredients'),
+        fetchData('bulk_roasted_coffee'),
+        fetchData('bulk_reservations')
     ]);
 
     const order = orders.find(o => o.id === orderId);
@@ -1267,6 +1271,101 @@ async function approveSalesOrder(orderId) {
         return minLimit === Infinity ? 0 : minLimit;
     }
 
+    // ── Auto-proposal: packed → bulk → roasting waterfall ───────────────────
+    // V2 3-tier fulfillment (explicit user request): the approver previously
+    // had to work out "how much from packed, how much to production" by hand
+    // for every line, with no visibility into the already-roasted bulk pool
+    // (519kg+ sitting unused in production before this) — see the sales
+    // order form's identical 3-tier work for the fuller rationale. This
+    // computes the same packed → bulk → roasting waterfall the leader sees
+    // as a ready-to-approve default, still fully overridable per item.
+
+    // Every bulk_roasted_coffee row an item could draw from. Trade-name
+    // items pool across every machine sharing the code — same rule
+    // findMatchingPacked above already applies to packed stock for trade-
+    // name items ("which origin/machine ends up filling the order is
+    // decided at packing/dispatch, not here"); non-trade-name items stay
+    // machine-partitioned. Post-blend/custom-blend bulk is excluded — a
+    // different, ad-hoc product identity, same filter openCustomBlendModal's
+    // bulkOptions and the sales order form's perMachineBulkKg both use.
+    function findMatchingBulk(item) {
+        const type = item.coffee_type;
+        const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
+        if (item.coffee_code) {
+            const groupIds = type === 'Single'
+                ? (greenbeans || []).filter(g => g.code === item.coffee_code).map(g => g.id)
+                : (recipes || []).filter(r => r.code === item.coffee_code).map(r => r.id);
+            return (bulkList || []).filter(b =>
+                !b.is_post_blend && b.coffee_type === type &&
+                groupIds.includes(type === 'Single' ? b.single_coffee_id : b.blend_recipe_id)
+            );
+        }
+        return (bulkList || []).filter(b =>
+            !b.is_post_blend && b.coffee_type === type &&
+            (b.single_coffee_id === coffeeId || b.blend_recipe_id === coffeeId) &&
+            b.machine_id === item.machine_id
+        );
+    }
+
+    // FIFO-draws whole BAGS (not fractional kg — a partial bag can't be
+    // packed) of `neededBags` across `matchingBulk`, oldest production_date
+    // first, skipping kg already spoken for elsewhere. `claimedSoFarByBulkId`
+    // is mutated in place so later calls in the same pass see earlier ones'
+    // claims — same running-allocation pattern getBulkAllocations() uses in
+    // the sales order form.
+    function drawBulkFifoBags(matchingBulk, neededBags, sizeG, reservedElsewhereByBulkId, claimedSoFarByBulkId) {
+        const sorted = [...matchingBulk].sort((a, b) => (a.production_date || '').localeCompare(b.production_date || '') || a.id - b.id);
+        const draws = [];
+        let remainingBags = neededBags;
+        for (const b of sorted) {
+            if (remainingBags <= 0) break;
+            const total = parseFloat(b.bulk_available) || 0;
+            const reserved = (reservedElsewhereByBulkId[b.id] || 0) + (claimedSoFarByBulkId[b.id] || 0);
+            const freeKg = Math.max(0, total - reserved);
+            const freeBags = Math.floor((freeKg * 1000) / sizeG);
+            if (freeBags <= 0) continue;
+            const takeBags = Math.min(freeBags, remainingBags);
+            const takeKg = (takeBags * sizeG) / 1000;
+            draws.push({ bulkId: b.id, kg: takeKg, bags: takeBags });
+            claimedSoFarByBulkId[b.id] = (claimedSoFarByBulkId[b.id] || 0) + takeKg;
+            remainingBags -= takeBags;
+        }
+        return { draws, coveredBags: neededBags - remainingBags };
+    }
+
+    // Kg already promised to OTHER orders (bulk_reservations, created by a
+    // previous run of this same function) — this order's own reservations
+    // (only possible on a retry after a partial failure; approveSalesOrder
+    // otherwise only ever runs once per order) are excluded so it can't
+    // self-block.
+    const reservedElsewhereByBulkId = {};
+    (bulkReservations || []).forEach(res => {
+        const resItem = (orderItems || []).find(i => i.id === res.request_order_item_id);
+        if (resItem && resItem.request_order_id === orderId) return;
+        reservedElsewhereByBulkId[res.bulk_roasted_coffee_id] = (reservedElsewhereByBulkId[res.bulk_roasted_coffee_id] || 0) + (parseFloat(res.kg) || 0);
+    });
+
+    // One pass over this order's items, in the same order they'll render/
+    // submit in, so a bulk row two lines both want gets FIFO-split between
+    // them instead of both proposing the full amount.
+    const claimedSoFarByBulkId = {};
+    const proposals = {}; // item.id -> { packed, bulk, roast, bulkKg }
+    for (const item of items) {
+        const size = parseInt(item.bag_size_g);
+        const requested = parseInt(item.quantity_requested) || 0;
+        const matchingPackedForItem = findMatchingPacked(item);
+        const szItemsForItem = (item.coffee_code || item.machine_id) ? matchingPackedForItem.filter(p => parseInt(p.bag_size_g) === size) : [];
+        const packedStockForItem = szItemsForItem.reduce((acc, p) => acc + (parseInt(p.quantity) || 0), 0);
+
+        const tierPacked = Math.min(requested, packedStockForItem);
+        const remainingAfterPacked = Math.max(0, requested - tierPacked);
+        const matchingBulk = findMatchingBulk(item);
+        const { draws, coveredBags } = drawBulkFifoBags(matchingBulk, remainingAfterPacked, size, reservedElsewhereByBulkId, claimedSoFarByBulkId);
+        const tierRoast = Math.max(0, remainingAfterPacked - coveredBags);
+
+        proposals[item.id] = { packed: tierPacked, bulk: coveredBags, roast: tierRoast, bulkKg: draws.reduce((s, d) => s + d.kg, 0) };
+    }
+
     let htmlContent = `
         <form id="modal-approve-form">
             <p style="margin-bottom: 15px; font-size: 0.9rem; color: var(--text-secondary);" data-i18n="msg_approve_desc">Review the order quantities. You can adjust the fulfilled amount or send the remainder to the production queue.</p>
@@ -1314,17 +1413,18 @@ async function approveSalesOrder(orderId) {
             `;
         }
 
-        // Default to 0 fulfilled / everything sent to production — an approver
-        // must deliberately type a "Fulfill from Packed" amount to draw down
-        // existing stock. Previously this defaulted to min(packedStock, requested),
-        // which silently marked orders "Ready for Handover" the instant an
-        // approver clicked Confirm without touching the pre-filled value,
-        // even though nobody on the packing team had done anything (found
-        // 2026-07-27: a fresh order showed 20/20 solely because old packed
-        // stock under the same trade code happened to cover it).
-        let fulfillQty = 0;
-        let prodQty = item.quantity_requested;
-        
+        // Auto-proposed packed/bulk/roasting split, computed above — shown
+        // as a plain-language default the approver reviews and confirms,
+        // not a pre-filled number they could rubber-stamp without reading
+        // (that exact failure mode — an approver clicking Confirm without
+        // touching a pre-filled "everything fulfilled" value — is what
+        // caused a live incident 2026-07-27: a fresh order showed 20/20
+        // "Ready for Handover" solely because old packed stock under the
+        // same trade code happened to cover it, with nobody on the packing
+        // team having done anything). The sentence itself is the thing
+        // being confirmed here instead.
+        const p = proposals[item.id];
+
         // Resolve machine name from item
         const itemMachine = item.machine_id ? (machines || []).find(m => m.id === item.machine_id) : null;
         const machineLabel = itemMachine ? `<span style="font-size: 0.8rem; color: var(--primary); font-weight: 600;"> • ${itemMachine.name}</span>` : '';
@@ -1365,7 +1465,7 @@ async function approveSalesOrder(orderId) {
                     `;
                 }).join('');
                 originRecipeRowHtml = `
-                    <div class="origin-select-row" style="margin-top: 12px; ${prodQty > 0 ? '' : 'display: none;'}">
+                    <div class="origin-select-row" style="margin-top: 12px; ${p.roast > 0 ? '' : 'display: none;'}">
                         <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_which_origin_roast">Which origin to roast</label>
                         <div style="border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; margin-top: 4px;">
                             <table style="width:100%; border-collapse: collapse; font-size: 0.78rem;"><tbody>${rowsHtml}</tbody></table>
@@ -1396,7 +1496,7 @@ async function approveSalesOrder(orderId) {
                     `;
                 }).join('');
                 originRecipeRowHtml = `
-                    <div class="origin-select-row" style="margin-top: 12px; ${prodQty > 0 ? '' : 'display: none;'}">
+                    <div class="origin-select-row" style="margin-top: 12px; ${p.roast > 0 ? '' : 'display: none;'}">
                         <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_which_recipe_roast">Which recipe to roast</label>
                         <div style="border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; margin-top: 4px;">
                             <table style="width:100%; border-collapse: collapse; font-size: 0.78rem;"><tbody>${rowsHtml}</tbody></table>
@@ -1406,8 +1506,22 @@ async function approveSalesOrder(orderId) {
             }
         }
 
+        // Plain-language default the approver reviews (not a pre-filled
+        // form) — same tier vocabulary/colors as the sales order form's
+        // 3-tier display (lbl_tier_ready/bulk/roast), so the two screens
+        // read as one consistent system.
+        const readyLbl = window.t ? window.t('lbl_tier_ready') : 'ready';
+        const bulkTierLbl = window.t ? window.t('lbl_tier_bulk') : 'from bulk';
+        const roastTierLbl = window.t ? window.t('lbl_tier_roast') : 'needs roasting';
+        const summaryParts = [];
+        if (p.packed > 0) summaryParts.push(`<span style="color:#5DCAA5; font-weight:700;">${p.packed}</span> ${readyLbl}`);
+        if (p.bulk > 0) summaryParts.push(`<span style="color:#EF9F27; font-weight:700;">${p.bulk}</span> ${bulkTierLbl} <span style="color:var(--text-muted);">(${p.bulkKg.toFixed(1)}kg)</span>`);
+        if (p.roast > 0) summaryParts.push(`<span style="color:#f0a3a3; font-weight:700;">${p.roast}</span> ${roastTierLbl}`);
+        const summaryLine = summaryParts.length ? summaryParts.join(' &middot; ') : `<span style="color:var(--text-muted);">${window.t ? window.t('lbl_nothing_requested') : 'Nothing requested'}</span>`;
+        const changeLbl = window.t ? window.t('btn_change_fulfillment') : 'Change fulfillment';
+
         htmlContent += `
-            <div class="approval-item-row" data-id="${item.id}" style="background: rgba(0,0,0,0.02); border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+            <div class="approval-item-row" data-id="${item.id}" data-proposed-packed="${p.packed}" data-proposed-bulk="${p.bulk}" data-proposed-roast="${p.roast}" style="background: rgba(0,0,0,0.02); border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
                 <div style="font-weight: bold; margin-bottom: 8px; color: var(--text-primary);">${coffeeName} - ${size}g${machineLabel}</div>
                 <div style="display: flex; gap: 20px; font-size: 0.85rem; align-items: center;">
                     <div class="flex-1">
@@ -1418,17 +1532,28 @@ async function approveSalesOrder(orderId) {
                     </div>
                 </div>
                 ${originBreakdownHtml}
-                <div style="display: flex; gap: 15px; margin-top: 15px; align-items: flex-end;">
-                    <div class="flex-1">
-                        <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_fulfill_packed">Fulfill from Packed</label>
-                        <input type="number" class="form-control inp-fulfill" min="0" max="${packedStock}" value="${fulfillQty}" required>
-                    </div>
-                    <div class="flex-1">
-                        <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_send_prod">Send to Production</label>
-                        <input type="number" class="form-control inp-prod" min="0" value="${prodQty}" required>
+
+                <div class="fulfillment-summary" style="margin-top: 12px; font-size: 0.85rem; line-height: 1.7;">${summaryLine}</div>
+                <button type="button" class="btn btn-secondary btn-sm btn-toggle-fulfillment" style="margin-top: 8px; font-size: 0.72rem; padding: 4px 10px;">${changeLbl}</button>
+
+                <div class="fulfillment-edit-panel hidden" style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border-color);">
+                    <div style="display: flex; gap: 12px; align-items: flex-end;">
+                        <div class="flex-1">
+                            <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_fulfill_packed">Fulfill from Packed</label>
+                            <input type="number" class="form-control inp-fulfill" min="0" max="${packedStock}" value="${p.packed}" required>
+                        </div>
+                        <div class="flex-1">
+                            <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_fulfill_bulk">Fulfill from Bulk</label>
+                            <input type="number" class="form-control inp-bulk" min="0" value="${p.bulk}" required>
+                        </div>
+                        <div class="flex-1">
+                            <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_send_prod">Send to Production</label>
+                            <input type="number" class="form-control inp-prod" min="0" value="${p.roast}" required>
+                        </div>
                     </div>
                 </div>
-                <div class="machine-select-row" style="margin-top: 12px; ${prodQty > 0 ? '' : 'display: none;'}">
+
+                <div class="machine-select-row" style="margin-top: 12px; ${p.roast > 0 ? '' : 'display: none;'}">
                     <label class="form-label" style="font-size: 0.75rem;">Machine for Production</label>
                     <select class="form-control sel-machine" style="padding: 6px 10px;">
                         ${itemMachineOptionsHtml}
@@ -1449,7 +1574,32 @@ async function approveSalesOrder(orderId) {
     `;
     
     openModal(window.t ? window.t('modal_approve_order') : 'Approve Order', htmlContent);
-    
+
+    // Swaps the read-only proposal sentence for the 3-input manual edit
+    // panel (and back). Re-syncs the machine/origin rows' visibility to
+    // whatever the panel's current "Send to Production" value is every time
+    // it's revealed, since the summary view doesn't keep them in sync while
+    // hidden.
+    document.querySelectorAll('.approval-item-row .btn-toggle-fulfillment').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const row = btn.closest('.approval-item-row');
+            const summary = row.querySelector('.fulfillment-summary');
+            const panel = row.querySelector('.fulfillment-edit-panel');
+            const enteringEdit = panel.classList.contains('hidden');
+            panel.classList.toggle('hidden', !enteringEdit);
+            summary.classList.toggle('hidden', enteringEdit);
+            btn.textContent = enteringEdit
+                ? (window.t ? window.t('btn_use_suggestion') : 'Use suggestion')
+                : (window.t ? window.t('btn_change_fulfillment') : 'Change fulfillment');
+
+            const machineRow = row.querySelector('.machine-select-row');
+            const originRow = row.querySelector('.origin-select-row');
+            const prodVal = parseInt(row.querySelector('.inp-prod').value) || 0;
+            machineRow.style.display = prodVal > 0 ? '' : 'none';
+            if (originRow) originRow.style.display = prodVal > 0 ? '' : 'none';
+        });
+    });
+
     // Toggle machine dropdown (and origin/recipe dropdown, for trade-name
     // items) visibility when inp-prod changes
     document.querySelectorAll('.approval-item-row .inp-prod').forEach(inp => {
@@ -1496,19 +1646,42 @@ async function approveSalesOrder(orderId) {
     document.getElementById('modal-approve-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const rows = document.querySelectorAll('.approval-item-row');
-        
+
+        // Fresh claim ledger for THIS submit — deliberately not reusing
+        // claimedSoFarByBulkId from the render-time proposal above, since
+        // the leader may have edited numbers after the proposal was first
+        // shown (see .inp-bulk below); recomputing here is what makes the
+        // final reservation correct regardless of whether any row was
+        // touched.
+        const claimedAtSubmitByBulkId = {};
+
         for (const r of rows) {
             const itemId = parseInt(r.getAttribute('data-id'));
-            const fQty = parseInt(r.querySelector('.inp-fulfill').value);
-            const pQty = parseInt(r.querySelector('.inp-prod').value);
+            const fQty = parseInt(r.querySelector('.inp-fulfill').value) || 0;
+            const bQtyRequested = parseInt(r.querySelector('.inp-bulk').value) || 0;
+            const pQty = parseInt(r.querySelector('.inp-prod').value) || 0;
             const selMachine = r.querySelector('.sel-machine');
             const machineId = selMachine ? (parseInt(selMachine.value) || null) : null;
-            
+
             const item = orderItems.find(i => i.id === itemId);
             if (!item) continue;
-            
+
+            // Re-run the packed→bulk waterfall's bulk step against whatever
+            // the FINAL bulk-bag count is (the proposal's own number if the
+            // leader never opened "Change fulfillment", or their manual
+            // override) — same drawBulkFifoBags helper the proposal used,
+            // so an untouched item reserves EXACTLY what was shown.
+            const matchingBulk = findMatchingBulk(item);
+            const size = parseInt(item.bag_size_g);
+            const { draws: bulkDraws, coveredBags: bQty } = drawBulkFifoBags(matchingBulk, bQtyRequested, size, reservedElsewhereByBulkId, claimedAtSubmitByBulkId);
+
             item.quantity_allocated = fQty;
-            item.quantity_pending = pQty;
+            // Everything not covered by packed stock — whether it's sitting
+            // as bulk waiting to be packed, or still needs roasting first —
+            // is "pending" in the same sense this field already carried
+            // before bulk existed (how much this item still needs before
+            // it's fully packed).
+            item.quantity_pending = bQty + pQty;
             // Credit the stock-fulfilled portion as already "prepared" — it's
             // deducted from packed_coffee below, so js/packing.js's Pending
             // Pack / Ready button must not ask for (and re-deduct) it again.
@@ -1569,7 +1742,22 @@ async function approveSalesOrder(orderId) {
                     }
                 }
             }
-            
+
+            // Reserve the bulk portion — purely a bookkeeping claim (see
+            // bulk_reservations table comment): does NOT touch
+            // bulk_available, so it doesn't double-count against the
+            // physical stock deduction above. Physical bulk only actually
+            // moves once someone really packs it (js/packing.js
+            // openPackBulkModal), which is also where the matching
+            // reservation should be released.
+            for (const d of bulkDraws) {
+                await saveData('bulk_reservations', {
+                    bulk_roasted_coffee_id: d.bulkId,
+                    request_order_item_id: item.id,
+                    kg: d.kg
+                });
+            }
+
             // Create Roast Plan (Pending - not auto-executed)
             if (pQty > 0) {
                 const weightKg = (pQty * parseInt(item.bag_size_g)) / 1000;

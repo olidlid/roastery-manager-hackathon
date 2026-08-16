@@ -399,9 +399,13 @@ window.translations = {
         msg_approve_desc: "Review the order quantities. You can adjust the fulfilled amount or send the remainder to the production queue.",
         lbl_requested: "Requested:",
         lbl_fulfill_packed: "Fulfill from Packed",
+        lbl_fulfill_bulk: "Fulfill from Bulk",
         lbl_send_prod: "Send to Production",
         lbl_which_origin_roast: "Which origin to roast",
         lbl_which_recipe_roast: "Which recipe to roast",
+        btn_change_fulfillment: "Change fulfillment",
+        btn_use_suggestion: "Use suggestion",
+        lbl_nothing_requested: "Nothing requested",
         btn_confirm_approve: "Confirm Approval",
         
         // Packing Tab
@@ -1045,9 +1049,13 @@ window.translations = {
         msg_approve_desc: "راجع كميات الطلب. يمكنك تعديل الكمية المستوفاة أو إرسال الباقي إلى قائمة انتظار الإنتاج.",
         lbl_requested: "مطلوب:",
         lbl_fulfill_packed: "تلبية من المعبأ",
+        lbl_fulfill_bulk: "تلبية من السائب",
         lbl_send_prod: "إرسال إلى الإنتاج",
         lbl_which_origin_roast: "أي أصل يتم تحميصه",
         lbl_which_recipe_roast: "أي وصفة يتم تحميصها",
+        btn_change_fulfillment: "تغيير طريقة التلبية",
+        btn_use_suggestion: "استخدام الاقتراح",
+        lbl_nothing_requested: "لا يوجد طلب",
         btn_confirm_approve: "تأكيد الموافقة",
         
         // Packing Tab
