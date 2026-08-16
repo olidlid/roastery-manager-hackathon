@@ -77,7 +77,10 @@ async function loadPackingSection() {
         { data: packedList },
         { data: roastingPlans },
         { data: repackSources },
-        { data: roastBatches }
+        { data: roastBatches },
+        { data: bulkReservations },
+        { data: requestOrderItems },
+        { data: requestOrders }
     ] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
         fetchData('machines'),
@@ -88,10 +91,13 @@ async function loadPackingSection() {
         fetchData('packed_coffee'),
         fetchData('roasting_plans'),
         fetchData('repack_sources'),
-        fetchData('roast_batches')
+        fetchData('roast_batches'),
+        fetchData('bulk_reservations'),
+        fetchData('request_order_items'),
+        fetchData('request_orders')
     ]);
 
-    renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches);
+    renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches, bulkReservations, requestOrderItems, requestOrders);
     // btn-custom-packing's click handler (openCustomPackingModal) is already
     // wired once at parse time in roasting.js — not re-wired here to avoid
     // attaching a second listener that would fire the modal twice per click.
@@ -105,7 +111,7 @@ async function loadPackingSection() {
 // showing the combined kg plus an expandable list of its dates, oldest first
 // (FIFO order). Print Barcode / Pack stay per roast date either way — each
 // date is its own lot and must never be conflated.
-function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches) {
+function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches, bulkReservations, requestOrderItems, requestOrders) {
     const container = document.getElementById('ready-to-pack-cards');
     const emptyEl = document.getElementById('ready-to-pack-empty');
     const filterBar = document.getElementById('rtp-filter-bar');
@@ -277,6 +283,33 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         const prefix = window.t ? window.t('lbl_repack_from_prefix') : 'from';
         return `<div class="text-repack" style="font-family: monospace; font-size: 0.72rem; margin-top: 2px;">${prefix} ${parts.join(' &middot; ')}</div>`;
     };
+
+    // V2 sales fulfillment (stage 4, explicit user request): a bulk lot the
+    // approval modal already promised to one or more sales orders
+    // (bulk_reservations — see js/sales.js approveSalesOrder) is still
+    // physically sitting here as loose bulk, indistinguishable from
+    // unclaimed stock, until someone packs it. Surfaces which order(s) it's
+    // spoken for so the packing team doesn't treat it as free-for-anyone —
+    // one bulk row can carry reservations from several orders (FIFO-split
+    // across whichever bulk rows an order's approval drew from), so this
+    // lists all of them, not just one.
+    const reservationsByBulkId = {};
+    (bulkReservations || []).forEach(res => {
+        const kg = parseFloat(res.kg) || 0;
+        if (kg <= 0.0001) return;
+        const item = (requestOrderItems || []).find(i => i.id === res.request_order_item_id);
+        const order = item ? (requestOrders || []).find(o => o.id === item.request_order_id) : null;
+        const orderNo = order ? order.order_number : `#${item ? item.request_order_id : '?'}`;
+        if (!reservationsByBulkId[res.bulk_roasted_coffee_id]) reservationsByBulkId[res.bulk_roasted_coffee_id] = [];
+        reservationsByBulkId[res.bulk_roasted_coffee_id].push({ orderNo, kg });
+    });
+    const reservationLabelFor = (bulk) => {
+        const resList = reservationsByBulkId[bulk.id];
+        if (!resList || resList.length === 0) return '';
+        const parts = resList.map(r => `${r.kg.toFixed(1)}kg &rarr; ${r.orderNo}`).join(', ');
+        return `<div style="font-size:0.68rem; color:#b45309; background:rgba(180,83,9,0.1); border-radius:4px; padding:2px 7px; margin-top:3px; display:inline-flex; align-items:center; gap:4px; align-self:flex-start;"><i class="icon-lock va-middle-mr-1"></i>${parts}</div>`;
+    };
+
     // Print/Pack keep the full-width row they've always had; Close Lot goes on
     // its own line as a quiet text button — it's an occasional end-of-lot
     // tidy-up for leftover grams, so it shouldn't crowd the two primary
@@ -312,6 +345,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
             </div>
             <div style="font-family: monospace; font-size: 0.72rem; font-weight: 700; color: var(--primary); background: var(--primary-glow); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; align-self: flex-start; letter-spacing: 0.3px;">${lotCodeFor(bulk)}</div>
             <div style="font-size: 1.4rem; font-weight: 700; color: var(--primary);">${parseFloat(bulk.bulk_available).toFixed(2)} kg</div>
+            ${reservationLabelFor(bulk)}
             ${compositionHtmlFor(bulk)}
             <div style="display: flex; flex-direction: column; gap: 5px; margin-top: auto;">
                 ${actionButtons(bulk)}
@@ -342,6 +376,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
                     </div>
                     <div style="margin-left: auto; font-weight: 700; font-size: 0.95rem; color: var(--primary); white-space: nowrap;">${parseFloat(bulk.bulk_available).toFixed(2)} kg</div>
                 </div>
+                ${reservationLabelFor(bulk)}
                 <div style="display: flex; flex-direction: column; gap: 5px;">
                     ${actionButtons(bulk)}
                 </div>
