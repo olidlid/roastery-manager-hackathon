@@ -1250,6 +1250,23 @@ async function approveSalesOrder(orderId) {
         return best || (matchingRecipes[0] ? matchingRecipes[0].id : null);
     }
 
+    // How much a recipe could actually produce right now — the tightest
+    // ingredient (ratio-adjusted), same "weakest link" math as
+    // maxGbKgForRecipe in openSalesRequestModal — used only to label the
+    // leader's origin/recipe choices above with a decision-relevant number,
+    // not for any capacity check.
+    function recipeAvailKg(recipeId) {
+        const ings = (ingredients || []).filter(i => parseInt(i.blend_recipe_id) === recipeId);
+        let minLimit = Infinity;
+        ings.forEach(ing => {
+            const g = (greenbeans || []).find(x => x.id === parseInt(ing.green_coffee_id));
+            const avail = g ? (parseFloat(g.stock_kg) || 0) : 0;
+            const ratio = parseFloat(ing.percentage) / 100;
+            if (ratio > 0) minLimit = Math.min(minLimit, avail / ratio);
+        });
+        return minLimit === Infinity ? 0 : minLimit;
+    }
+
     let htmlContent = `
         <form id="modal-approve-form">
             <p style="margin-bottom: 15px; font-size: 0.9rem; color: var(--text-secondary);" data-i18n="msg_approve_desc">Review the order quantities. You can adjust the fulfilled amount or send the remainder to the production queue.</p>
@@ -1319,6 +1336,46 @@ async function approveSalesOrder(orderId) {
             itemMachineOptionsHtml += `<option value="${m.id}" ${selected}>${m.name}</option>`;
         });
         
+        // Trade-name item going to production: which SPECIFIC origin/recipe
+        // sharing the code actually gets roasted was previously decided
+        // silently by pickFifoOriginForCode/pickFifoRecipeForCode below, with
+        // no leader input — this exposes that same FIFO pick as an editable
+        // dropdown (pre-selected to the FIFO choice, but overridable) so the
+        // leader can steer it, e.g. toward whichever origin has the most kg
+        // on hand or is closer to expiring. Non-trade-name items have no
+        // ambiguity (single_coffee_id/blend_recipe_id already fixed at order
+        // time) and get no row at all.
+        let originRecipeRowHtml = '';
+        if (item.coffee_code) {
+            if (type === 'Single') {
+                const codeOrigins = (greenbeans || []).filter(g => g.code === item.coffee_code);
+                const defaultId = pickFifoOriginForCode(item.coffee_code);
+                const originOptsHtml = codeOrigins.map(g => {
+                    const kg = parseFloat(g.stock_kg) || 0;
+                    return `<option value="${g.id}" ${g.id === defaultId ? 'selected' : ''}>${g.name} — ${kg.toFixed(1)} kg</option>`;
+                }).join('');
+                originRecipeRowHtml = `
+                    <div class="origin-select-row" style="margin-top: 12px; ${prodQty > 0 ? '' : 'display: none;'}">
+                        <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_which_origin_roast">Which origin to roast</label>
+                        <select class="form-control sel-origin-recipe" data-type="Single" style="padding: 6px 10px;">${originOptsHtml}</select>
+                    </div>
+                `;
+            } else {
+                const codeRecipes = (recipes || []).filter(r => r.code === item.coffee_code);
+                const defaultId = pickFifoRecipeForCode(item.coffee_code);
+                const recipeOptsHtml = codeRecipes.map(r => {
+                    const kg = recipeAvailKg(r.id);
+                    return `<option value="${r.id}" ${r.id === defaultId ? 'selected' : ''}>${r.name} — ${kg.toFixed(1)} kg</option>`;
+                }).join('');
+                originRecipeRowHtml = `
+                    <div class="origin-select-row" style="margin-top: 12px; ${prodQty > 0 ? '' : 'display: none;'}">
+                        <label class="form-label" style="font-size: 0.75rem;" data-i18n="lbl_which_recipe_roast">Which recipe to roast</label>
+                        <select class="form-control sel-origin-recipe" data-type="Blend" style="padding: 6px 10px;">${recipeOptsHtml}</select>
+                    </div>
+                `;
+            }
+        }
+
         htmlContent += `
             <div class="approval-item-row" data-id="${item.id}" style="background: rgba(0,0,0,0.02); border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
                 <div style="font-weight: bold; margin-bottom: 8px; color: var(--text-primary);">${coffeeName} - ${size}g${machineLabel}</div>
@@ -1347,6 +1404,7 @@ async function approveSalesOrder(orderId) {
                         ${itemMachineOptionsHtml}
                     </select>
                 </div>
+                ${originRecipeRowHtml}
             </div>
         `;
     }
@@ -1362,13 +1420,16 @@ async function approveSalesOrder(orderId) {
     
     openModal(window.t ? window.t('modal_approve_order') : 'Approve Order', htmlContent);
     
-    // Toggle machine dropdown visibility when inp-prod changes
+    // Toggle machine dropdown (and origin/recipe dropdown, for trade-name
+    // items) visibility when inp-prod changes
     document.querySelectorAll('.approval-item-row .inp-prod').forEach(inp => {
         inp.addEventListener('input', function() {
             const row = this.closest('.approval-item-row');
             const machineRow = row.querySelector('.machine-select-row');
+            const originRow = row.querySelector('.origin-select-row');
             const val = parseInt(this.value) || 0;
             machineRow.style.display = val > 0 ? '' : 'none';
+            if (originRow) originRow.style.display = val > 0 ? '' : 'none';
         });
     });
 
@@ -1465,19 +1526,25 @@ async function approveSalesOrder(orderId) {
                 const targetRoast = weightKg / 0.85;
 
                 // Trade-name item: roasting always targets one concrete
-                // origin/recipe, so resolve the code to whichever one sharing
-                // it is most urgent by FIFO — a normal editable plan from
-                // here on, see pickFifoOriginForCode/pickFifoRecipeForCode
-                // above. item.single_coffee_id/blend_recipe_id are both null
-                // for a trade-name item, so exactly one of these two resolves
-                // to a real id and the other must stay null — never both.
+                // origin/recipe. Prefers the leader's explicit pick from the
+                // .sel-origin-recipe dropdown (rendered above, defaulted to
+                // the FIFO choice but overridable); falls back to the FIFO
+                // pick itself only if that control isn't present for some
+                // reason (e.g. the code had zero matching origins/recipes at
+                // render time) — same safety net the old always-FIFO
+                // behavior provided. item.single_coffee_id/blend_recipe_id
+                // are both null for a trade-name item, so exactly one of
+                // these two resolves to a real id and the other must stay
+                // null — never both.
                 let planSingleCoffeeId = item.single_coffee_id;
                 let planBlendRecipeId = item.blend_recipe_id;
                 if (item.coffee_code) {
+                    const selOriginRecipe = r.querySelector('.sel-origin-recipe');
+                    const chosenId = selOriginRecipe ? (parseInt(selOriginRecipe.value) || null) : null;
                     if (item.coffee_type === 'Blend') {
-                        planBlendRecipeId = pickFifoRecipeForCode(item.coffee_code);
+                        planBlendRecipeId = chosenId || pickFifoRecipeForCode(item.coffee_code);
                     } else {
-                        planSingleCoffeeId = pickFifoOriginForCode(item.coffee_code);
+                        planSingleCoffeeId = chosenId || pickFifoOriginForCode(item.coffee_code);
                     }
                 }
 

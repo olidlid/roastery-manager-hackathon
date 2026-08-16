@@ -396,6 +396,8 @@ window.translations = {
         lbl_requested: "Requested:",
         lbl_fulfill_packed: "Fulfill from Packed",
         lbl_send_prod: "Send to Production",
+        lbl_which_origin_roast: "Which origin to roast",
+        lbl_which_recipe_roast: "Which recipe to roast",
         btn_confirm_approve: "Confirm Approval",
         
         // Packing Tab
@@ -1036,6 +1038,8 @@ window.translations = {
         lbl_requested: "مطلوب:",
         lbl_fulfill_packed: "تلبية من المعبأ",
         lbl_send_prod: "إرسال إلى الإنتاج",
+        lbl_which_origin_roast: "أي أصل يتم تحميصه",
+        lbl_which_recipe_roast: "أي وصفة يتم تحميصها",
         btn_confirm_approve: "تأكيد الموافقة",
         
         // Packing Tab
