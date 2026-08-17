@@ -5589,7 +5589,7 @@ async function openNewStockReleaseModal() {
                 </div>
             </div>
 
-            <div id="sr-step-confirm" class="hidden"></div>
+            <div id="sr-step-confirm" class="hidden" style="max-width:640px; margin:0 auto;"></div>
         </form>
     `;
 
@@ -5717,7 +5717,10 @@ async function openNewStockReleaseModal() {
         const lotWord = cart.size === 1
             ? (window.t ? window.t('lbl_sr_lot_count') : 'lot')
             : (window.t ? window.t('lbl_sr_lot_count_plural') : 'lots');
+        // Hidden rather than emptied — an empty pill still paints its tinted
+        // background, which reads as a stray smudge next to the heading.
         countEl.textContent = cart.size === 0 ? '' : `${cart.size} ${lotWord}`;
+        countEl.style.display = cart.size === 0 ? 'none' : '';
     }
 
     function addToCart(lot, qty) {
