@@ -5500,82 +5500,100 @@ async function openNewStockReleaseModal() {
         .join('');
     const coffeeOptions = groups.map((g, idx) => `<option value="${idx}">${g.code ? g.code + ' — ' + g.label : g.label}</option>`).join('');
 
-    // Tightened spacing throughout (8px between fields instead of the
-    // default 16px .form-group margin) so the whole form fits with less
-    // scrolling — this modal has a lot of fields stacked vertically. Coffee
-    // and Lot are each their own full-width row (not paired side by side
-    // like before) specifically so the Lot select has the full modal width
-    // to show strip code, machine, size, remaining stock and packed date on
-    // one line without truncating — see renderLotOptions above.
-    const fg = 'style="margin-bottom:8px;"';
+    // Two-column layout (see .sr-grid in styles.css): every input lives in the
+    // left column, while the right column is a panel holding the staged items,
+    // the notes, the running total and the action buttons. Before this, the
+    // cart and the submit button sat at the bottom of one long single-column
+    // stack — on a 720px modal the operator had to scroll past the whole form
+    // to see what they were about to record, which is exactly how a form that
+    // was silently blocked from submitting went unnoticed. Scan is promoted to
+    // its own tinted panel above an "or pick manually" divider because it's the
+    // fast path; Coffee/Lot/Qty are the fallback. The Lot select still gets a
+    // full column width so its strip code / machine / size / stock / date line
+    // doesn't truncate — see renderLotOptions above.
+    const fg = 'style="margin-bottom:10px;"';
     const html = `
         <form id="modal-stock-release-form">
-            <div class="form-row" style="gap:10px; margin-bottom:8px;">
-                <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label" data-i18n="lbl_sr_date">Date</label>
-                    <input type="date" id="sr-date" class="form-control" value="${todayStr}" required>
+            <div id="sr-step-form" class="sr-grid">
+                <div>
+                    <div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px; margin-bottom:12px;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label" data-i18n="lbl_sr_date">Date</label>
+                            <input type="date" id="sr-date" class="form-control" value="${todayStr}" required>
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label" data-i18n="lbl_sr_category">Category</label>
+                            <select id="sr-category" class="form-control">${categoryOptions}</select>
+                        </div>
+                        <div class="form-group" id="sr-sales-name-wrap" style="margin-bottom:0;">
+                            <label class="form-label" data-i18n="lbl_sr_sales_name">Sales Name</label>
+                            <input type="text" id="sr-sales-name" class="form-control" list="sr-agent-list" autocomplete="off" placeholder="e.g. Budi">
+                            <datalist id="sr-agent-list">${agentOptions}</datalist>
+                        </div>
+                    </div>
+                    <div id="sr-sales-name-hint" style="font-size:0.72rem; color:var(--text-muted); margin:-6px 0 12px;" data-i18n="hint_sr_sales_name">Pick a registered sales agent, or type a new name.</div>
+
+                    <div style="background: var(--primary-glow); border:1px solid var(--border-focus); border-radius:10px; padding:11px 12px; margin-bottom:14px;">
+                        <label class="form-label" style="display:flex; align-items:center; gap:7px; margin-bottom:6px;">
+                            <i class="icon-scan-line"></i><span data-i18n="lbl_sr_scan">Scan strip code, then Enter</span>
+                        </label>
+                        <input type="text" id="sr-scan-input" class="form-control" placeholder="20037" autocomplete="off" style="font-family:monospace; font-size:1rem; letter-spacing:1px;">
+                    </div>
+
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                        <div style="flex:1; height:1px; background:var(--border);"></div>
+                        <span style="font-size:0.72rem; color:var(--text-muted);" data-i18n="lbl_sr_or_manual">or pick manually</span>
+                        <div style="flex:1; height:1px; background:var(--border);"></div>
+                    </div>
+
+                    <div class="form-group" ${fg}>
+                        <label class="form-label" data-i18n="lbl_sr_coffee">Coffee</label>
+                        <select id="sr-coffee-select" class="form-control">${coffeeOptions}</select>
+                    </div>
+                    <div class="form-group" ${fg}>
+                        <label class="form-label" data-i18n="lbl_sr_lot">Lot</label>
+                        <select id="sr-lot-select" class="form-control"></select>
+                    </div>
+                    <div style="display:grid; grid-template-columns:110px minmax(0,1fr); gap:10px; align-items:end;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label" data-i18n="lbl_sr_qty">Qty (pcs)</label>
+                            <input type="number" id="sr-qty" class="form-control" value="1" min="1">
+                        </div>
+                        <button type="button" id="sr-btn-add" class="btn btn-secondary"><i class="icon-plus va-middle-mr-1"></i><span data-i18n="btn_sr_add">Add to list</span></button>
+                    </div>
+                    <div id="sr-stock-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:6px;"></div>
                 </div>
-                <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label" data-i18n="lbl_sr_category">Category</label>
-                    <select id="sr-category" class="form-control">${categoryOptions}</select>
+
+                <div class="sr-panel">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                        <span style="font-size:0.85rem; font-weight:700;" data-i18n="lbl_sr_cart">Items to release</span>
+                        <span id="sr-cart-count" style="font-size:0.7rem; color:var(--primary); background:var(--primary-glow); border-radius:20px; padding:2px 9px;"></span>
+                    </div>
+                    <div id="sr-cart" class="sr-cart-scroll"></div>
+
+                    <div class="form-group" style="margin:12px 0 0;">
+                        <label class="form-label" data-i18n="lbl_sr_notes">Notes</label>
+                        <input type="text" id="sr-notes" class="form-control" placeholder="optional">
+                        <div id="sr-notes-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:3px;"></div>
+                    </div>
+
+                    <div style="display:flex; align-items:baseline; justify-content:space-between; border-top:1px solid var(--border); padding-top:10px; margin-top:12px;">
+                        <span style="font-size:0.8rem; color:var(--text-secondary);" data-i18n="lbl_sr_total">Total released</span>
+                        <span id="sr-total" style="font-size:1.5rem; font-weight:700; color:var(--primary);">0 pcs</span>
+                    </div>
+
+                    <div style="display:flex; gap:8px; margin-top:14px;">
+                        <button type="button" class="btn btn-secondary" style="flex:1;" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                        <button type="submit" class="btn btn-primary" style="flex:1.5;" data-i18n="btn_sr_proceed">Proceed</button>
+                    </div>
                 </div>
             </div>
 
-            <div id="sr-sales-name-wrap" class="form-group hidden" style="margin-bottom:8px; background: var(--primary-glow); border-radius: 8px; padding: 8px 10px;">
-                <label class="form-label" data-i18n="lbl_sr_sales_name">Sales Name</label>
-                <input type="text" id="sr-sales-name" class="form-control" list="sr-agent-list" autocomplete="off" placeholder="e.g. Budi">
-                <datalist id="sr-agent-list">${agentOptions}</datalist>
-                <div style="font-size:0.72rem; color:var(--text-muted); margin-top:3px;" data-i18n="hint_sr_sales_name">Pick a registered sales agent, or type a new name.</div>
-            </div>
-
-            <div class="form-group" ${fg}>
-                <label class="form-label" data-i18n="lbl_sr_scan">Scan strip code, then Enter</label>
-                <input type="text" id="sr-scan-input" class="form-control" placeholder="20037" autocomplete="off">
-            </div>
-
-            <div class="form-group" ${fg}>
-                <label class="form-label" data-i18n="lbl_sr_coffee">Coffee</label>
-                <select id="sr-coffee-select" class="form-control">${coffeeOptions}</select>
-            </div>
-            <div class="form-group" ${fg}>
-                <label class="form-label" data-i18n="lbl_sr_lot">Lot</label>
-                <select id="sr-lot-select" class="form-control"></select>
-            </div>
-            <div class="form-row" style="gap:10px; margin-bottom:8px; align-items: flex-end;">
-                <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label" data-i18n="lbl_sr_qty">Qty (pcs)</label>
-                    <input type="number" id="sr-qty" class="form-control" value="1" min="1">
-                    <div id="sr-stock-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:3px;"></div>
-                </div>
-                <div class="form-group" style="margin-bottom:0;">
-                    <button type="button" id="sr-btn-add" class="btn btn-secondary" style="width:100%;"><i class="icon-plus va-middle-mr-1"></i><span data-i18n="btn_sr_add">Add to list</span></button>
-                </div>
-            </div>
-
-            <div style="margin-bottom:8px;">
-                <label class="form-label" data-i18n="lbl_sr_cart">Items to release</label>
-                <div id="sr-cart" style="border:1px solid var(--border); border-radius:8px; overflow:hidden;"></div>
-            </div>
-
-            <div class="form-group" ${fg}>
-                <label class="form-label" data-i18n="lbl_sr_notes">Notes</label>
-                <input type="text" id="sr-notes" class="form-control" placeholder="optional">
-                <div id="sr-notes-hint" style="font-size:0.72rem; color:var(--text-muted); margin-top:3px;"></div>
-            </div>
-
-            <div style="display:flex; align-items:baseline; justify-content:space-between; border-top:1px solid var(--border); padding-top:8px;">
-                <span style="font-size:0.8rem; color:var(--text-secondary);" data-i18n="lbl_sr_total">Total released</span>
-                <span id="sr-total" style="font-size:1.5rem; font-weight:700; color:var(--primary);">0 pcs</span>
-            </div>
-
-            <div class="modal-footer-actions-lg" style="margin-top:14px;">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
-                <button type="submit" class="btn btn-primary" data-i18n="btn_sr_submit">Record Release</button>
-            </div>
+            <div id="sr-step-confirm" class="hidden"></div>
         </form>
     `;
 
-    openModal(window.t ? window.t('title_new_stock_release') : 'New Stock Release', html, '720px');
+    openModal(window.t ? window.t('title_new_stock_release') : 'New Stock Release', html, '1000px');
 
     const selCoffee = document.getElementById('sr-coffee-select');
     const selLot = document.getElementById('sr-lot-select');
@@ -5584,9 +5602,14 @@ async function openNewStockReleaseModal() {
     const hintStock = document.getElementById('sr-stock-hint');
     const cartEl = document.getElementById('sr-cart');
     const totalEl = document.getElementById('sr-total');
+    const countEl = document.getElementById('sr-cart-count');
     const selCategory = document.getElementById('sr-category');
     const salesWrap = document.getElementById('sr-sales-name-wrap');
+    const salesInput = document.getElementById('sr-sales-name');
+    const salesHint = document.getElementById('sr-sales-name-hint');
     const notesHint = document.getElementById('sr-notes-hint');
+    const stepForm = document.getElementById('sr-step-form');
+    const stepConfirm = document.getElementById('sr-step-confirm');
 
     // cart: Map keyed by lotId so re-adding the same lot accumulates instead
     // of creating a duplicate line the submit loop would then double-deduct.
@@ -5656,24 +5679,31 @@ async function openNewStockReleaseModal() {
         }
     }
 
+    // One bordered card per staged lot (instead of the old flat divided list)
+    // so each line still reads as a distinct object inside the narrower right
+    // column, followed by a dashed "scan another" hint that keeps the panel
+    // from looking broken while it's still nearly empty.
     function renderCart() {
         const emptyMsg = window.t ? window.t('msg_sr_cart_empty') : 'Nothing added yet.';
+        const scanMore = window.t ? window.t('msg_sr_scan_more') : 'Scan another strip code to add more';
         if (cart.size === 0) {
-            cartEl.innerHTML = `<div style="padding:14px; text-align:center; color:var(--text-muted); font-size:0.82rem;">${emptyMsg}</div>`;
+            cartEl.innerHTML = `<div style="border:1px dashed var(--border); border-radius:10px; padding:22px 12px; text-align:center; color:var(--text-muted); font-size:0.8rem;">${emptyMsg}</div>`;
         } else {
-            cartEl.innerHTML = [...cart.values()].map((line, idx) => `
-                <div style="display:flex; align-items:center; gap:10px; padding:9px 11px; ${idx > 0 ? 'border-top:1px solid var(--border);' : ''}">
-                    <div style="flex:1; min-width:0;">
-                        <div style="font-size:0.82rem;">
-                            <span style="font-family:monospace; font-weight:700; color:var(--primary);">${line.stripCode || line.lotCode}</span>
-                            <span style="color:var(--text-secondary);"> · ${line.label} · ${line.sizeG}g</span>
+            cartEl.innerHTML = [...cart.values()].map(line => `
+                <div style="background:var(--bg-input); border:1px solid var(--border); border-radius:10px; padding:10px 11px; margin-bottom:8px;">
+                    <div style="display:flex; align-items:flex-start; gap:8px;">
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-family:monospace; font-weight:700; color:var(--primary); font-size:0.9rem;">${line.stripCode || line.lotCode}</div>
+                            <div style="font-size:0.78rem; color:var(--text-secondary); overflow-wrap:anywhere;">${line.label} · ${line.sizeG}g</div>
+                            <div style="font-size:0.7rem; color:var(--text-muted);">${line.packedDate || '-'}</div>
                         </div>
-                        <div style="font-size:0.72rem; color:var(--text-muted);">${line.packedDate || '-'}</div>
+                        <div style="text-align:right;">
+                            <div style="font-weight:700; font-size:0.9rem; white-space:nowrap;">${line.qty} pcs</div>
+                            <button type="button" class="sr-cart-remove btn btn-danger btn-sm" data-lot-id="${line.lotId}" style="margin-top:4px;" aria-label="Remove">&times;</button>
+                        </div>
                     </div>
-                    <div style="font-weight:700; font-size:0.9rem; white-space:nowrap;">${line.qty} pcs</div>
-                    <button type="button" class="sr-cart-remove btn btn-danger btn-sm" data-lot-id="${line.lotId}" aria-label="Remove">&times;</button>
                 </div>
-            `).join('');
+            `).join('') + `<div style="border:1px dashed var(--border); border-radius:10px; padding:10px; text-align:center; font-size:0.7rem; color:var(--text-muted);">${scanMore}</div>`;
             cartEl.querySelectorAll('.sr-cart-remove').forEach(btn => {
                 btn.addEventListener('click', () => {
                     cart.delete(parseInt(btn.getAttribute('data-lot-id')));
@@ -5684,6 +5714,10 @@ async function openNewStockReleaseModal() {
         }
         const total = [...cart.values()].reduce((s, l) => s + l.qty, 0);
         totalEl.textContent = `${total} pcs`;
+        const lotWord = cart.size === 1
+            ? (window.t ? window.t('lbl_sr_lot_count') : 'lot')
+            : (window.t ? window.t('lbl_sr_lot_count_plural') : 'lots');
+        countEl.textContent = cart.size === 0 ? '' : `${cart.size} ${lotWord}`;
     }
 
     function addToCart(lot, qty) {
@@ -5701,9 +5735,17 @@ async function openNewStockReleaseModal() {
         return true;
     }
 
+    // Sales Name keeps its column instead of being toggled out of the DOM: in
+    // the 3-across top row, hiding it made Date/Category jump sideways every
+    // time the category changed. Disabled + dimmed communicates the same thing
+    // without the layout shift, and clearing the value keeps a name typed under
+    // "Sales" from silently riding along into a "Waste" release.
     function applyCategoryRules() {
         const needs = stockReleaseCategoryNeeds(selCategory.value);
-        salesWrap.classList.toggle('hidden', !needs.salesName);
+        salesInput.disabled = !needs.salesName;
+        salesWrap.style.opacity = needs.salesName ? '1' : '0.45';
+        salesHint.style.display = needs.salesName ? '' : 'none';
+        if (!needs.salesName) salesInput.value = '';
         notesHint.textContent = needs.notes
             ? (window.t ? window.t('hint_sr_notes_required') : 'Required for the "Other" category.')
             : '';
@@ -5778,15 +5820,115 @@ async function openNewStockReleaseModal() {
     renderCart();
     applyCategoryRules();
 
-    document.getElementById('modal-stock-release-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        await submitStockRelease({
+    // "Proceed" no longer writes anything — it swaps the form out for a
+    // read-only review of exactly what is about to be deducted. Stock release
+    // is irreversible from the UI (there is no un-release), so the operator
+    // gets one deliberate look at the header + every lot line before the
+    // deduction happens. Both steps live inside the same <form>, so the cart
+    // Map and all listeners survive going Back.
+    function currentHeader() {
+        return {
             date: document.getElementById('sr-date').value,
             category: selCategory.value,
-            salesName: document.getElementById('sr-sales-name').value.trim(),
-            notes: document.getElementById('sr-notes').value.trim(),
-            lines: [...cart.values()]
+            salesName: salesInput.value.trim(),
+            notes: document.getElementById('sr-notes').value.trim()
+        };
+    }
+
+    function showConfirmStep() {
+        const h = currentHeader();
+        const lines = [...cart.values()];
+        const total = lines.reduce((s, l) => s + l.qty, 0);
+        const catDef = STOCK_RELEASE_CATEGORIES.find(c => c.value === h.category);
+        const catLabel = catDef ? (window.t ? window.t(catDef.i18n) : catDef.fallback) : h.category;
+        const dash = '<span style="color:var(--text-muted);">—</span>';
+
+        const metaRow = (labelKey, fallback, value) => `
+            <div>
+                <div style="font-size:0.7rem; color:var(--text-muted);" data-i18n="${labelKey}">${fallback}</div>
+                <div style="font-size:0.88rem; overflow-wrap:anywhere;">${value || dash}</div>
+            </div>`;
+
+        stepConfirm.innerHTML = `
+            <div style="display:flex; align-items:flex-start; gap:10px; background:var(--primary-glow); border:1px solid var(--border-focus); border-radius:10px; padding:12px 14px; margin-bottom:16px;">
+                <i class="icon-alert-circle" style="color:var(--primary); font-size:1.1rem;"></i>
+                <div>
+                    <div style="font-weight:700; font-size:0.92rem;" data-i18n="title_sr_confirm">Confirm Stock Release</div>
+                    <div style="font-size:0.78rem; color:var(--text-secondary);" data-i18n="hint_sr_confirm">Check the details below. Recording this will deduct the stock immediately.</div>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border); margin-bottom:14px;">
+                ${metaRow('lbl_sr_date', 'Date', h.date)}
+                ${metaRow('lbl_sr_category', 'Category', catLabel)}
+                ${metaRow('lbl_sr_sales_name', 'Sales Name', h.salesName)}
+                ${metaRow('lbl_sr_notes', 'Notes', h.notes)}
+            </div>
+
+            <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:14px;">
+                ${lines.map((line, idx) => `
+                    <div style="display:flex; align-items:center; gap:12px; padding:10px 12px; ${idx > 0 ? 'border-top:1px solid var(--border);' : ''}">
+                        <span style="font-family:monospace; font-weight:700; color:var(--primary); font-size:0.9rem;">${line.stripCode || line.lotCode}</span>
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-size:0.85rem; overflow-wrap:anywhere;">${line.label} · ${line.sizeG}g</div>
+                            <div style="font-size:0.7rem; color:var(--text-muted);">${line.packedDate || '-'}</div>
+                        </div>
+                        <span style="font-weight:700; font-size:0.95rem; white-space:nowrap;">${line.qty} pcs</span>
+                    </div>
+                `).join('')}
+            </div>
+
+            <div style="display:flex; align-items:baseline; justify-content:space-between; border-top:1px solid var(--border); padding-top:10px;">
+                <span style="font-size:0.8rem; color:var(--text-secondary);" data-i18n="lbl_sr_total">Total released</span>
+                <span style="font-size:1.5rem; font-weight:700; color:var(--primary);">${total} pcs</span>
+            </div>
+
+            <div class="modal-footer-actions-lg" style="margin-top:16px;">
+                <button type="button" id="sr-btn-back" class="btn btn-secondary"><i class="icon-arrow-left va-middle-mr-1"></i><span data-i18n="btn_sr_back">Back</span></button>
+                <button type="button" id="sr-btn-confirm" class="btn btn-primary" data-i18n="btn_sr_submit">Record Release</button>
+            </div>
+        `;
+
+        stepForm.classList.add('hidden');
+        stepConfirm.classList.remove('hidden');
+        if (typeof window.translatePage === 'function') window.translatePage();
+
+        document.getElementById('sr-btn-back').addEventListener('click', () => {
+            stepConfirm.classList.add('hidden');
+            stepForm.classList.remove('hidden');
         });
+        document.getElementById('sr-btn-confirm').addEventListener('click', async (ev) => {
+            // Guards a double-click from writing the release twice — the whole
+            // submit path is async and the button stays clickable until the
+            // modal closes.
+            ev.target.disabled = true;
+            await submitStockRelease({ ...currentHeader(), lines: [...cart.values()] });
+            ev.target.disabled = false;
+        });
+    }
+
+    document.getElementById('modal-stock-release-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const h = currentHeader();
+        const needs = stockReleaseCategoryNeeds(h.category);
+        // Validated here rather than only inside submitStockRelease so the
+        // operator is sent back to the field that's wrong, instead of getting
+        // the warning on a review screen that can't be edited.
+        if (cart.size === 0) {
+            await showWarningModal('Add at least one item before recording the release.', false);
+            return;
+        }
+        if (needs.salesName && !h.salesName) {
+            await showWarningModal('Enter the sales name — it is required for the Sales category.', false);
+            salesInput.focus();
+            return;
+        }
+        if (needs.notes && !h.notes) {
+            await showWarningModal('Enter a note — it is required for the "Other" category.', false);
+            document.getElementById('sr-notes').focus();
+            return;
+        }
+        showConfirmStep();
     });
 }
 

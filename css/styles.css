@@ -943,6 +943,44 @@ tbody tr:hover {
     color: var(--text-secondary);
 }
 
+/* Stock Release modal — two-column layout (form left, cart panel right).
+   The cart panel is what makes this worth a wider modal: it keeps the staged
+   items, the total and the action buttons permanently on screen, instead of
+   below the fold where the operator had to scroll past the form to see what
+   they were about to record. Collapses to a single column under 1000px so it
+   still works on a tablet. */
+.sr-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 18px;
+}
+
+.sr-panel {
+    background-color: var(--bg-app);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Bounded so a long list scrolls INSIDE the panel rather than growing the
+   modal until the Total/Proceed row is pushed off screen again. */
+.sr-cart-scroll {
+    overflow-y: auto;
+    max-height: 260px;
+    min-height: 120px;
+}
+
+@media (max-width: 1000px) {
+    .sr-grid {
+        grid-template-columns: 1fr;
+    }
+    .sr-cart-scroll {
+        max-height: 200px;
+    }
+}
+
 /* ==========================================================================
    RECIPE POTENTIAL CARDS
    ========================================================================== */
