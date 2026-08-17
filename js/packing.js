@@ -5580,6 +5580,7 @@ async function openNewStockReleaseModal() {
     const selCoffee = document.getElementById('sr-coffee-select');
     const selLot = document.getElementById('sr-lot-select');
     const inpQty = document.getElementById('sr-qty');
+    const btnAdd = document.getElementById('sr-btn-add');
     const hintStock = document.getElementById('sr-stock-hint');
     const cartEl = document.getElementById('sr-cart');
     const totalEl = document.getElementById('sr-total');
@@ -5630,12 +5631,29 @@ async function openNewStockReleaseModal() {
         return Math.max(0, lot.remaining - staged);
     }
 
+    // Disables Qty/Add (instead of just clamping max down to 0) once a lot's
+    // stock is fully staged in the cart — a bare `inpQty.max = 0` alongside
+    // the input's static min="1" leaves the field in an impossible min>max
+    // state, which the browser's native validation then blocks the ENTIRE
+    // form's submit on, even though every item the operator actually wants
+    // is already sitting correctly in the cart (found live: "Minimum value
+    // (1) must be less than the maximum value (0)" on Record Release, with
+    // no way to tell which field was even at fault). A disabled input is
+    // excluded from constraint validation entirely, so this sidesteps the
+    // conflict instead of trying to keep min/max consistent by hand.
     function updateStockHint() {
         const lot = selectedLot();
         const avail = availableFor(lot);
         const label = window.t ? window.t('lbl_sr_available') : 'available';
         hintStock.textContent = lot ? `${avail} pcs ${label}` : '';
-        inpQty.max = avail;
+        const soldOut = !lot || avail <= 0;
+        inpQty.disabled = soldOut;
+        btnAdd.disabled = soldOut;
+        if (soldOut) {
+            inpQty.removeAttribute('max');
+        } else {
+            inpQty.max = avail;
+        }
     }
 
     function renderCart() {
