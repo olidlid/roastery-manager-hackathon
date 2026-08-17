@@ -2385,6 +2385,21 @@ document.getElementById('btn-add-batch').addEventListener('click', () => {
     openRoastBatchModal();
 });
 
+// Keyboard shortcut: Ctrl+/ opens Log Roasting Batch from anywhere in the
+// app (explicit user request — picked for sitting right next to the
+// numpad, so the right hand can go from typing a weight straight to
+// triggering the next log). e.key === '/' matches both the main-row slash
+// and the numpad's Divide key, whichever the keyboard sends. Skipped while
+// another modal is already open, so it can't stack a second one on top of
+// whatever's currently showing.
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === '/') {
+        if (modalContainer && !modalContainer.classList.contains('hidden')) return;
+        e.preventDefault();
+        openRoastBatchModal();
+    }
+});
+
 document.getElementById('btn-export-batches').addEventListener('click', () => {
     openExportBatchesModal();
 });
@@ -2828,12 +2843,36 @@ async function openRoastBatchModal(plan = null, editId = null) {
         } else {
             depreciationInput.value = '0.0%';
         }
+        validateRoastedNotOverGreenbean();
     }
 
     const gbWarningBubble = document.createElement('div');
     gbWarningBubble.style.cssText = "color: var(--danger); font-size: 0.8rem; margin-top: 4px; display: none; font-weight: 600;";
     gbWarningBubble.innerHTML = `⚠️ <span data-i18n="alert_insufficient_gb">${window.t ? window.t("alert_insufficient_gb").replace('\n',' ') : "Insufficient Greenbean Stock!"}</span>`;
     greenbeanWeightInput.parentNode.appendChild(gbWarningBubble);
+
+    // Roasted weight can physically never exceed greenbean weight (roasting
+    // only loses mass, via moisture — never gains it), so this is a hard
+    // block at submit, not a soft "proceed anyway?" like the stock check
+    // above. `max` is kept in sync too, purely as a native-input assist
+    // (spinner arrows/browser tooltip) — the real enforcement is the submit
+    // check below, since this form bypasses native constraint validation
+    // entirely (e.preventDefault() + manual checks throughout).
+    const roastOverBubble = document.createElement('div');
+    roastOverBubble.style.cssText = "color: var(--danger); font-size: 0.8rem; margin-top: 4px; display: none; font-weight: 600;";
+    roastOverBubble.innerHTML = `⚠️ <span data-i18n="alert_roasted_exceeds_greenbean">${window.t ? window.t("alert_roasted_exceeds_greenbean") : "Roasted weight can't exceed greenbean weight."}</span>`;
+    roastedWeightInput.parentNode.appendChild(roastOverBubble);
+
+    let roastedOverGreenbean = false;
+    function validateRoastedNotOverGreenbean() {
+        const gbW = parseFloat(greenbeanWeightInput.value) || 0;
+        const roastW = parseFloat(roastedWeightInput.value) || 0;
+        roastedWeightInput.max = gbW > 0 ? gbW : '';
+        roastedOverGreenbean = gbW > 0 && roastW > gbW;
+        roastOverBubble.style.display = roastedOverGreenbean ? 'block' : 'none';
+        roastedWeightInput.style.borderColor = roastedOverGreenbean ? 'var(--danger)' : '';
+        return roastedOverGreenbean;
+    }
 
     let hasInsufficientStock = false;
 
@@ -2964,9 +3003,22 @@ async function openRoastBatchModal(plan = null, editId = null) {
         checkBatchStock();
     }
 
+    // Cursor defaults to Roasted Weight (explicit user request) — that's
+    // the one field every fresh log actually needs typed by hand (Batch
+    // Code/Date/Machine/Coffee/Greenbean are all pre-filled above); skipped
+    // when editing an existing batch, where reviewing the form top-down
+    // makes more sense than jumping straight to one field.
+    if (!editId) roastedWeightInput.focus();
+
     // Submit handler
     document.getElementById('modal-batch-form').addEventListener('submit', async (e) => {
         e.preventDefault();
+
+        if (validateRoastedNotOverGreenbean()) {
+            alert(window.t ? window.t("alert_roasted_exceeds_greenbean") : "Roasted weight can't exceed greenbean weight.");
+            roastedWeightInput.focus();
+            return;
+        }
 
         if (hasInsufficientStock) {
             const proceed = await showWarningModal(
@@ -3824,19 +3876,45 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
         } else {
             depreciationInput.value = '0.0%';
         }
+        validateRoastedNotOverGreenbean();
     }
+
+    // Same hard rule as openRoastBatchModal: roasting only loses mass, so
+    // roasted weight can never physically exceed greenbean weight.
+    const roastOverBubble = document.createElement('div');
+    roastOverBubble.style.cssText = "color: var(--danger); font-size: 0.8rem; margin-top: 4px; display: none; font-weight: 600;";
+    roastOverBubble.innerHTML = `⚠️ <span data-i18n="alert_roasted_exceeds_greenbean">${window.t ? window.t("alert_roasted_exceeds_greenbean") : "Roasted weight can't exceed greenbean weight."}</span>`;
+    roastedWeightInput.parentNode.appendChild(roastOverBubble);
+
+    let roastedOverGreenbean = false;
+    function validateRoastedNotOverGreenbean() {
+        const gbW = parseFloat(greenbeanWeightInput.value) || 0;
+        const roastW = parseFloat(roastedWeightInput.value) || 0;
+        roastedWeightInput.max = gbW > 0 ? gbW : '';
+        roastedOverGreenbean = gbW > 0 && roastW > gbW;
+        roastOverBubble.style.display = roastedOverGreenbean ? 'block' : 'none';
+        roastedWeightInput.style.borderColor = roastedOverGreenbean ? 'var(--danger)' : '';
+        return roastedOverGreenbean;
+    }
+
     greenbeanWeightInput.addEventListener('input', calcDepreciation);
     roastedWeightInput.addEventListener('input', calcDepreciation);
-    
+
     // Focus on roasted weight field after a short delay
     setTimeout(() => {
         roastedWeightInput.focus();
     }, 300);
-    
+
     // Form submit - reuse the same save logic
     document.getElementById('modal-batch-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
+        if (validateRoastedNotOverGreenbean()) {
+            alert(window.t ? window.t("alert_roasted_exceeds_greenbean") : "Roasted weight can't exceed greenbean weight.");
+            roastedWeightInput.focus();
+            return;
+        }
+
         const code = batchCodeInput.value;
         const roastDate = dateInput.value;
         const mId = parseInt(machineSelect.value);

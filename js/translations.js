@@ -311,6 +311,7 @@ window.translations = {
         
         // JS Alerts / Dialogs / Labels
         alert_insufficient_gb: "Insufficient Greenbean Stock!\nProceed anyway?",
+        alert_roasted_exceeds_greenbean: "Roasted weight can't exceed greenbean weight.",
         alert_insufficient_packed: "Insufficient packed coffee to fulfill the order completely. Available amounts for packing:",
         alert_blend_ratio_err: "Error: The sum of component ratios must be exactly 100%.",
         alert_blend_name_duplicate: "A blend recipe named \"{name}\" already exists. Choose a different name.",
@@ -961,6 +962,7 @@ window.translations = {
         
         // JS Alerts / Dialogs / Labels
         alert_insufficient_gb: "مخزون البن الأخضر غير كافٍ!\nالمتابعة على أي حال؟",
+        alert_roasted_exceeds_greenbean: "لا يمكن أن يتجاوز وزن التحميص وزن البن الأخضر.",
         alert_insufficient_packed: "مخزون التعبئة والتجزئة على الرفوف غير كافٍ للموافقة على الشحن والتسليم:",
         alert_blend_ratio_err: "خطأ: يجب أن يكون مجموع نسب المكونات 100% تمامًا.",
         alert_blend_name_duplicate: "توجد بالفعل وصفة خلط باسم \"{name}\". اختر اسمًا مختلفًا.",
