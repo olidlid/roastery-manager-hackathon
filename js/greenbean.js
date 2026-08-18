@@ -119,15 +119,15 @@ async function openEditGreenbeanStockModal(id) {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Moisture Content % (optional)</label>
-                    <input type="number" step="0.1" id="m-gb-moisture" class="form-control" value="${bean.moisture_content ?? ''}" placeholder="e.g. 11.5">
+                    <input type="number" step="any" id="m-gb-moisture" class="form-control" value="${bean.moisture_content ?? ''}" placeholder="e.g. 11.5">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Water Activity aw (optional)</label>
-                    <input type="number" step="0.01" id="m-gb-water-activity" class="form-control" value="${bean.water_activity ?? ''}" placeholder="e.g. 0.55">
+                    <input type="number" step="any" id="m-gb-water-activity" class="form-control" value="${bean.water_activity ?? ''}" placeholder="e.g. 0.55">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Density g/L (optional)</label>
-                    <input type="number" step="1" id="m-gb-density" class="form-control" value="${bean.density ?? ''}" placeholder="e.g. 700">
+                    <input type="number" step="any" id="m-gb-density" class="form-control" value="${bean.density ?? ''}" placeholder="e.g. 700">
                 </div>
             </div>
             <div class="modal-footer-actions">
@@ -351,15 +351,15 @@ async function openIntakeModal(editId = null) {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Moisture Content % (optional)</label>
-                    <input type="number" step="0.1" id="m-int-moisture" class="form-control" value="${linkedBean ? (linkedBean.moisture_content ?? '') : ''}" placeholder="e.g. 11.5">
+                    <input type="number" step="any" id="m-int-moisture" class="form-control" value="${linkedBean ? (linkedBean.moisture_content ?? '') : ''}" placeholder="e.g. 11.5">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Water Activity aw (optional)</label>
-                    <input type="number" step="0.01" id="m-int-water-activity" class="form-control" value="${linkedBean ? (linkedBean.water_activity ?? '') : ''}" placeholder="e.g. 0.55">
+                    <input type="number" step="any" id="m-int-water-activity" class="form-control" value="${linkedBean ? (linkedBean.water_activity ?? '') : ''}" placeholder="e.g. 0.55">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Density g/L (optional)</label>
-                    <input type="number" step="1" id="m-int-density" class="form-control" value="${linkedBean ? (linkedBean.density ?? '') : ''}" placeholder="e.g. 700">
+                    <input type="number" step="any" id="m-int-density" class="form-control" value="${linkedBean ? (linkedBean.density ?? '') : ''}" placeholder="e.g. 700">
                 </div>
             </div>
             ${editId ? '' : `
