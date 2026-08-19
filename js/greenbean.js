@@ -1058,7 +1058,7 @@ async function renderStockHistoryTab(coffeeId, container) {
         ledger.push({
             date: g.date,
             lotCode: lotCodeOf(g.lotId),
-            type: 'out',
+            type: 'roasted',
             kg: g.kg,
             detail: `${machineLabel} · ${window.t ? window.t('lbl_roasting') : 'roasting'} · ${g.count} ${batchLabel}`,
             sortKey: g.maxId
@@ -1099,14 +1099,28 @@ async function renderStockHistoryTab(coffeeId, container) {
 
     const todayStr = new Date().toISOString().split('T')[0];
     const monthStart = todayStr.slice(0, 7) + '-01';
-    const sumOf = (type, sinceDate) => ledger
-        .filter(r => r.type === type && (!sinceDate || (r.date || '') >= sinceDate))
+    // "Roasted" (internal consumption) still counts toward the Out stat
+    // cards alongside "Out" (outbound shipments + manual decreases) — only
+    // the per-row Type badge below tells the two apart, matching the
+    // 2-card (In/Out) design already agreed on.
+    const sumOf = (isIn, sinceDate) => ledger
+        .filter(r => (r.type === 'in') === isIn && (!sinceDate || (r.date || '') >= sinceDate))
         .reduce((s, r) => s + r.kg, 0);
-    const inThisMonth = sumOf('in', monthStart);
-    const outThisMonth = sumOf('out', monthStart);
-    const inAllTime = sumOf('in');
-    const outAllTime = sumOf('out');
+    const inThisMonth = sumOf(true, monthStart);
+    const outThisMonth = sumOf(false, monthStart);
+    const inAllTime = sumOf(true);
+    const outAllTime = sumOf(false);
     const unit = companySettings.weight_unit;
+
+    // Type badge: 3 distinct labels/colors so a roasting draw (internal
+    // consumption) reads differently at a glance from an outbound shipment
+    // or manual correction, even though both subtract from the running
+    // balance the same way.
+    const TYPE_BADGE = {
+        in: { label: window.t ? window.t('lbl_in') : 'In', style: 'background: rgba(82,183,136,0.15); color: var(--success);' },
+        roasted: { label: window.t ? window.t('lbl_roasted') : 'Roasted', style: 'background: rgba(255,209,102,0.18); color: var(--warning);' },
+        out: { label: window.t ? window.t('lbl_out') : 'Out', style: 'background: rgba(239,68,68,0.15); color: var(--danger);' }
+    };
 
     // white-space:nowrap on every column — a narrow column like Lot Code
     // ("1-GL-260817-01") or Type wrapping to 2 lines makes the whole row
@@ -1115,16 +1129,20 @@ async function renderStockHistoryTab(coffeeId, container) {
     const nowrap = 'white-space:nowrap;';
     const rowsHtml = displayRows.length === 0
         ? `<tr><td colspan="6" class="text-center-muted">${window.t ? window.t('msg_no_history_yet') : 'No stock movement recorded yet.'}</td></tr>`
-        : displayRows.map(r => `
+        : displayRows.map(r => {
+            const badge = TYPE_BADGE[r.type] || TYPE_BADGE.out;
+            const amountColor = r.type === 'in' ? 'var(--success)' : (r.type === 'roasted' ? 'var(--warning)' : 'var(--danger)');
+            return `
             <tr>
                 <td style="${nowrap}">${r.date || '-'}</td>
                 <td style="${nowrap}"><code style="font-size:0.75rem;">${r.lotCode}</code></td>
-                <td style="${nowrap}"><span style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${r.type === 'in' ? 'background: rgba(82,183,136,0.15); color: var(--success);' : 'background: rgba(239,68,68,0.15); color: var(--danger);'}">${r.type === 'in' ? (window.t ? window.t('lbl_in') : 'In') : (window.t ? window.t('lbl_out') : 'Out')}</span></td>
-                <td style="${nowrap} color: ${r.type === 'in' ? 'var(--success)' : 'var(--danger)'};">${r.type === 'in' ? '+' : '-'}${r.kg.toFixed(1)}</td>
+                <td style="${nowrap}"><span style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${badge.style}">${badge.label}</span></td>
+                <td style="${nowrap} color: ${amountColor};">${r.type === 'in' ? '+' : '-'}${r.kg.toFixed(1)}</td>
                 <td style="${nowrap}">${r.balance.toFixed(1)}</td>
                 <td style="${nowrap}">${r.detail}</td>
             </tr>
-        `).join('');
+        `;
+        }).join('');
 
     container.innerHTML = `
         <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:6px;">${window.t ? window.t('lbl_this_month') : 'This month'} · ${window.t ? window.t('lbl_since') : 'since'} ${monthStart}</div>
