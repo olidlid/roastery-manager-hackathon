@@ -1006,29 +1006,62 @@ async function renderStockHistoryTab(coffeeId, container) {
 
     const ledger = [];
 
+    // "-OPENING-" lots are the one-time seed row V2 lot-tracking created for
+    // whatever stock already existed the moment it went live (see
+    // database/v2_lot_tracking_migration.sql) — not a real supplier
+    // arrival, so it gets its own clearly-labeled detail instead of
+    // reading like a normal delivery.
     myLots.forEach(l => {
+        const isOpening = (l.lot_code || '').includes('-OPENING-');
         ledger.push({
             date: l.arrival_date || (l.created_at || '').split('T')[0],
             lotCode: l.lot_code,
             type: 'in',
             kg: parseFloat(l.quantity_kg) || 0,
-            detail: l.supplier === 'Manual Stock Adjustment'
-                ? (window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment')
-                : `${window.t ? window.t('lbl_supplier_prefix') : 'Supplier'}: ${l.supplier || '-'}`,
+            detail: isOpening
+                ? (window.t ? window.t('lbl_opening_balance') : 'Opening balance')
+                : (l.supplier === 'Manual Stock Adjustment'
+                    ? (window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment')
+                    : `${window.t ? window.t('lbl_supplier_prefix') : 'Supplier'}: ${l.supplier || '-'}`),
             sortKey: l.id
         });
     });
 
+    // Roasting draws are aggregated to one row per (lot, day) — an active
+    // coffee can rack up dozens of individual batches on the same day,
+    // which would bury the handful of real movements (arrivals, shipments,
+    // corrections) anyone actually wants to see. Detail names the
+    // machine(s) that contributed and how many batches, instead of every
+    // single one.
+    const roastByLotDate = new Map();
     (batchLots || []).filter(d => myLotIds.has(d.green_coffee_lot_id)).forEach(d => {
         const batch = (batches || []).find(b => b.id === d.roast_batch_id);
         const machine = batch ? (machines || []).find(m => m.id === batch.machine_id) : null;
+        const date = batch ? batch.roast_date : null;
+        const key = `${d.green_coffee_lot_id}|${date}`;
+        if (!roastByLotDate.has(key)) {
+            roastByLotDate.set(key, { lotId: d.green_coffee_lot_id, date, kg: 0, machines: new Set(), count: 0, maxId: d.id });
+        }
+        const g = roastByLotDate.get(key);
+        g.kg += parseFloat(d.kg_consumed) || 0;
+        if (machine) g.machines.add(machine.name);
+        g.count += 1;
+        g.maxId = Math.max(g.maxId, d.id);
+    });
+    roastByLotDate.forEach(g => {
+        const machineLabel = g.machines.size === 0 ? '-'
+            : g.machines.size === 1 ? [...g.machines][0]
+            : (window.t ? window.t('lbl_multiple_machines') : 'Multiple machines');
+        const batchLabel = g.count === 1
+            ? (window.t ? window.t('lbl_batch_singular') : 'batch')
+            : (window.t ? window.t('lbl_batches_plural') : 'batches');
         ledger.push({
-            date: batch ? batch.roast_date : null,
-            lotCode: lotCodeOf(d.green_coffee_lot_id),
+            date: g.date,
+            lotCode: lotCodeOf(g.lotId),
             type: 'out',
-            kg: parseFloat(d.kg_consumed) || 0,
-            detail: `${machine ? machine.name : '-'} · ${window.t ? window.t('lbl_roasting') : 'roasting'}${batch ? ' · ' + batch.batch_code : ''}`,
-            sortKey: d.id
+            kg: g.kg,
+            detail: `${machineLabel} · ${window.t ? window.t('lbl_roasting') : 'roasting'} · ${g.count} ${batchLabel}`,
+            sortKey: g.maxId
         });
     });
 
@@ -1075,16 +1108,21 @@ async function renderStockHistoryTab(coffeeId, container) {
     const outAllTime = sumOf('out');
     const unit = companySettings.weight_unit;
 
+    // white-space:nowrap on every column — a narrow column like Lot Code
+    // ("1-GL-260817-01") or Type wrapping to 2 lines makes the whole row
+    // taller and harder to scan than just letting the table scroll
+    // sideways in its own wrapper (see the overflow-x:auto container below).
+    const nowrap = 'white-space:nowrap;';
     const rowsHtml = displayRows.length === 0
         ? `<tr><td colspan="6" class="text-center-muted">${window.t ? window.t('msg_no_history_yet') : 'No stock movement recorded yet.'}</td></tr>`
         : displayRows.map(r => `
             <tr>
-                <td>${r.date || '-'}</td>
-                <td><code style="font-size:0.75rem;">${r.lotCode}</code></td>
-                <td><span style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${r.type === 'in' ? 'background: rgba(82,183,136,0.15); color: var(--success);' : 'background: rgba(239,68,68,0.15); color: var(--danger);'}">${r.type === 'in' ? (window.t ? window.t('lbl_in') : 'In') : (window.t ? window.t('lbl_out') : 'Out')}</span></td>
-                <td style="color: ${r.type === 'in' ? 'var(--success)' : 'var(--danger)'};">${r.type === 'in' ? '+' : '-'}${r.kg.toFixed(1)}</td>
-                <td>${r.balance.toFixed(1)}</td>
-                <td>${r.detail}</td>
+                <td style="${nowrap}">${r.date || '-'}</td>
+                <td style="${nowrap}"><code style="font-size:0.75rem;">${r.lotCode}</code></td>
+                <td style="${nowrap}"><span style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${r.type === 'in' ? 'background: rgba(82,183,136,0.15); color: var(--success);' : 'background: rgba(239,68,68,0.15); color: var(--danger);'}">${r.type === 'in' ? (window.t ? window.t('lbl_in') : 'In') : (window.t ? window.t('lbl_out') : 'Out')}</span></td>
+                <td style="${nowrap} color: ${r.type === 'in' ? 'var(--success)' : 'var(--danger)'};">${r.type === 'in' ? '+' : '-'}${r.kg.toFixed(1)}</td>
+                <td style="${nowrap}">${r.balance.toFixed(1)}</td>
+                <td style="${nowrap}">${r.detail}</td>
             </tr>
         `).join('');
 
@@ -1106,16 +1144,16 @@ async function renderStockHistoryTab(coffeeId, container) {
                 <div style="font-size:0.66rem; color:var(--text-muted); margin-top:4px; padding-top:4px; border-top:1px solid var(--border);">${window.t ? window.t('lbl_all_time') : 'All-time'}: ${outAllTime.toFixed(1)} ${unit}</div>
             </div>
         </div>
-        <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;">
+        <div style="max-height:280px; overflow-y:auto; overflow-x:auto; border:1px solid var(--border); border-radius:8px;">
             <table>
                 <thead>
                     <tr>
-                        <th>${window.t ? window.t('col_history_date') : 'Date'}</th>
-                        <th>${window.t ? window.t('col_history_lot') : 'Lot Code'}</th>
-                        <th>${window.t ? window.t('col_history_type') : 'Type'}</th>
-                        <th>${window.t ? window.t('col_history_qty') : 'Qty (kg)'}</th>
-                        <th>${window.t ? window.t('col_history_balance') : 'Balance'}</th>
-                        <th>${window.t ? window.t('col_history_detail') : 'Detail'}</th>
+                        <th style="${nowrap}">${window.t ? window.t('col_history_date') : 'Date'}</th>
+                        <th style="${nowrap}">${window.t ? window.t('col_history_lot') : 'Lot Code'}</th>
+                        <th style="${nowrap}">${window.t ? window.t('col_history_type') : 'Type'}</th>
+                        <th style="${nowrap}">${window.t ? window.t('col_history_qty') : 'Qty (kg)'}</th>
+                        <th style="${nowrap}">${window.t ? window.t('col_history_balance') : 'Balance'}</th>
+                        <th style="${nowrap}">${window.t ? window.t('col_history_detail') : 'Detail'}</th>
                     </tr>
                 </thead>
                 <tbody>${rowsHtml}</tbody>

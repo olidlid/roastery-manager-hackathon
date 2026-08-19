@@ -650,6 +650,10 @@ window.translations = {
         col_history_qty: "Qty (kg)",
         col_history_balance: "Balance",
         col_history_detail: "Detail",
+        lbl_opening_balance: "Opening balance",
+        lbl_multiple_machines: "Multiple machines",
+        lbl_batch_singular: "batch",
+        lbl_batches_plural: "batches",
 
         title_print_sticker: "Print Sticker",
         lbl_sticker_qty: "Number of stickers",
@@ -1356,6 +1360,10 @@ window.translations = {
         col_history_qty: "الكمية (كجم)",
         col_history_balance: "الرصيد",
         col_history_detail: "التفاصيل",
+        lbl_opening_balance: "رصيد افتتاحي",
+        lbl_multiple_machines: "عدة مكائن",
+        lbl_batch_singular: "دفعة",
+        lbl_batches_plural: "دفعات",
 
         title_print_sticker: "طباعة ملصق",
         lbl_sticker_qty: "عدد الملصقات",
