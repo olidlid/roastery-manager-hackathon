@@ -1428,6 +1428,21 @@ tbody tr:hover {
     color: #fbbf24 !important; /* bright glowing amber for dark mode */
 }
 
+/* Stock History "Roasted" type badge + amount — same amber pair as
+   .badge-post-blend above, reused here because var(--warning) (#ffd166) is
+   never redefined for light mode and reads as pale, low-contrast yellow on
+   a white card (found live 2026-08-19). */
+.badge-roasted {
+    background: rgba(180, 83, 9, 0.12) !important;
+    color: #b45309 !important;
+}
+[data-theme="dark"] .badge-roasted {
+    background: rgba(251, 191, 36, 0.15) !important;
+    color: #fbbf24 !important;
+}
+.text-roasted { color: #b45309; }
+[data-theme="dark"] .text-roasted { color: #fbbf24; }
+
 /* V2 Repack: rose is the one hue not already claimed by badge-single (cyan),
    badge-blend (purple), badge-pre-blend (green), or badge-post-blend
    (amber) — kept distinct on purpose so a repacked bulk never reads as one

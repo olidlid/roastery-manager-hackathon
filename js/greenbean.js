@@ -1116,10 +1116,14 @@ async function renderStockHistoryTab(coffeeId, container) {
     // consumption) reads differently at a glance from an outbound shipment
     // or manual correction, even though both subtract from the running
     // balance the same way.
+    // 'roasted' uses the .badge-roasted / .text-roasted CSS classes (see
+    // css/styles.css) instead of var(--warning) directly — that token is
+    // never redefined for light mode and reads as pale, near-invisible
+    // yellow on a white card.
     const TYPE_BADGE = {
-        in: { label: window.t ? window.t('lbl_in') : 'In', style: 'background: rgba(82,183,136,0.15); color: var(--success);' },
-        roasted: { label: window.t ? window.t('lbl_roasted') : 'Roasted', style: 'background: rgba(255,209,102,0.18); color: var(--warning);' },
-        out: { label: window.t ? window.t('lbl_out') : 'Out', style: 'background: rgba(239,68,68,0.15); color: var(--danger);' }
+        in: { label: window.t ? window.t('lbl_in') : 'In', style: 'background: rgba(82,183,136,0.15); color: var(--success);', cls: '' },
+        roasted: { label: window.t ? window.t('lbl_roasted') : 'Roasted', style: '', cls: 'badge-roasted' },
+        out: { label: window.t ? window.t('lbl_out') : 'Out', style: 'background: rgba(239,68,68,0.15); color: var(--danger);', cls: '' }
     };
 
     // white-space:nowrap on every column — a narrow column like Lot Code
@@ -1131,13 +1135,14 @@ async function renderStockHistoryTab(coffeeId, container) {
         ? `<tr><td colspan="6" class="text-center-muted">${window.t ? window.t('msg_no_history_yet') : 'No stock movement recorded yet.'}</td></tr>`
         : displayRows.map(r => {
             const badge = TYPE_BADGE[r.type] || TYPE_BADGE.out;
-            const amountColor = r.type === 'in' ? 'var(--success)' : (r.type === 'roasted' ? 'var(--warning)' : 'var(--danger)');
+            const amountCls = r.type === 'roasted' ? 'text-roasted' : '';
+            const amountStyle = r.type === 'roasted' ? '' : `color: ${r.type === 'in' ? 'var(--success)' : 'var(--danger)'};`;
             return `
             <tr>
                 <td style="${nowrap}">${r.date || '-'}</td>
                 <td style="${nowrap}"><code style="font-size:0.75rem;">${r.lotCode}</code></td>
-                <td style="${nowrap}"><span style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${badge.style}">${badge.label}</span></td>
-                <td style="${nowrap} color: ${amountColor};">${r.type === 'in' ? '+' : '-'}${r.kg.toFixed(1)}</td>
+                <td style="${nowrap}"><span class="${badge.cls}" style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${badge.style}">${badge.label}</span></td>
+                <td class="${amountCls}" style="${nowrap} ${amountStyle}">${r.type === 'in' ? '+' : '-'}${r.kg.toFixed(1)}</td>
                 <td style="${nowrap}">${r.balance.toFixed(1)}</td>
                 <td style="${nowrap}">${r.detail}</td>
             </tr>
