@@ -1452,6 +1452,15 @@ async function loadRoastingBatches() {
                 <button class="btn btn-danger btn-sm btn-delete-batch" data-id="${batch.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
             </td>
         `;
+        // Row click opens the detail modal (full batch info + frozen lab
+        // readings); guarded so clicks on the row's own action buttons
+        // (Label/Edit/Delete/Approve) keep their existing behavior instead
+        // of also opening the detail modal underneath them.
+        tr.style.cursor = 'pointer';
+        tr.addEventListener('click', (e) => {
+            if (e.target.closest('button')) return;
+            openBatchLogDetailModal(batch.id);
+        });
         tbody.appendChild(tr);
     });
 
@@ -1478,6 +1487,89 @@ async function loadRoastingBatches() {
         btn.addEventListener('click', () => approveTestBatch(parseInt(btn.getAttribute('data-id'))));
     });
     applyFiltersForTable(document.querySelector('#tab-roast-logs table'));
+}
+
+// V2 Greenbean Data Analyze: read-only detail view for a single batch —
+// the same core fields as the Batch Logs row plus the frozen lab readings
+// captured by recordBatchAnalysisSnapshot when the batch was logged.
+// Deliberately excludes charge/drop temp, duration, operator and QC status
+// (not part of this view per the agreed design).
+async function openBatchLogDetailModal(batchId) {
+    const [
+        { data: batches },
+        { data: greenbeans },
+        { data: recipes },
+        { data: machines },
+        { data: snapshots }
+    ] = await Promise.all([
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes'),
+        fetchData('machines'),
+        fetchData('roast_batch_analysis_snapshot')
+    ]);
+
+    const batch = (batches || []).find(b => b.id === batchId);
+    if (!batch) return;
+
+    let coffeeName = '';
+    if (batch.coffee_type === 'Single') {
+        const gb = greenbeans.find(g => g.id === batch.single_coffee_id);
+        coffeeName = gb ? gb.name : 'Single Origin';
+    } else {
+        const r = recipes.find(rec => rec.id === batch.blend_recipe_id);
+        coffeeName = r ? r.name : 'Blend Recipe';
+    }
+    const mach = machines.find(m => m.id === batch.machine_id);
+    const machineName = mach ? mach.name : 'Unknown';
+
+    const inputG = (parseFloat(batch.input_weight_kg || 0) * 1000).toFixed(0);
+    const outputG = (parseFloat(batch.output_weight_kg || 0) * 1000).toFixed(0);
+    const depVal = (100 - parseFloat(batch.yield_percentage || 0)).toFixed(1);
+
+    const metric = (labelKey, fallback, value) => `
+        <div style="background: var(--bg-input); border-radius: 8px; padding: 9px 11px;">
+            <div style="font-size: 0.68rem; color: var(--text-muted);" data-i18n="${labelKey}">${fallback}</div>
+            <div style="font-size: 0.95rem;">${value}</div>
+        </div>`;
+
+    const mySnapshots = (snapshots || []).filter(s => s.roast_batch_id === batchId);
+    const readingsHtml = mySnapshots.length > 0
+        ? `<div style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+            ${mySnapshots.map((s, idx) => {
+                const gb = greenbeans.find(g => g.id === s.green_coffee_id);
+                const pctLabel = s.ingredient_percentage !== null && s.ingredient_percentage !== undefined ? ` <span style="color: var(--text-muted);">${s.ingredient_percentage}%</span>` : '';
+                const readingLabel = (s.moisture_content !== null || s.water_activity !== null || s.density !== null)
+                    ? `${s.moisture_content !== null && s.moisture_content !== undefined ? s.moisture_content + '%' : '—'} · ${s.water_activity ?? '—'} · ${s.density ?? '—'}`
+                    : '—';
+                return `
+                    <div style="display: flex; align-items: center; gap: 10px; padding: 9px 11px; ${idx > 0 ? 'border-top: 1px solid var(--border);' : ''}">
+                        <span style="flex: 1; font-size: 0.85rem;">${gb ? gb.name : '-'}${pctLabel}</span>
+                        <span style="font-size: 0.82rem; color: var(--text-secondary);">${readingLabel}</span>
+                    </div>`;
+            }).join('')}
+        </div>`
+        : `<div style="text-align: center; color: var(--text-muted); font-size: 0.8rem; padding: 14px;" data-i18n="msg_no_analysis_yet">No lab readings recorded yet.</div>`;
+
+    const html = `
+        <div style="margin-bottom: 4px; font-size: 1rem; font-weight: 700;">${batch.batch_code || '-'}</div>
+        <div style="margin-bottom: 16px; font-size: 0.8rem; color: var(--text-secondary);">${coffeeName} &middot; ${machineName}</div>
+
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 18px;">
+            ${metric('col_batch_date', 'Date', batch.roast_date || '-')}
+            ${metric('col_batch_type', 'Type', batch.roast_type || '-')}
+            ${metric('lbl_greenbean_weight', 'Greenbean weight', inputG + ' g')}
+            ${metric('lbl_roasted_weight', 'Roasted weight', outputG + ' g')}
+            ${metric('col_batch_depreciation', 'Depreciation', depVal + '%')}
+            ${metric('tracking_lbl_roast_degree', 'Roast degree', batch.roast_degree !== null && batch.roast_degree !== undefined ? batch.roast_degree : '—')}
+        </div>
+
+        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 6px;" data-i18n="lbl_lab_readings_frozen">Lab readings (frozen when this batch was logged)</div>
+        ${readingsHtml}
+    `;
+
+    openModal(window.t ? window.t('title_batch_detail') : 'Batch Detail', html);
+    window.translatePage();
 }
 
 // --- modal: ADD / EDIT ROASTING PLAN ---
@@ -3075,15 +3167,24 @@ async function openRoastBatchModal(plan = null, editId = null) {
         }
 
         const lotDraws = [];
+        // V2 Greenbean Data Analyze: which lot each origin's FIRST FIFO draw
+        // came from — Single gets one entry, Blend gets one per ingredient —
+        // feeds recordBatchAnalysisSnapshot below (freezes that lot's latest
+        // lab reading onto this batch).
+        const firstLotIdByCoffeeId = {};
+        const ingredientPercentageByCoffeeId = {};
         if (type === 'Single') {
             const { draws } = await consumeGreenCoffeeLotsFifo(singleId, inputKg);
             lotDraws.push(...draws);
+            if (draws.length > 0) firstLotIdByCoffeeId[singleId] = draws[0].lotId;
         } else {
             const recipeIngs = ingredients.filter(ing => ing.blend_recipe_id === blendId);
             for (const ing of recipeIngs) {
                 const req = (parseFloat(ing.percentage) / 100) * inputKg;
                 const { draws } = await consumeGreenCoffeeLotsFifo(ing.green_coffee_id, req);
                 lotDraws.push(...draws);
+                if (draws.length > 0) firstLotIdByCoffeeId[ing.green_coffee_id] = draws[0].lotId;
+                ingredientPercentageByCoffeeId[ing.green_coffee_id] = parseFloat(ing.percentage);
             }
         }
 
@@ -3135,6 +3236,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
         // V2 1B: persist which lot(s) this batch drew from, now that the
         // batch has an id (feeds future costing + Tracking traceability).
         await recordRoastBatchGreenLots(savedBatch.id, lotDraws);
+        await recordBatchAnalysisSnapshot(savedBatch.id, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId);
 
         // 4. Update associated plan status
         const { data: plans } = await fetchData('roasting_plans');
@@ -3565,6 +3667,39 @@ async function recordRoastBatchGreenLots(roastBatchId, draws) {
     }
 }
 
+// V2 Greenbean Data Analyze: freezes one lab reading per origin at the
+// moment a batch is logged — a Single batch gets one row, a Blend batch
+// gets one per recipe ingredient, each carrying the reading from whichever
+// lot that ingredient's FIRST FIFO draw came from (firstLotIdByCoffeeId,
+// built alongside lotDraws in both submit handlers below) — so a later
+// re-check of the same lot never rewrites a historical batch's record.
+// Clears any prior snapshot rows for this batch first, so editing a batch
+// replaces rather than accumulates them.
+async function recordBatchAnalysisSnapshot(roastBatchId, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId = {}) {
+    const { data: existing } = await fetchData('roast_batch_analysis_snapshot');
+    for (const row of (existing || []).filter(r => r.roast_batch_id === roastBatchId)) {
+        await deleteData('roast_batch_analysis_snapshot', row.id);
+    }
+
+    const { data: analysisRows } = await fetchData('green_coffee_analysis');
+
+    for (const [coffeeIdStr, lotId] of Object.entries(firstLotIdByCoffeeId)) {
+        const coffeeId = parseInt(coffeeIdStr);
+        const latest = (analysisRows || [])
+            .filter(r => r.green_coffee_lot_id === lotId)
+            .sort((a, b) => (b.test_date || '').localeCompare(a.test_date || '') || b.id - a.id)[0] || null;
+        await saveData('roast_batch_analysis_snapshot', {
+            roast_batch_id: roastBatchId,
+            green_coffee_id: coffeeId,
+            green_coffee_lot_id: lotId,
+            ingredient_percentage: ingredientPercentageByCoffeeId[coffeeId] ?? null,
+            moisture_content: latest ? latest.moisture_content : null,
+            water_activity: latest ? latest.water_activity : null,
+            density: latest ? latest.density : null
+        });
+    }
+}
+
 async function handleBarcodeScan(barcode) {
     // Parse barcode: RMP:Single:5:2 or RMP:Blend:3:1 or RMP:Lot:{green_coffee_lot_id}:2
     // (V2 1B, sack sticker printed by 1A) or a bare 7-digit
@@ -3940,15 +4075,22 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
         // that exact lot first, then any shortfall oldest-first; a blend
         // (or a manually re-picked single) has no lot preference.
         const lotDraws = [];
+        // V2 Greenbean Data Analyze — see the matching comment in
+        // openRoastBatchModal's submit handler.
+        const firstLotIdByCoffeeId = {};
+        const ingredientPercentageByCoffeeId = {};
         if (type === 'Single') {
             const { draws } = await consumeGreenCoffeeLotsFifo(id, inputKg, scannedLotId);
             lotDraws.push(...draws);
+            if (draws.length > 0) firstLotIdByCoffeeId[id] = draws[0].lotId;
         } else {
             const recipeIngs = (ingredients || []).filter(ing => ing.blend_recipe_id === blendId);
             for (const ing of recipeIngs) {
                 const req = (parseFloat(ing.percentage) / 100) * inputKg;
                 const { draws } = await consumeGreenCoffeeLotsFifo(ing.green_coffee_id, req);
                 lotDraws.push(...draws);
+                if (draws.length > 0) firstLotIdByCoffeeId[ing.green_coffee_id] = draws[0].lotId;
+                ingredientPercentageByCoffeeId[ing.green_coffee_id] = parseFloat(ing.percentage);
             }
         }
 
@@ -3989,6 +4131,7 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
 
         // V2 1B: persist which lot(s) this batch drew from.
         await recordRoastBatchGreenLots(savedBatch.id, lotDraws);
+        await recordBatchAnalysisSnapshot(savedBatch.id, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId);
 
         // Update associated plan(s) — same matching/fulfillment logic as the
         // regular Roasting Log form (openRoastBatchModal). Without this, a

@@ -597,6 +597,41 @@ CREATE TABLE IF NOT EXISTS public.roast_batch_green_lots (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 26b. Greenbean Data Analyze (V2) — NOT YET APPLIED TO PRODUCTION as of
+-- 2026-08-18; run database/v2_greenbean_analysis_migration.sql (including
+-- its custom_roles permission backfill) via the SQL Editor, then
+-- NOTIFY pgrst, 'reload schema'; before removing this note. Per-lot lab
+-- reading history (moisture/water_activity/density), replacing the old
+-- single-value snapshot on green_coffee (those 3 columns are kept, but
+-- become a read-only "latest reading" cache — see
+-- js/greenbean.js's syncGreenCoffeeLabSnapshot()).
+CREATE TABLE IF NOT EXISTS public.green_coffee_analysis (
+    id SERIAL PRIMARY KEY,
+    green_coffee_id INTEGER REFERENCES public.green_coffee(id) ON DELETE CASCADE,
+    green_coffee_lot_id INTEGER NOT NULL REFERENCES public.green_coffee_lots(id) ON DELETE CASCADE,
+    test_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    moisture_content NUMERIC,
+    water_activity NUMERIC,
+    density NUMERIC,
+    source TEXT NOT NULL DEFAULT 'manual',        -- 'arrival' | 'manual'
+    recorded_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Frozen (not live-linked) lab reading per origin, captured when a roast
+-- batch is logged — see database/v2_greenbean_analysis_migration.sql.
+CREATE TABLE IF NOT EXISTS public.roast_batch_analysis_snapshot (
+    id SERIAL PRIMARY KEY,
+    roast_batch_id INTEGER REFERENCES public.roast_batches(id) ON DELETE CASCADE,
+    green_coffee_id INTEGER REFERENCES public.green_coffee(id) ON DELETE SET NULL,
+    green_coffee_lot_id INTEGER REFERENCES public.green_coffee_lots(id) ON DELETE SET NULL,
+    ingredient_percentage NUMERIC,                 -- NULL for Single; recipe % for a Blend ingredient
+    moisture_content NUMERIC,
+    water_activity NUMERIC,
+    density NUMERIC,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 27. Production lot → roast batch, day-level precision (V2 1·CHAIN).
 -- Snapshots the roast_batches of the same coffee+machine roasted on a
 -- production_lot's production_date. Replaces the old single
@@ -701,6 +736,46 @@ CREATE TABLE IF NOT EXISTS public.bulk_reservations (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- V2 Greenbean Data Analyze (applied to production 2026-08-18): per-lot lab
+-- reading history (moisture/water_activity/density), replacing the old
+-- single-value snapshot on green_coffee (those 3 columns are KEPT, but are
+-- now a read-only "latest reading" cache synced by
+-- js/greenbean.js's syncGreenCoffeeLabSnapshot()). One row per lab check,
+-- tied to the specific arrival lot it was measured from. `source`
+-- distinguishes the reading captured at intake time ('arrival') from later
+-- manual re-checks ('manual') — the app enforces that whichever reading is
+-- FIRST recorded for a given lot, from either entry point, is the one
+-- tagged 'arrival'. See database/v2_greenbean_analysis_migration.sql.
+CREATE TABLE IF NOT EXISTS public.green_coffee_analysis (
+    id SERIAL PRIMARY KEY,
+    green_coffee_id INTEGER REFERENCES public.green_coffee(id) ON DELETE CASCADE,
+    green_coffee_lot_id INTEGER NOT NULL REFERENCES public.green_coffee_lots(id) ON DELETE CASCADE,
+    test_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    moisture_content NUMERIC,
+    water_activity NUMERIC,
+    density NUMERIC,
+    source TEXT NOT NULL DEFAULT 'manual',        -- 'arrival' | 'manual'
+    recorded_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Frozen (not live-linked) lab reading per origin, captured at the moment a
+-- roast batch is logged — a Single batch gets one row, a Blend batch gets
+-- one row per recipe ingredient, each carrying the reading from whichever
+-- lot that ingredient's FIRST FIFO draw came from. See
+-- database/v2_greenbean_analysis_migration.sql.
+CREATE TABLE IF NOT EXISTS public.roast_batch_analysis_snapshot (
+    id SERIAL PRIMARY KEY,
+    roast_batch_id INTEGER REFERENCES public.roast_batches(id) ON DELETE CASCADE,
+    green_coffee_id INTEGER REFERENCES public.green_coffee(id) ON DELETE SET NULL,
+    green_coffee_lot_id INTEGER REFERENCES public.green_coffee_lots(id) ON DELETE SET NULL,
+    ingredient_percentage NUMERIC,                 -- NULL for Single; recipe % for a Blend ingredient
+    moisture_content NUMERIC,
+    water_activity NUMERIC,
+    density NUMERIC,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ============================================================================
 -- ROW LEVEL SECURITY
 -- ----------------------------------------------------------------------------
@@ -725,7 +800,8 @@ BEGIN
     'dispatch_lot_items','post_blend_components','code_definitions',
     'repack_sources', -- applied to production 2026-08-03
     'stock_releases','stock_release_items', -- applied to production 2026-08-03
-    'bulk_reservations' -- applied to production 2026-08-16
+    'bulk_reservations', -- applied to production 2026-08-16
+    'green_coffee_analysis','roast_batch_analysis_snapshot' -- applied to production 2026-08-18
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);

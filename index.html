@@ -508,6 +508,7 @@
                         <button class="tab-btn" data-tab="tab-add-gb-history" data-i18n="tab_add_gb_history">Greenbean Arrival</button>
                         <button class="tab-btn" data-tab="tab-gb-outbound" data-i18n="tab_gb_outbound">Greenbean Outbound</button>
                         <button class="tab-btn" data-tab="tab-code-list" data-i18n="tab_code_list">Code List</button>
+                        <button class="tab-btn" data-tab="tab-gb-analysis" data-i18n="tab_gb_analysis">Data Analysis</button>
                     </div>
 
                     <!-- TAB 1: Greenbean Inventory -->
@@ -669,6 +670,50 @@
                                     </thead>
                                     <tbody id="code-list-table-body">
                                         <!-- Dynamically loaded code list -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB: Greenbean Data Analyze — per-lot lab reading log
+                         (moisture/water activity/density), fed from the
+                         Arrival modal (one-time) and manual re-checks here. -->
+                    <div id="tab-gb-analysis" class="tab-content hidden">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 12px; flex-wrap: wrap;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="gb_analysis_title">Greenbean Data Analysis</h3>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <input type="text" id="gb-analysis-search-input" class="form-control" data-i18n-placeholder="ph_search_analysis" placeholder="Search coffee or lot..." style="width: 220px; height: 32px; font-size: 0.8rem;" autocomplete="off" oninput="applyFiltersForTable(document.querySelector('#tab-gb-analysis table'))">
+                                    <button id="btn-add-analysis" class="btn btn-primary btn-sm">
+                                        <i class="icon-plus"></i> <span data-i18n="btn_add_analysis">Add Reading</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content"><span data-i18n="col_analysis_date">Test Date</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content"><span data-i18n="col_name">Coffee Name</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="2">
+                                                <div class="th-content"><span data-i18n="col_analysis_lot">Lot</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th data-i18n="tracking_lbl_moisture">Moisture</th>
+                                            <th data-i18n="tracking_lbl_water_activity">Water activity</th>
+                                            <th data-i18n="tracking_lbl_density">Density</th>
+                                            <th class="filterable-th" data-col="6">
+                                                <div class="th-content"><span data-i18n="col_analysis_source">Source</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th data-i18n="col_action">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="gb-analysis-table-body">
+                                        <!-- Dynamically loaded analysis rows -->
                                     </tbody>
                                 </table>
                             </div>
@@ -2612,18 +2657,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=36"></script>
+    <script src="js/translations.js?v=37"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=2"></script>
     <script src="js/auth.js?v=11"></script>
-    <script src="js/greenbean.js?v=13"></script>
-    <script src="js/roasting.js?v=35"></script>
+    <script src="js/greenbean.js?v=14"></script>
+    <script src="js/roasting.js?v=36"></script>
     <script src="js/packing.js?v=98"></script>
     <script src="js/sales.js?v=22"></script>
     <script src="js/settings.js?v=21"></script>
     <script src="js/tracking.js?v=8"></script>
-    <script src="js/app.js?v=81"></script>
+    <script src="js/app.js?v=82"></script>
 </body>
 </html>

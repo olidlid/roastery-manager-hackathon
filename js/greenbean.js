@@ -116,18 +116,26 @@ async function openEditGreenbeanStockModal(id) {
                     <input type="text" id="m-gb-supplier" class="form-control" value="${bean.supplier || ''}">
                 </div>
             </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Moisture Content % (optional)</label>
-                    <input type="number" step="any" id="m-gb-moisture" class="form-control" value="${bean.moisture_content ?? ''}" placeholder="e.g. 11.5">
+            <div style="background: var(--bg-app); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                    <span style="font-size: 0.78rem; color: var(--text-muted);" data-i18n="lbl_last_lab_reading">Last lab reading</span>
+                    <button type="button" id="btn-view-lab-history" style="font-size: 0.75rem; color: var(--info); background: none; border: none; cursor: pointer; display: flex; align-items: center; gap: 3px;">
+                        <span data-i18n="btn_view_history">View history</span> <i class="icon-arrow-right"></i>
+                    </button>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Water Activity aw (optional)</label>
-                    <input type="number" step="any" id="m-gb-water-activity" class="form-control" value="${bean.water_activity ?? ''}" placeholder="e.g. 0.55">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Density g/L (optional)</label>
-                    <input type="number" step="any" id="m-gb-density" class="form-control" value="${bean.density ?? ''}" placeholder="e.g. 700">
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+                    <div style="background: var(--bg-input); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 0.68rem; color: var(--text-muted);" data-i18n="tracking_lbl_moisture">Moisture</div>
+                        <div style="font-size: 1rem; color: var(--text-primary);">${bean.moisture_content !== null && bean.moisture_content !== undefined ? bean.moisture_content + '%' : '—'}</div>
+                    </div>
+                    <div style="background: var(--bg-input); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 0.68rem; color: var(--text-muted);" data-i18n="tracking_lbl_water_activity">Water activity</div>
+                        <div style="font-size: 1rem; color: var(--text-primary);">${bean.water_activity ?? '—'}</div>
+                    </div>
+                    <div style="background: var(--bg-input); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 0.68rem; color: var(--text-muted);" data-i18n="tracking_lbl_density">Density</div>
+                        <div style="font-size: 1rem; color: var(--text-primary);">${bean.density ?? '—'}</div>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer-actions">
@@ -139,6 +147,20 @@ async function openEditGreenbeanStockModal(id) {
 
     openModal('Adjust Green Coffee Stock', html);
     window.translatePage();
+
+    // Read-only lab-reading cache above is now maintained by
+    // syncGreenCoffeeLabSnapshot (see Data Analyze tab) — this just jumps
+    // there, filtered to this coffee, instead of editing inline.
+    document.getElementById('btn-view-lab-history').addEventListener('click', () => {
+        document.getElementById('btn-close-modal').click();
+        const tabBtn = document.querySelector('.tab-btn[data-tab="tab-gb-analysis"]');
+        if (tabBtn) tabBtn.click();
+        const filterInput = document.getElementById('gb-analysis-search-input');
+        if (filterInput) {
+            filterInput.value = bean.name || '';
+            filterInput.dispatchEvent(new Event('input'));
+        }
+    });
 
     document.getElementById('modal-gb-stock-form').addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -157,10 +179,11 @@ async function openEditGreenbeanStockModal(id) {
             code: document.getElementById('m-gb-code').value.trim(),
             origin: document.getElementById('m-gb-origin').value.trim(),
             process: document.getElementById('m-gb-process').value.trim(),
-            supplier: document.getElementById('m-gb-supplier').value.trim(),
-            moisture_content: document.getElementById('m-gb-moisture').value ? parseFloat(document.getElementById('m-gb-moisture').value) : null,
-            water_activity: document.getElementById('m-gb-water-activity').value ? parseFloat(document.getElementById('m-gb-water-activity').value) : null,
-            density: document.getElementById('m-gb-density').value ? parseFloat(document.getElementById('m-gb-density').value) : null
+            supplier: document.getElementById('m-gb-supplier').value.trim()
+            // moisture_content/water_activity/density intentionally omitted —
+            // those 3 columns are now a read-only cache maintained by
+            // syncGreenCoffeeLabSnapshot() (see Data Analyze tab), not
+            // editable from here.
         };
         const { error } = await saveData('green_coffee', record);
 
@@ -240,16 +263,33 @@ async function loadIntakeHistory() {
 async function openIntakeModal(editId = null) {
     const [
         { data: inventory },
-        { data: history }
+        { data: history },
+        { data: analysisRows }
     ] = await Promise.all([
         fetchData('green_coffee'),
-        fetchData('green_coffee_intake')
+        fetchData('green_coffee_intake'),
+        fetchData('green_coffee_analysis')
     ]);
 
     let intakeItem = null;
     if (editId) {
         intakeItem = history.find(item => item.id === editId);
     }
+
+    // Editing an existing intake: lab readings are locked here (only
+    // recordable once, at fresh arrival) — this looks up whatever was
+    // recorded for the lot this intake created, to show read-only, rather
+    // than reusing the fields as editable inputs. `arrival`-sourced first,
+    // since that's the canonical reading; falls back to the latest of any
+    // source in case the arrival record itself was later edited from the
+    // Data Analyze tab (source stays 'arrival' on edit, so normally this
+    // fallback never triggers — it's just a safety net).
+    const lotAnalysisRows = (editId && intakeItem && intakeItem.green_coffee_lot_id)
+        ? (analysisRows || []).filter(r => r.green_coffee_lot_id === intakeItem.green_coffee_lot_id)
+        : [];
+    const arrivalAnalysis = lotAnalysisRows.find(r => r.source === 'arrival')
+        || [...lotAnalysisRows].sort((a, b) => (b.test_date || '').localeCompare(a.test_date || '') || b.id - a.id)[0]
+        || null;
 
     // Generate datalist options for autocomplete (origin/process/supplier only —
     // coffee identity itself is now picked from the <select> below, not typed).
@@ -348,6 +388,28 @@ async function openIntakeModal(editId = null) {
                     <input type="number" step="0.01" id="m-int-price" class="form-control" value="${linkedBean ? (linkedBean.purchase_price_per_kg || '') : ''}" placeholder="e.g. 85000">
                 </div>
             </div>
+            ${editId ? `
+            <div class="form-group">
+                <div style="display: flex; align-items: center; justify-content: between; gap: 8px; margin-bottom: 4px;">
+                    <label class="form-label" style="margin-bottom: 0;" data-i18n="lbl_last_lab_reading">Last lab reading</label>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+                    <div style="background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 0.68rem; color: var(--text-muted);" data-i18n="tracking_lbl_moisture">Moisture</div>
+                        <div style="font-size: 0.95rem;">${arrivalAnalysis && arrivalAnalysis.moisture_content !== null ? arrivalAnalysis.moisture_content + '%' : '—'}</div>
+                    </div>
+                    <div style="background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 0.68rem; color: var(--text-muted);" data-i18n="tracking_lbl_water_activity">Water activity</div>
+                        <div style="font-size: 0.95rem;">${arrivalAnalysis && arrivalAnalysis.water_activity !== null ? arrivalAnalysis.water_activity : '—'}</div>
+                    </div>
+                    <div style="background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;">
+                        <div style="font-size: 0.68rem; color: var(--text-muted);" data-i18n="tracking_lbl_density">Density</div>
+                        <div style="font-size: 0.95rem;">${arrivalAnalysis && arrivalAnalysis.density !== null ? arrivalAnalysis.density : '—'}</div>
+                    </div>
+                </div>
+                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;" data-i18n="hint_analysis_locked">Recorded once at arrival — edit lab readings from the Data Analyze tab.</div>
+            </div>
+            ` : `
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Moisture Content % (optional)</label>
@@ -362,6 +424,7 @@ async function openIntakeModal(editId = null) {
                     <input type="number" step="any" id="m-int-density" class="form-control" value="${linkedBean ? (linkedBean.density ?? '') : ''}" placeholder="e.g. 700">
                 </div>
             </div>
+            `}
             ${editId ? '' : `
             <div class="form-row">
                 <div class="form-group flex-1">
@@ -417,9 +480,12 @@ async function openIntakeModal(editId = null) {
             processInput.value = opt.getAttribute('data-process') || '';
             supplierInput.value = opt.getAttribute('data-supplier') || '';
             priceInput.value = opt.getAttribute('data-price') || '';
-            moistureInput.value = opt.getAttribute('data-moisture') || '';
-            waterActivityInput.value = opt.getAttribute('data-water-activity') || '';
-            densityInput.value = opt.getAttribute('data-density') || '';
+            // Only present in the DOM for a NEW intake — locked/read-only
+            // when editing an existing one (see the lbl_last_lab_reading
+            // block above).
+            if (moistureInput) moistureInput.value = opt.getAttribute('data-moisture') || '';
+            if (waterActivityInput) waterActivityInput.value = opt.getAttribute('data-water-activity') || '';
+            if (densityInput) densityInput.value = opt.getAttribute('data-density') || '';
         }
     }
     coffeeSelect.addEventListener('change', syncFieldsFromSelect);
@@ -435,9 +501,11 @@ async function openIntakeModal(editId = null) {
         const supplier = supplierInput.value.trim();
         const coffeeSelectVal = coffeeSelect.value;
         const priceRaw = priceInput.value ? parseFloat(priceInput.value) : null;
-        const moistureRaw = moistureInput.value ? parseFloat(moistureInput.value) : null;
-        const waterActivityRaw = waterActivityInput.value ? parseFloat(waterActivityInput.value) : null;
-        const densityRaw = densityInput.value ? parseFloat(densityInput.value) : null;
+        // null (not just unfilled) when editing — those 3 inputs don't exist
+        // in the DOM on the edit-intake path, see lbl_last_lab_reading above.
+        const moistureRaw = moistureInput && moistureInput.value ? parseFloat(moistureInput.value) : null;
+        const waterActivityRaw = waterActivityInput && waterActivityInput.value ? parseFloat(waterActivityInput.value) : null;
+        const densityRaw = densityInput && densityInput.value ? parseFloat(densityInput.value) : null;
         const stickerCount = stickerCountInput ? (parseInt(stickerCountInput.value) || 0) : 0;
         const stickerSize = stickerSizeInput ? stickerSizeInput.value : 'besar';
 
@@ -474,8 +542,10 @@ async function openIntakeModal(editId = null) {
 
             const newBean = {
                 code, name: newName, origin, process,
-                stock_kg: quantity, purchase_price_per_kg: priceRaw || 0.0, supplier,
-                moisture_content: moistureRaw, water_activity: waterActivityRaw, density: densityRaw
+                stock_kg: quantity, purchase_price_per_kg: priceRaw || 0.0, supplier
+                // moisture_content/water_activity/density intentionally
+                // omitted — set below via saveAnalysisRecord once the lot
+                // exists, which also syncs the read-only cache on this row.
             };
             const { data: savedBean, error } = await saveData('green_coffee', newBean);
             if (error) { alert('Failed to create coffee: ' + error.message); return; }
@@ -491,9 +561,8 @@ async function openIntakeModal(editId = null) {
             if (process) bean.process = process;
             if (supplier) bean.supplier = supplier;
             if (priceRaw !== null) bean.purchase_price_per_kg = priceRaw;
-            if (moistureRaw !== null) bean.moisture_content = moistureRaw;
-            if (waterActivityRaw !== null) bean.water_activity = waterActivityRaw;
-            if (densityRaw !== null) bean.density = densityRaw;
+            // moisture_content/water_activity/density intentionally omitted
+            // — set below via saveAnalysisRecord once the lot exists.
             await saveData('green_coffee', bean);
             targetCoffeeId = bean.id;
             targetName = bean.name;
@@ -530,6 +599,22 @@ async function openIntakeModal(editId = null) {
                 // Link the intake back to the lot it created so a later edit/delete
                 // of this intake can find and adjust the same lot.
                 await saveData('green_coffee_intake', { id: savedIntake.id, green_coffee_lot_id: newLot.id });
+
+                // Optional at arrival — only recorded if at least one of the
+                // 3 fields was actually filled in. This is the ONE time this
+                // lot's lab reading can be entered from the Arrival modal;
+                // saveAnalysisRecord tags it 'arrival' since it's the first
+                // (only) record for a brand new lot.
+                if (moistureRaw !== null || waterActivityRaw !== null || densityRaw !== null) {
+                    await saveAnalysisRecord({
+                        greenCoffeeId: targetCoffeeId,
+                        lotId: newLot.id,
+                        testDate: date,
+                        moisture: moistureRaw,
+                        waterActivity: waterActivityRaw,
+                        density: densityRaw
+                    });
+                }
                 if (stickerCount > 0) {
                     if (stickerSize === 'kecil') {
                         await printGreenLotStickersKecil(newLot, { code, name: targetName }, stickerCount);
@@ -611,6 +696,232 @@ async function adjustGreenCoffeeLotQuantity(lotId, deltaKg) {
     const newRemaining = Math.max(0, parseFloat(lot.remaining_kg || 0) + deltaKg);
     const { error } = await saveData('green_coffee_lots', { id: lotId, quantity_kg: newQuantity, remaining_kg: newRemaining });
     if (error) console.error('Failed to adjust green_coffee_lots row after intake edit:', error);
+}
+
+// V2 Greenbean Data Analyze: single entry point for creating/editing a lab
+// reading (moisture/water_activity/density), used by both the Arrival modal
+// (one-time, at intake) and the Data Analyze tab's Add/Edit modal. On
+// create, whichever reading is the FIRST ever recorded for a given lot —
+// regardless of which UI it came from — is tagged 'arrival'; every reading
+// after that for the same lot is 'manual'. This one rule is what makes "lab
+// check skipped at arrival, first reading recorded later via the Data
+// Analyze tab becomes the arrival record" work automatically, with no
+// separate backfill step.
+async function saveAnalysisRecord({ id = null, greenCoffeeId, lotId, testDate, moisture, waterActivity, density }) {
+    const record = {
+        green_coffee_id: greenCoffeeId,
+        green_coffee_lot_id: lotId,
+        test_date: testDate,
+        moisture_content: moisture ?? null,
+        water_activity: waterActivity ?? null,
+        density: density ?? null
+    };
+
+    if (id) {
+        record.id = id;
+    } else {
+        const { data: existing } = await fetchData('green_coffee_analysis');
+        const hasAny = (existing || []).some(r => r.green_coffee_lot_id === lotId);
+        record.source = hasAny ? 'manual' : 'arrival';
+        record.recorded_by = (currentUser && currentUser.name) || null;
+    }
+
+    const { data: saved, error } = await saveData('green_coffee_analysis', record);
+    if (error) {
+        alert('Failed to save lab reading: ' + error.message);
+        return null;
+    }
+    await syncGreenCoffeeLabSnapshot(greenCoffeeId);
+    return saved;
+}
+
+// Recomputes green_coffee.moisture_content/water_activity/density as a
+// read-only cache of whichever green_coffee_analysis row has the latest
+// test_date for that coffee (across all its lots) — the only writer of
+// those 3 columns since Data Analyze shipped; every modal that used to let
+// them be edited directly now only displays them.
+async function syncGreenCoffeeLabSnapshot(coffeeId) {
+    const { data: rows } = await fetchData('green_coffee_analysis');
+    const mine = (rows || []).filter(r => r.green_coffee_id === coffeeId);
+    const latest = mine.sort((a, b) =>
+        (b.test_date || '').localeCompare(a.test_date || '') || b.id - a.id
+    )[0] || null;
+
+    await saveData('green_coffee', {
+        id: coffeeId,
+        moisture_content: latest ? latest.moisture_content : null,
+        water_activity: latest ? latest.water_activity : null,
+        density: latest ? latest.density : null
+    });
+}
+
+// --- TAB: Greenbean Data Analyze ---
+async function loadGreenCoffeeAnalysisSection() {
+    const tbody = document.getElementById('gb-analysis-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const [
+        { data: rows },
+        { data: greenbeans },
+        { data: lots }
+    ] = await Promise.all([
+        fetchData('green_coffee_analysis'),
+        fetchData('green_coffee'),
+        fetchData('green_coffee_lots')
+    ]);
+
+    registerSearchInput('tab-gb-analysis', 'gb-analysis-search-input');
+
+    if (!rows || rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center-muted">${window.t ? window.t('msg_no_analysis_yet') : 'No lab readings recorded yet.'}</td></tr>`;
+        applyFiltersForTable(document.querySelector('#tab-gb-analysis table'));
+        return;
+    }
+
+    const sorted = [...rows].sort((a, b) => (b.test_date || '').localeCompare(a.test_date || '') || b.id - a.id);
+
+    tbody.innerHTML = sorted.map(r => {
+        const bean = greenbeans.find(g => g.id === r.green_coffee_id);
+        const lot = lots.find(l => l.id === r.green_coffee_lot_id);
+        const sourceLabel = r.source === 'arrival'
+            ? (window.t ? window.t('badge_source_arrival') : 'Arrival')
+            : (window.t ? window.t('badge_source_manual') : 'Manual');
+        const sourceStyle = r.source === 'arrival'
+            ? 'background: rgba(82,183,136,0.15); color: var(--success);'
+            : 'background: rgba(144,180,216,0.15); color: var(--info);';
+        return `
+            <tr>
+                <td>${r.test_date || '-'}</td>
+                <td><strong>${bean ? bean.name : '-'}</strong></td>
+                <td><code style="font-size:0.75rem;">${lot ? lot.lot_code : '-'}</code></td>
+                <td>${r.moisture_content !== null && r.moisture_content !== undefined ? r.moisture_content + '%' : '—'}</td>
+                <td>${r.water_activity ?? '—'}</td>
+                <td>${r.density ?? '—'}</td>
+                <td><span style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${sourceStyle}">${sourceLabel}</span></td>
+                <td>
+                    ${hasPermission('greenbean_analysis_edit') ? `<button class="btn btn-secondary btn-sm btn-edit-analysis" data-id="${r.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>` : ''}
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    document.querySelectorAll('.btn-edit-analysis').forEach(btn => {
+        btn.addEventListener('click', () => openAnalysisRecordModal(parseInt(btn.getAttribute('data-id'))));
+    });
+
+    applyFiltersForTable(document.querySelector('#tab-gb-analysis table'));
+}
+
+// Add/Edit modal for a single lab reading. On create: Test Date (top,
+// autofilled today) → Coffee → Lot (repopulated from the selected coffee's
+// lots) → Moisture/Water activity/Density. On edit: Coffee/Lot are locked
+// (disabled) — reassigning which lot a past reading belongs to isn't
+// supported, only the date and the 3 values can change.
+async function openAnalysisRecordModal(editId = null) {
+    const [
+        { data: rows },
+        { data: greenbeans },
+        { data: lots }
+    ] = await Promise.all([
+        fetchData('green_coffee_analysis'),
+        fetchData('green_coffee'),
+        fetchData('green_coffee_lots')
+    ]);
+
+    const record = editId ? (rows || []).find(r => r.id === editId) : null;
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const sortedBeans = [...(greenbeans || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const coffeeOptionsHtml = sortedBeans.map(g =>
+        `<option value="${g.id}" ${record && record.green_coffee_id === g.id ? 'selected' : ''}>${g.name} — ${g.code || 'no code'}</option>`
+    ).join('');
+
+    const html = `
+        <form id="modal-analysis-form">
+            <div class="form-group">
+                <label class="form-label" data-i18n="lbl_analysis_date">Test Date</label>
+                <input type="date" id="m-an-date" class="form-control" value="${record ? record.test_date : todayStr}" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label" data-i18n="lbl_analysis_coffee">Coffee</label>
+                <select id="m-an-coffee" class="form-control" required ${record ? 'disabled' : ''}>
+                    <option value="" disabled ${record ? '' : 'selected'}>-- Select coffee --</option>
+                    ${coffeeOptionsHtml}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label" data-i18n="lbl_analysis_lot">Lot (arrival date)</label>
+                <select id="m-an-lot" class="form-control" required ${record ? 'disabled' : ''}></select>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label" data-i18n="tracking_lbl_moisture">Moisture %</label>
+                    <input type="number" step="any" id="m-an-moisture" class="form-control" value="${record && record.moisture_content !== null ? record.moisture_content : ''}" placeholder="e.g. 11.5">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="tracking_lbl_water_activity">Water activity</label>
+                    <input type="number" step="any" id="m-an-water-activity" class="form-control" value="${record && record.water_activity !== null ? record.water_activity : ''}" placeholder="e.g. 0.55">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" data-i18n="tracking_lbl_density">Density</label>
+                    <input type="number" step="any" id="m-an-density" class="form-control" value="${record && record.density !== null ? record.density : ''}" placeholder="e.g. 700">
+                </div>
+            </div>
+            <div class="modal-footer-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                <button type="submit" class="btn btn-primary" data-i18n="btn_save">Save</button>
+            </div>
+        </form>
+    `;
+
+    openModal(window.t ? window.t('title_analysis_record') : 'Record Lab Reading', html);
+    window.translatePage();
+
+    const coffeeSelect = document.getElementById('m-an-coffee');
+    const lotSelect = document.getElementById('m-an-lot');
+
+    function renderLotOptions(coffeeId) {
+        const myLots = (lots || [])
+            .filter(l => l.green_coffee_id === coffeeId)
+            .sort((a, b) => (b.arrival_date || '').localeCompare(a.arrival_date || '') || b.id - a.id);
+        lotSelect.innerHTML = myLots.map(l =>
+            `<option value="${l.id}" ${record && record.green_coffee_lot_id === l.id ? 'selected' : ''}>${l.lot_code} · ${l.arrival_date || '-'} · ${parseFloat(l.remaining_kg || 0).toFixed(1)}kg left</option>`
+        ).join('') || `<option value="" disabled selected>-- No lots yet --</option>`;
+    }
+
+    if (record) {
+        renderLotOptions(record.green_coffee_id);
+    } else {
+        coffeeSelect.addEventListener('change', () => renderLotOptions(parseInt(coffeeSelect.value) || null));
+    }
+
+    document.getElementById('modal-analysis-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const lotIdVal = lotSelect.value ? parseInt(lotSelect.value) : null;
+        if (!lotIdVal) {
+            await showWarningModal('Select a lot first — this coffee has no recorded arrival lots yet.', false);
+            return;
+        }
+        const moistureInput = document.getElementById('m-an-moisture').value;
+        const waterActivityInput = document.getElementById('m-an-water-activity').value;
+        const densityInput = document.getElementById('m-an-density').value;
+
+        const saved = await saveAnalysisRecord({
+            id: editId,
+            greenCoffeeId: record ? record.green_coffee_id : parseInt(coffeeSelect.value),
+            lotId: record ? record.green_coffee_lot_id : lotIdVal,
+            testDate: document.getElementById('m-an-date').value,
+            moisture: moistureInput ? parseFloat(moistureInput) : null,
+            waterActivity: waterActivityInput ? parseFloat(waterActivityInput) : null,
+            density: densityInput ? parseFloat(densityInput) : null
+        });
+        if (!saved) return;
+
+        document.getElementById('btn-close-modal').click();
+        loadGreenCoffeeAnalysisSection();
+        scheduleDashboardRefresh();
+    });
 }
 
 // V2 barcode label fix: green bean sacks always need ONE BARCODE PER

@@ -141,6 +141,7 @@ const MOCK_DB = {
                 dashboard: true,
                 greenbean_view: true, greenbean_delete: true,
                 greenbean_arrival_view: true, greenbean_arrival_add: true, greenbean_arrival_edit: true, greenbean_arrival_delete: true,
+                greenbean_analysis_add: true, greenbean_analysis_edit: true,
                 greenbean_outbound_view: true, greenbean_outbound_add: true, greenbean_outbound_edit: true, greenbean_outbound_delete: true,
                 roasting_view: true, roasting_plan_add: true, roasting_plan_edit: true, roasting_plan_delete: true,
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: true, roasting_batch_delete: true, roasting_batch_approve: true,
@@ -162,6 +163,7 @@ const MOCK_DB = {
                 dashboard: true,
                 greenbean_view: true, greenbean_delete: true,
                 greenbean_arrival_view: true, greenbean_arrival_add: true, greenbean_arrival_edit: true, greenbean_arrival_delete: true,
+                greenbean_analysis_add: true, greenbean_analysis_edit: true,
                 greenbean_outbound_view: true, greenbean_outbound_add: true, greenbean_outbound_edit: true, greenbean_outbound_delete: true,
                 roasting_view: true, roasting_plan_add: true, roasting_plan_edit: true, roasting_plan_delete: true,
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: true, roasting_batch_delete: true, roasting_batch_approve: true,
@@ -183,6 +185,7 @@ const MOCK_DB = {
                 dashboard: true,
                 greenbean_view: true, greenbean_delete: true,
                 greenbean_arrival_view: true, greenbean_arrival_add: true, greenbean_arrival_edit: true, greenbean_arrival_delete: true,
+                greenbean_analysis_add: true, greenbean_analysis_edit: true,
                 greenbean_outbound_view: true, greenbean_outbound_add: true, greenbean_outbound_edit: true, greenbean_outbound_delete: true,
                 roasting_view: true, roasting_plan_add: true, roasting_plan_edit: true, roasting_plan_delete: true,
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: true, roasting_batch_delete: true, roasting_batch_approve: true,
@@ -204,6 +207,7 @@ const MOCK_DB = {
                 dashboard: true,
                 greenbean_view: true, greenbean_delete: false,
                 greenbean_arrival_view: false, greenbean_arrival_add: false, greenbean_arrival_edit: false, greenbean_arrival_delete: false,
+                greenbean_analysis_add: false, greenbean_analysis_edit: false,
                 greenbean_outbound_view: false, greenbean_outbound_add: false, greenbean_outbound_edit: false, greenbean_outbound_delete: false,
                 roasting_view: true, roasting_plan_add: false, roasting_plan_edit: false, roasting_plan_delete: false,
                 roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
@@ -225,6 +229,7 @@ const MOCK_DB = {
                 dashboard: true,
                 greenbean_view: false, greenbean_delete: false,
                 greenbean_arrival_view: false, greenbean_arrival_add: false, greenbean_arrival_edit: false, greenbean_arrival_delete: false,
+                greenbean_analysis_add: false, greenbean_analysis_edit: false,
                 greenbean_outbound_view: false, greenbean_outbound_add: false, greenbean_outbound_edit: false, greenbean_outbound_delete: false,
                 roasting_view: false, roasting_plan_add: false, roasting_plan_edit: false, roasting_plan_delete: false,
                 roasting_batch_view: false, roasting_batch_add: false, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
@@ -246,6 +251,7 @@ const MOCK_DB = {
                 dashboard: true,
                 greenbean_view: false, greenbean_delete: false,
                 greenbean_arrival_view: false, greenbean_arrival_add: false, greenbean_arrival_edit: false, greenbean_arrival_delete: false,
+                greenbean_analysis_add: false, greenbean_analysis_edit: false,
                 greenbean_outbound_view: false, greenbean_outbound_add: false, greenbean_outbound_edit: false, greenbean_outbound_delete: false,
                 roasting_view: false, roasting_plan_add: false, roasting_plan_edit: false, roasting_plan_delete: false,
                 roasting_batch_view: false, roasting_batch_add: false, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
@@ -334,6 +340,12 @@ const btnAddOutbound = document.getElementById('btn-add-outbound');
 if (btnAddOutbound) {
     btnAddOutbound.addEventListener('click', () => openOutboundModal());
     btnAddOutbound.style.display = hasPermission('greenbean_outbound_add') ? '' : 'none';
+}
+
+const btnAddAnalysis = document.getElementById('btn-add-analysis');
+if (btnAddAnalysis) {
+    btnAddAnalysis.addEventListener('click', () => openAnalysisRecordModal());
+    btnAddAnalysis.style.display = hasPermission('greenbean_analysis_add') ? '' : 'none';
 }
 
 const btnPrintCodeList = document.getElementById('btn-print-code-list');
@@ -934,6 +946,10 @@ function enforceGranularPermissions() {
     if (btnAddOutboundEl) {
         btnAddOutboundEl.style.display = hasPermission('greenbean_outbound_add') ? '' : 'none';
     }
+    const btnAddAnalysisEl = document.getElementById('btn-add-analysis');
+    if (btnAddAnalysisEl) {
+        btnAddAnalysisEl.style.display = hasPermission('greenbean_analysis_add') ? '' : 'none';
+    }
 
     // --- BULK ROASTED COFFEE BUTTONS ---
     document.querySelectorAll('.btn-edit-bulk').forEach(btn => {
@@ -1051,6 +1067,9 @@ async function loadTabSpecificData(tabId) {
             break;
         case 'tab-code-list':
             await loadCodeListSection();
+            break;
+        case 'tab-gb-analysis':
+            await loadGreenCoffeeAnalysisSection();
             break;
     }
     enforceGranularPermissions();
