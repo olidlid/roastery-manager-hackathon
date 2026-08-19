@@ -707,15 +707,17 @@ async function createGreenCoffeeLot({ coffeeId, coffeeCode, arrivalDate, quantit
 
 // V2 1A: keeps a lot's quantity_kg/remaining_kg in sync when the intake that
 // created it is edited (deltaKg = new intake qty - old intake qty). Both
-// fields move together because nothing can have drawn from the lot yet (1B
-// consumption isn't wired up); clamped at 0 as a safety floor.
+// fields move together, floored at 0 — same semantics as before, but now
+// via the adjust_green_coffee_lot() Postgres function so the read-and-write
+// happens atomically in the database instead of racing against a roast
+// batch (or another edit) that touches the same lot's remaining_kg between
+// this function's own read and write. V2 concurrency fix — see
+// database/v2_greenbean_lot_atomic_functions_migration.sql.
 async function adjustGreenCoffeeLotQuantity(lotId, deltaKg) {
-    const { data: lots } = await fetchData('green_coffee_lots');
-    const lot = (lots || []).find(l => l.id === lotId);
-    if (!lot) return;
-    const newQuantity = Math.max(0, parseFloat(lot.quantity_kg || 0) + deltaKg);
-    const newRemaining = Math.max(0, parseFloat(lot.remaining_kg || 0) + deltaKg);
-    const { error } = await saveData('green_coffee_lots', { id: lotId, quantity_kg: newQuantity, remaining_kg: newRemaining });
+    const { error } = await window.supabaseClient.rpc('adjust_green_coffee_lot', {
+        p_lot_id: lotId,
+        p_delta_kg: deltaKg
+    });
     if (error) console.error('Failed to adjust green_coffee_lots row after intake edit:', error);
 }
 
@@ -1454,12 +1456,15 @@ async function refundGreenCoffeeLotsForOutbound(outboundId) {
     const { data: allDraws } = await fetchData('green_coffee_outbound_lots');
     const mine = (allDraws || []).filter(d => d.green_coffee_outbound_id === outboundId);
     if (mine.length === 0) return;
-    const { data: allLots } = await fetchData('green_coffee_lots');
     for (const d of mine) {
-        const lot = (allLots || []).find(l => l.id === d.green_coffee_lot_id);
-        if (lot) {
-            await saveData('green_coffee_lots', { id: lot.id, remaining_kg: parseFloat(lot.remaining_kg || 0) + parseFloat(d.kg || 0) });
-        }
+        // V2 concurrency fix: atomic increment via RPC — see
+        // refundGreenCoffeeLotsForBatch in js/roasting.js for the same
+        // pattern and the reasoning behind it.
+        const { error } = await window.supabaseClient.rpc('refund_green_coffee_lot', {
+            p_lot_id: d.green_coffee_lot_id,
+            p_kg: parseFloat(d.kg || 0)
+        });
+        if (error) console.error('refund_green_coffee_lot RPC failed for lot', d.green_coffee_lot_id, error);
         await deleteData('green_coffee_outbound_lots', d.id);
     }
 }

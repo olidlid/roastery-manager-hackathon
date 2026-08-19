@@ -3618,6 +3618,16 @@ function applyBatchColumnVisibility() {
 // V2_ROADMAP.md 1B). Clamps at total availability instead of erroring:
 // returns {draws: [{lotId, kg}], shortfallKg} so the caller can persist the
 // draws to roast_batch_green_lots and optionally warn on a nonzero shortfall.
+// V2 concurrency fix: the FIFO order/candidate list still comes from a
+// plain read (a stale snapshot is fine here — it only decides which lots to
+// TRY, oldest first), but the actual decrement per lot goes through the
+// consume_green_coffee_lot() Postgres function, which reads-and-writes
+// remaining_kg in one atomic UPDATE. That's what makes this safe under
+// concurrent callers: two overlapping consumers can no longer each read the
+// same stale remaining_kg and each believe they successfully took the full
+// amount. The RPC returns exactly how much was really available at write
+// time, so a lot drained by someone else in between simply contributes less
+// (or nothing) here, and the shortfall carries forward to the next lot.
 async function consumeGreenCoffeeLotsFifo(greenCoffeeId, kgToConsume, preferredLotId = null) {
     const { data: allLots } = await fetchData('green_coffee_lots');
     const lots = (allLots || [])
@@ -3632,12 +3642,18 @@ async function consumeGreenCoffeeLotsFifo(greenCoffeeId, kgToConsume, preferredL
     const draws = [];
     for (const lot of ordered) {
         if (remainingNeeded <= 0) break;
-        const take = Math.min(parseFloat(lot.remaining_kg || 0), remainingNeeded);
-        if (take <= 0) continue;
-        const newRemaining = parseFloat(lot.remaining_kg) - take;
-        await saveData('green_coffee_lots', { id: lot.id, remaining_kg: newRemaining });
-        draws.push({ lotId: lot.id, kg: take });
-        remainingNeeded -= take;
+        const { data: taken, error } = await window.supabaseClient.rpc('consume_green_coffee_lot', {
+            p_lot_id: lot.id,
+            p_kg_requested: remainingNeeded
+        });
+        if (error) {
+            console.error('consume_green_coffee_lot RPC failed for lot', lot.id, error);
+            continue;
+        }
+        const takenKg = parseFloat(taken) || 0;
+        if (takenKg <= 0) continue;
+        draws.push({ lotId: lot.id, kg: takenKg });
+        remainingNeeded -= takenKg;
     }
     return { draws, shortfallKg: Math.max(0, remainingNeeded) };
 }
@@ -3650,12 +3666,15 @@ async function refundGreenCoffeeLotsForBatch(roastBatchId) {
     const { data: allDraws } = await fetchData('roast_batch_green_lots');
     const mine = (allDraws || []).filter(d => d.roast_batch_id === roastBatchId);
     if (mine.length === 0) return;
-    const { data: allLots } = await fetchData('green_coffee_lots');
     for (const d of mine) {
-        const lot = (allLots || []).find(l => l.id === d.green_coffee_lot_id);
-        if (lot) {
-            await saveData('green_coffee_lots', { id: lot.id, remaining_kg: parseFloat(lot.remaining_kg || 0) + parseFloat(d.kg_consumed || 0) });
-        }
+        // V2 concurrency fix: atomic increment via RPC, same reasoning as
+        // consumeGreenCoffeeLotsFifo above — no read-then-write on
+        // remaining_kg from the client.
+        const { error } = await window.supabaseClient.rpc('refund_green_coffee_lot', {
+            p_lot_id: d.green_coffee_lot_id,
+            p_kg: parseFloat(d.kg_consumed || 0)
+        });
+        if (error) console.error('refund_green_coffee_lot RPC failed for lot', d.green_coffee_lot_id, error);
         await deleteData('roast_batch_green_lots', d.id);
     }
 }

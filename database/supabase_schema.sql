@@ -869,6 +869,60 @@ CREATE TRIGGER on_auth_user_created
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
 -- ============================================================================
+-- GREENBEAN LOT ATOMIC FUNCTIONS (applied to production 2026-08-19)
+-- ----------------------------------------------------------------------------
+-- Every write to green_coffee_lots.remaining_kg previously went through a
+-- client-side read-then-write (fetchData, compute in JS, saveData the
+-- absolute result) with no locking — a lost-update race under concurrent
+-- callers. These three functions do the read + write in ONE SQL statement
+-- each, so Postgres's own row lock makes them atomic; the JS side
+-- (consumeGreenCoffeeLotsFifo / refundGreenCoffeeLotsForBatch /
+-- refundGreenCoffeeLotsForOutbound / adjustGreenCoffeeLotQuantity, all in
+-- js/greenbean.js or js/roasting.js) calls these via
+-- window.supabaseClient.rpc(...) instead of read-modify-write. See
+-- database/v2_greenbean_lot_atomic_functions_migration.sql.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.consume_green_coffee_lot(p_lot_id INTEGER, p_kg_requested NUMERIC)
+RETURNS NUMERIC
+LANGUAGE sql
+AS $$
+    WITH before AS (
+        SELECT remaining_kg FROM public.green_coffee_lots WHERE id = p_lot_id FOR UPDATE
+    ), updated AS (
+        UPDATE public.green_coffee_lots
+        SET remaining_kg = remaining_kg - LEAST(remaining_kg, GREATEST(p_kg_requested, 0))
+        WHERE id = p_lot_id
+        RETURNING remaining_kg
+    )
+    SELECT COALESCE((SELECT remaining_kg FROM before), 0) - COALESCE((SELECT remaining_kg FROM updated), 0);
+$$;
+
+CREATE OR REPLACE FUNCTION public.refund_green_coffee_lot(p_lot_id INTEGER, p_kg NUMERIC)
+RETURNS NUMERIC
+LANGUAGE sql
+AS $$
+    UPDATE public.green_coffee_lots
+    SET remaining_kg = remaining_kg + GREATEST(p_kg, 0)
+    WHERE id = p_lot_id
+    RETURNING remaining_kg;
+$$;
+
+CREATE OR REPLACE FUNCTION public.adjust_green_coffee_lot(p_lot_id INTEGER, p_delta_kg NUMERIC)
+RETURNS TABLE(new_quantity_kg NUMERIC, new_remaining_kg NUMERIC)
+LANGUAGE sql
+AS $$
+    UPDATE public.green_coffee_lots
+    SET quantity_kg = GREATEST(0, quantity_kg + p_delta_kg),
+        remaining_kg = GREATEST(0, remaining_kg + p_delta_kg)
+    WHERE id = p_lot_id
+    RETURNING quantity_kg, remaining_kg;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.consume_green_coffee_lot(INTEGER, NUMERIC) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refund_green_coffee_lot(INTEGER, NUMERIC) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.adjust_green_coffee_lot(INTEGER, NUMERIC) TO anon, authenticated;
+
+-- ============================================================================
 -- GREEN COFFEE STOCK SYNC TRIGGER (added V2 1·CHAIN, 2026-07-12 — see
 -- database/v2_lot_tracking_migration.sql)
 -- ============================================================================
