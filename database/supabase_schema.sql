@@ -509,6 +509,35 @@ CREATE TABLE IF NOT EXISTS public.green_coffee_lots (
     purchase_price_per_kg NUMERIC  -- V2 1·CHAIN: per-lot price, data captured for future costing (1C, not built yet)
 );
 
+-- V2 Stock History ledger (applied to production 2026-08-19): per-lot
+-- record of a manual stock DECREASE (Adjust Green Coffee Stock modal calls
+-- consumeGreenCoffeeLotsFifo but previously never persisted which lot(s) it
+-- drew from). Mirrors roast_batch_green_lots' per-lot-draw shape. See
+-- database/v2_greenbean_ledger_migration.sql.
+CREATE TABLE IF NOT EXISTS public.green_coffee_lot_adjustments (
+    id SERIAL PRIMARY KEY,
+    green_coffee_id INTEGER REFERENCES public.green_coffee(id) ON DELETE CASCADE,
+    green_coffee_lot_id INTEGER REFERENCES public.green_coffee_lots(id) ON DELETE SET NULL,
+    kg NUMERIC NOT NULL DEFAULT 0,
+    adjustment_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    adjusted_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- V2 Stock History ledger: per-lot record of which green_coffee_lots an
+-- Outbound Shipment drew from (FIFO) — Outbound previously wrote
+-- green_coffee.stock_kg directly instead of going through the lots, unlike
+-- every other consumption path in the app. green_coffee_outbound stays the
+-- shipment header; this is its per-lot-draw child. See
+-- database/v2_greenbean_ledger_migration.sql.
+CREATE TABLE IF NOT EXISTS public.green_coffee_outbound_lots (
+    id SERIAL PRIMARY KEY,
+    green_coffee_outbound_id INTEGER REFERENCES public.green_coffee_outbound(id) ON DELETE CASCADE,
+    green_coffee_lot_id INTEGER REFERENCES public.green_coffee_lots(id) ON DELETE SET NULL,
+    kg NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- V2 FIFO strip code (see database/fifo_strip_code_migration.sql +
 -- fifo_batch_no_cycle_adjustment.sql): shared by production_lots.batch_no
 -- and packed_coffee_lots.batch_no (the latter only for lots with no
@@ -801,7 +830,8 @@ BEGIN
     'repack_sources', -- applied to production 2026-08-03
     'stock_releases','stock_release_items', -- applied to production 2026-08-03
     'bulk_reservations', -- applied to production 2026-08-16
-    'green_coffee_analysis','roast_batch_analysis_snapshot' -- applied to production 2026-08-18
+    'green_coffee_analysis','roast_batch_analysis_snapshot', -- applied to production 2026-08-18
+    'green_coffee_lot_adjustments','green_coffee_outbound_lots' -- applied to production 2026-08-19
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);

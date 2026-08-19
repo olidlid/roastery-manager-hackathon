@@ -44,6 +44,14 @@ async function loadGreenbeanInventory() {
                 </button>
             </td>
         `;
+        // Row click opens the Stock History / Lab Readings detail modal;
+        // guarded so clicks on the row's own action buttons (Edit/Delete/
+        // Barcode) keep their existing behavior instead of also opening it.
+        tr.style.cursor = 'pointer';
+        tr.addEventListener('click', (e) => {
+            if (e.target.closest('button')) return;
+            openGreenbeanDetailModal(bean.id);
+        });
         tbody.appendChild(tr);
     });
 
@@ -206,7 +214,20 @@ async function openEditGreenbeanStockModal(id) {
                         purchasePricePerKg: null
                     });
                 } else {
-                    await consumeGreenCoffeeLotsFifo(bean.id, Math.abs(stockDelta));
+                    // V2 Stock History: persist which lot(s) this decrease
+                    // drew from — without this, a manual correction is
+                    // invisible to any later reconstruction of the ledger,
+                    // unlike every other consumption path in the app.
+                    const { draws } = await consumeGreenCoffeeLotsFifo(bean.id, Math.abs(stockDelta));
+                    for (const d of draws) {
+                        await saveData('green_coffee_lot_adjustments', {
+                            green_coffee_id: bean.id,
+                            green_coffee_lot_id: d.lotId,
+                            kg: d.kg,
+                            adjustment_date: new Date().toISOString().split('T')[0],
+                            adjusted_by: (currentUser && currentUser.name) || null
+                        });
+                    }
                 }
             }
 
@@ -818,7 +839,7 @@ async function loadGreenCoffeeAnalysisSection() {
 // lots) → Moisture/Water activity/Density. On edit: Coffee/Lot are locked
 // (disabled) — reassigning which lot a past reading belongs to isn't
 // supported, only the date and the 3 values can change.
-async function openAnalysisRecordModal(editId = null) {
+async function openAnalysisRecordModal(editId = null, presetCoffeeId = null) {
     const [
         { data: rows },
         { data: greenbeans },
@@ -833,9 +854,10 @@ async function openAnalysisRecordModal(editId = null) {
     const todayStr = new Date().toISOString().split('T')[0];
 
     const sortedBeans = [...(greenbeans || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    const coffeeOptionsHtml = sortedBeans.map(g =>
-        `<option value="${g.id}" ${record && record.green_coffee_id === g.id ? 'selected' : ''}>${g.name} — ${g.code || 'no code'}</option>`
-    ).join('');
+    const coffeeOptionsHtml = sortedBeans.map(g => {
+        const isSelected = record ? record.green_coffee_id === g.id : presetCoffeeId === g.id;
+        return `<option value="${g.id}" ${isSelected ? 'selected' : ''}>${g.name} — ${g.code || 'no code'}</option>`;
+    }).join('');
 
     const html = `
         <form id="modal-analysis-form">
@@ -846,7 +868,7 @@ async function openAnalysisRecordModal(editId = null) {
             <div class="form-group">
                 <label class="form-label" data-i18n="lbl_analysis_coffee">Coffee</label>
                 <select id="m-an-coffee" class="form-control" required ${record ? 'disabled' : ''}>
-                    <option value="" disabled ${record ? '' : 'selected'}>-- Select coffee --</option>
+                    <option value="" disabled ${record || presetCoffeeId ? '' : 'selected'}>-- Select coffee --</option>
                     ${coffeeOptionsHtml}
                 </select>
             </div>
@@ -909,6 +931,10 @@ async function openAnalysisRecordModal(editId = null) {
         renderLotOptions(record.green_coffee_id);
     } else {
         coffeeSelect.addEventListener('change', () => renderLotOptions(parseInt(coffeeSelect.value) || null));
+        // Opened from a coffee's own detail modal ("Add reading" on the Lab
+        // Readings tab) — jump straight to a ready-to-fill form instead of
+        // making the user re-pick the coffee they just came from.
+        if (presetCoffeeId) renderLotOptions(presetCoffeeId);
     }
 
     document.getElementById('modal-analysis-form').addEventListener('submit', async (e) => {
@@ -937,6 +963,293 @@ async function openAnalysisRecordModal(editId = null) {
         loadGreenCoffeeAnalysisSection();
         scheduleDashboardRefresh();
     });
+}
+
+// V2 Greenbean detail modal — Tab 1: Stock History. Assembles a
+// chronological in/out ledger from every source that touches
+// green_coffee_lots for this coffee: IN = every green_coffee_lots row
+// itself (a real arrival AND a manual +adjustment both go through
+// createGreenCoffeeLot, so this one source covers both); OUT =
+// roast_batch_green_lots (roasting), green_coffee_outbound_lots
+// (shipments), green_coffee_lot_adjustments (manual -adjustments). Running
+// balance is computed oldest-first, then the display order is reversed to
+// newest-first like every other table in this app.
+async function renderStockHistoryTab(coffeeId, container) {
+    container.innerHTML = `<div class="text-center-muted" style="padding:20px;">Loading...</div>`;
+
+    const [
+        { data: greenbeans },
+        { data: allLots },
+        { data: batchLots },
+        { data: batches },
+        { data: machines },
+        { data: outboundLots },
+        { data: outbound },
+        { data: adjustments }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('green_coffee_lots'),
+        fetchData('roast_batch_green_lots'),
+        fetchData('roast_batches'),
+        fetchData('machines'),
+        fetchData('green_coffee_outbound_lots'),
+        fetchData('green_coffee_outbound'),
+        fetchData('green_coffee_lot_adjustments')
+    ]);
+
+    const coffee = (greenbeans || []).find(g => g.id === coffeeId);
+    const myLots = (allLots || []).filter(l => l.green_coffee_id === coffeeId);
+    const myLotIds = new Set(myLots.map(l => l.id));
+    const lotCodeOf = (lotId) => { const l = myLots.find(x => x.id === lotId); return l ? l.lot_code : '-'; };
+
+    const ledger = [];
+
+    myLots.forEach(l => {
+        ledger.push({
+            date: l.arrival_date || (l.created_at || '').split('T')[0],
+            lotCode: l.lot_code,
+            type: 'in',
+            kg: parseFloat(l.quantity_kg) || 0,
+            detail: l.supplier === 'Manual Stock Adjustment'
+                ? (window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment')
+                : `${window.t ? window.t('lbl_supplier_prefix') : 'Supplier'}: ${l.supplier || '-'}`,
+            sortKey: l.id
+        });
+    });
+
+    (batchLots || []).filter(d => myLotIds.has(d.green_coffee_lot_id)).forEach(d => {
+        const batch = (batches || []).find(b => b.id === d.roast_batch_id);
+        const machine = batch ? (machines || []).find(m => m.id === batch.machine_id) : null;
+        ledger.push({
+            date: batch ? batch.roast_date : null,
+            lotCode: lotCodeOf(d.green_coffee_lot_id),
+            type: 'out',
+            kg: parseFloat(d.kg_consumed) || 0,
+            detail: `${machine ? machine.name : '-'} · ${window.t ? window.t('lbl_roasting') : 'roasting'}${batch ? ' · ' + batch.batch_code : ''}`,
+            sortKey: d.id
+        });
+    });
+
+    (outboundLots || []).filter(d => myLotIds.has(d.green_coffee_lot_id)).forEach(d => {
+        const ship = (outbound || []).find(o => o.id === d.green_coffee_outbound_id);
+        ledger.push({
+            date: ship ? ship.date : null,
+            lotCode: lotCodeOf(d.green_coffee_lot_id),
+            type: 'out',
+            kg: parseFloat(d.kg) || 0,
+            detail: `${window.t ? window.t('lbl_shipped_to') : 'Shipped to'} ${ship ? ship.destination : '-'}`,
+            sortKey: d.id
+        });
+    });
+
+    (adjustments || []).filter(d => myLotIds.has(d.green_coffee_lot_id)).forEach(d => {
+        ledger.push({
+            date: d.adjustment_date,
+            lotCode: lotCodeOf(d.green_coffee_lot_id),
+            type: 'out',
+            kg: parseFloat(d.kg) || 0,
+            detail: window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment',
+            sortKey: d.id
+        });
+    });
+
+    // Oldest-first to compute a running balance, then reversed for display.
+    ledger.sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.sortKey - b.sortKey);
+    let running = 0;
+    ledger.forEach(r => {
+        running += r.type === 'in' ? r.kg : -r.kg;
+        r.balance = running;
+    });
+    const displayRows = [...ledger].reverse();
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const monthStart = todayStr.slice(0, 7) + '-01';
+    const sumOf = (type, sinceDate) => ledger
+        .filter(r => r.type === type && (!sinceDate || (r.date || '') >= sinceDate))
+        .reduce((s, r) => s + r.kg, 0);
+    const inThisMonth = sumOf('in', monthStart);
+    const outThisMonth = sumOf('out', monthStart);
+    const inAllTime = sumOf('in');
+    const outAllTime = sumOf('out');
+    const unit = companySettings.weight_unit;
+
+    const rowsHtml = displayRows.length === 0
+        ? `<tr><td colspan="6" class="text-center-muted">${window.t ? window.t('msg_no_history_yet') : 'No stock movement recorded yet.'}</td></tr>`
+        : displayRows.map(r => `
+            <tr>
+                <td>${r.date || '-'}</td>
+                <td><code style="font-size:0.75rem;">${r.lotCode}</code></td>
+                <td><span style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${r.type === 'in' ? 'background: rgba(82,183,136,0.15); color: var(--success);' : 'background: rgba(239,68,68,0.15); color: var(--danger);'}">${r.type === 'in' ? (window.t ? window.t('lbl_in') : 'In') : (window.t ? window.t('lbl_out') : 'Out')}</span></td>
+                <td style="color: ${r.type === 'in' ? 'var(--success)' : 'var(--danger)'};">${r.type === 'in' ? '+' : '-'}${r.kg.toFixed(1)}</td>
+                <td>${r.balance.toFixed(1)}</td>
+                <td>${r.detail}</td>
+            </tr>
+        `).join('');
+
+    container.innerHTML = `
+        <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:6px;">${window.t ? window.t('lbl_this_month') : 'This month'} · ${window.t ? window.t('lbl_since') : 'since'} ${monthStart}</div>
+        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:14px;">
+            <div style="background: var(--bg-input); border-radius: 8px; padding: 10px 12px;">
+                <div style="font-size:0.7rem; color:var(--text-muted);">${window.t ? window.t('lbl_current_stock') : 'Current stock'}</div>
+                <div style="font-size:1.25rem; font-weight:700;">${coffee ? parseFloat(coffee.stock_kg || 0).toFixed(1) : '0.0'} ${unit}</div>
+            </div>
+            <div style="background: var(--bg-input); border-radius: 8px; padding: 10px 12px;">
+                <div style="font-size:0.7rem; color:var(--text-muted);">${window.t ? window.t('lbl_in_this_month') : 'In this month'}</div>
+                <div style="font-size:1.25rem; font-weight:700; color:var(--success);">+${inThisMonth.toFixed(1)} ${unit}</div>
+                <div style="font-size:0.66rem; color:var(--text-muted); margin-top:4px; padding-top:4px; border-top:1px solid var(--border);">${window.t ? window.t('lbl_all_time') : 'All-time'}: ${inAllTime.toFixed(1)} ${unit}</div>
+            </div>
+            <div style="background: var(--bg-input); border-radius: 8px; padding: 10px 12px;">
+                <div style="font-size:0.7rem; color:var(--text-muted);">${window.t ? window.t('lbl_out_this_month') : 'Out this month'}</div>
+                <div style="font-size:1.25rem; font-weight:700; color:var(--danger);">-${outThisMonth.toFixed(1)} ${unit}</div>
+                <div style="font-size:0.66rem; color:var(--text-muted); margin-top:4px; padding-top:4px; border-top:1px solid var(--border);">${window.t ? window.t('lbl_all_time') : 'All-time'}: ${outAllTime.toFixed(1)} ${unit}</div>
+            </div>
+        </div>
+        <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>${window.t ? window.t('col_history_date') : 'Date'}</th>
+                        <th>${window.t ? window.t('col_history_lot') : 'Lot Code'}</th>
+                        <th>${window.t ? window.t('col_history_type') : 'Type'}</th>
+                        <th>${window.t ? window.t('col_history_qty') : 'Qty (kg)'}</th>
+                        <th>${window.t ? window.t('col_history_balance') : 'Balance'}</th>
+                        <th>${window.t ? window.t('col_history_detail') : 'Detail'}</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+// V2 Greenbean detail modal — Tab 2: Lab Readings. Reuses the exact same
+// green_coffee_analysis data the Data Analyze tab reads, filtered to this
+// one coffee (Coffee Name column dropped since it's redundant here).
+async function renderLabReadingsTab(coffeeId, container) {
+    container.innerHTML = `<div class="text-center-muted" style="padding:20px;">Loading...</div>`;
+
+    const [
+        { data: greenbeans },
+        { data: rows },
+        { data: lots }
+    ] = await Promise.all([
+        fetchData('green_coffee'),
+        fetchData('green_coffee_analysis'),
+        fetchData('green_coffee_lots')
+    ]);
+
+    const coffee = (greenbeans || []).find(g => g.id === coffeeId);
+    const myRows = (rows || [])
+        .filter(r => r.green_coffee_id === coffeeId)
+        .sort((a, b) => (b.test_date || '').localeCompare(a.test_date || '') || b.id - a.id);
+
+    const rowsHtml = myRows.length === 0
+        ? `<tr><td colspan="5" class="text-center-muted">${window.t ? window.t('msg_no_analysis_yet') : 'No lab readings recorded yet.'}</td></tr>`
+        : myRows.map(r => {
+            const lot = (lots || []).find(l => l.id === r.green_coffee_lot_id);
+            const sourceLabel = r.source === 'arrival'
+                ? (window.t ? window.t('badge_source_arrival') : 'Arrival')
+                : (window.t ? window.t('badge_source_manual') : 'Manual');
+            const sourceStyle = r.source === 'arrival'
+                ? 'background: rgba(82,183,136,0.15); color: var(--success);'
+                : 'background: rgba(144,180,216,0.15); color: var(--info);';
+            return `
+                <tr>
+                    <td>${r.test_date || '-'}</td>
+                    <td><code style="font-size:0.75rem;">${lot ? lot.lot_code : '-'}</code></td>
+                    <td>${r.moisture_content !== null && r.moisture_content !== undefined ? r.moisture_content + '%' : '—'}</td>
+                    <td>${r.water_activity ?? '—'}</td>
+                    <td>${r.density ?? '—'}</td>
+                    <td><span style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${sourceStyle}">${sourceLabel}</span></td>
+                </tr>
+            `;
+        }).join('');
+
+    container.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+            <span style="font-size:0.8rem; color:var(--text-muted);" data-i18n="lbl_last_lab_reading">Last lab reading</span>
+            ${hasPermission('greenbean_analysis_add') ? `<button type="button" id="btn-add-reading-inline" class="btn btn-primary btn-sm"><i class="icon-plus va-middle-mr-1"></i><span data-i18n="btn_add_analysis">Add Reading</span></button>` : ''}
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:14px;">
+            <div style="background: var(--bg-input); border-radius: 8px; padding: 10px 12px;">
+                <div style="font-size:0.7rem; color:var(--text-muted);" data-i18n="tracking_lbl_moisture">Moisture</div>
+                <div style="font-size:1.1rem; font-weight:700;">${coffee && coffee.moisture_content !== null && coffee.moisture_content !== undefined ? coffee.moisture_content + '%' : '—'}</div>
+            </div>
+            <div style="background: var(--bg-input); border-radius: 8px; padding: 10px 12px;">
+                <div style="font-size:0.7rem; color:var(--text-muted);" data-i18n="tracking_lbl_water_activity">Water activity</div>
+                <div style="font-size:1.1rem; font-weight:700;">${coffee ? (coffee.water_activity ?? '—') : '—'}</div>
+            </div>
+            <div style="background: var(--bg-input); border-radius: 8px; padding: 10px 12px;">
+                <div style="font-size:0.7rem; color:var(--text-muted);" data-i18n="tracking_lbl_density">Density</div>
+                <div style="font-size:1.1rem; font-weight:700;">${coffee ? (coffee.density ?? '—') : '—'}</div>
+            </div>
+        </div>
+        <div style="max-height:250px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th data-i18n="col_analysis_date">Test Date</th>
+                        <th data-i18n="col_analysis_lot">Lot</th>
+                        <th data-i18n="tracking_lbl_moisture">Moisture</th>
+                        <th data-i18n="tracking_lbl_water_activity">Water Activity</th>
+                        <th data-i18n="tracking_lbl_density">Density</th>
+                        <th data-i18n="col_analysis_source">Source</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        </div>
+    `;
+    if (typeof window.translatePage === 'function') window.translatePage();
+
+    const addBtn = document.getElementById('btn-add-reading-inline');
+    if (addBtn) {
+        addBtn.addEventListener('click', () => openAnalysisRecordModal(null, coffeeId));
+    }
+}
+
+// V2 Greenbean Inventory row click: 2-tab detail modal (Stock History /
+// Lab Readings). Tabs are a small local click-toggle, not the app's
+// page-level .tab-btn system (that's wired once at boot against
+// #sec-* sections; this modal is injected dynamically into
+// #modal-body-content, so those listeners never see it).
+async function openGreenbeanDetailModal(coffeeId) {
+    const { data: greenbeans } = await fetchData('green_coffee');
+    const bean = (greenbeans || []).find(g => g.id === coffeeId);
+    if (!bean) return;
+
+    const html = `
+        <div style="display:flex; gap:4px; margin:-8px 0 14px; border-bottom:1px solid var(--border);">
+            <div id="gbd-tab-history" style="padding:9px 16px; font-size:0.85rem; cursor:pointer; border-bottom:2px solid var(--primary); font-weight:700;" data-i18n="tab_stock_history">Stock History</div>
+            <div id="gbd-tab-lab" style="padding:9px 16px; font-size:0.85rem; cursor:pointer; color:var(--text-muted);" data-i18n="tab_lab_readings">Lab Readings</div>
+        </div>
+        <div id="gbd-panel-history"></div>
+        <div id="gbd-panel-lab" class="hidden"></div>
+    `;
+
+    openModal(`${bean.code || ''} — ${bean.name}`, html, '700px');
+    if (typeof window.translatePage === 'function') window.translatePage();
+
+    const tabHistory = document.getElementById('gbd-tab-history');
+    const tabLab = document.getElementById('gbd-tab-lab');
+    const panelHistory = document.getElementById('gbd-panel-history');
+    const panelLab = document.getElementById('gbd-panel-lab');
+
+    function activate(which) {
+        const isHistory = which === 'history';
+        tabHistory.style.borderBottom = isHistory ? '2px solid var(--primary)' : 'none';
+        tabHistory.style.fontWeight = isHistory ? '700' : '400';
+        tabHistory.style.color = isHistory ? '' : 'var(--text-muted)';
+        tabLab.style.borderBottom = isHistory ? 'none' : '2px solid var(--primary)';
+        tabLab.style.fontWeight = isHistory ? '400' : '700';
+        tabLab.style.color = isHistory ? 'var(--text-muted)' : '';
+        panelHistory.classList.toggle('hidden', !isHistory);
+        panelLab.classList.toggle('hidden', isHistory);
+    }
+    tabHistory.addEventListener('click', () => activate('history'));
+    tabLab.addEventListener('click', () => { activate('lab'); renderLabReadingsTab(coffeeId, panelLab); });
+
+    await renderStockHistoryTab(coffeeId, panelHistory);
 }
 
 // V2 barcode label fix: green bean sacks always need ONE BARCODE PER
@@ -1132,6 +1445,25 @@ async function loadOutboundHistory() {
     applyFiltersForTable(document.querySelector('#tab-gb-outbound table'));
 }
 
+// V2 Stock History: reverses a shipment's previously recorded consumption
+// (used before re-consuming on edit, and before deleting) by adding kg back
+// to the exact lots it was drawn from, then removes those
+// green_coffee_outbound_lots rows. Mirrors refundGreenCoffeeLotsForBatch in
+// js/roasting.js. Safe no-op if the shipment predates this tracking.
+async function refundGreenCoffeeLotsForOutbound(outboundId) {
+    const { data: allDraws } = await fetchData('green_coffee_outbound_lots');
+    const mine = (allDraws || []).filter(d => d.green_coffee_outbound_id === outboundId);
+    if (mine.length === 0) return;
+    const { data: allLots } = await fetchData('green_coffee_lots');
+    for (const d of mine) {
+        const lot = (allLots || []).find(l => l.id === d.green_coffee_lot_id);
+        if (lot) {
+            await saveData('green_coffee_lots', { id: lot.id, remaining_kg: parseFloat(lot.remaining_kg || 0) + parseFloat(d.kg || 0) });
+        }
+        await deleteData('green_coffee_outbound_lots', d.id);
+    }
+}
+
 async function openOutboundModal(editId = null) {
     const [
         { data: inventory },
@@ -1250,23 +1582,20 @@ async function openOutboundModal(editId = null) {
             if (!proceed) return;
         }
 
-        // On edit, first restore the previously-shipped qty to its old bean so
-        // the net stock change reflects only the new values.
-        if (editId && outItem) {
-            const oldBean = (inventory || []).find(g =>
-                (outItem.green_coffee_id && g.id === outItem.green_coffee_id) ||
-                (!outItem.green_coffee_id && g.name === outItem.name && g.code === outItem.code)
-            );
-            if (oldBean) {
-                oldBean.stock_kg = parseFloat(oldBean.stock_kg || 0) + parseFloat(outItem.quantity || 0);
-                await saveData('green_coffee', oldBean);
-            }
+        // On edit, first refund whatever lots the previous version of this
+        // shipment drew from, before re-consuming for the new coffee/qty —
+        // mirrors js/roasting.js's refundGreenCoffeeLotsForBatch.
+        if (editId) {
+            await refundGreenCoffeeLotsForOutbound(editId);
         }
 
-        // Deduct from the (possibly restored) chosen bean.
-        const freshBean = (inventory || []).find(g => g.id === coffeeId) || bean;
-        freshBean.stock_kg = Math.max(0, parseFloat(freshBean.stock_kg || 0) - quantity);
-        await saveData('green_coffee', freshBean);
+        // V2 Stock History: consume via green_coffee_lots (FIFO), not a
+        // direct stock_kg write — stock_kg is DERIVED (trigger-summed from
+        // green_coffee_lots.remaining_kg, see v2_lot_tracking_migration.sql),
+        // so writing it directly here would get silently reverted the next
+        // time any lot for this coffee changes, and left Outbound rows with
+        // no lot to show in Stock History.
+        const { draws } = await consumeGreenCoffeeLotsFifo(coffeeId, quantity);
 
         const record = {
             id: editId || undefined,
@@ -1280,10 +1609,18 @@ async function openOutboundModal(editId = null) {
             destination,
             notes: notes || null
         };
-        const { error } = await saveData('green_coffee_outbound', record);
+        const { data: savedOut, error } = await saveData('green_coffee_outbound', record);
         if (error) {
             alert((window.t ? window.t('alert_save_failed').replace('{msg}', error.message) : 'Save failed: ' + error.message));
             return;
+        }
+
+        for (const d of draws) {
+            await saveData('green_coffee_outbound_lots', {
+                green_coffee_outbound_id: savedOut.id,
+                green_coffee_lot_id: d.lotId,
+                kg: d.kg
+            });
         }
 
         modalContainer.classList.add('hidden');
@@ -1295,26 +1632,14 @@ async function openOutboundModal(editId = null) {
 
 async function deleteOutbound(deleteId) {
     if (!(await showDeleteConfirmModal('this outbound shipment'))) return;
-    const [
-        { data: history },
-        { data: inventory }
-    ] = await Promise.all([
-        fetchData('green_coffee_outbound'),
-        fetchData('green_coffee')
-    ]);
+    const { data: history } = await fetchData('green_coffee_outbound');
     const item = (history || []).find(i => i.id === deleteId);
     if (!item) return;
 
-    // Deleting an outbound record means the beans never left — add the qty
-    // back to the matching inventory row.
-    const match = (inventory || []).find(g =>
-        (item.green_coffee_id && g.id === item.green_coffee_id) ||
-        (!item.green_coffee_id && g.name === item.name && g.code === item.code)
-    );
-    if (match) {
-        match.stock_kg = parseFloat(match.stock_kg || 0) + parseFloat(item.quantity || 0);
-        await saveData('green_coffee', match);
-    }
+    // Deleting an outbound record means the beans never left — refund
+    // whatever lots it drew from (V2 Stock History; same helper the edit
+    // path uses) instead of writing green_coffee.stock_kg directly.
+    await refundGreenCoffeeLotsForOutbound(deleteId);
 
     const { error } = await deleteData('green_coffee_outbound', deleteId);
     if (error) {
