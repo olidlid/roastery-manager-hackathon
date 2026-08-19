@@ -882,9 +882,24 @@ async function openAnalysisRecordModal(editId = null) {
     const lotSelect = document.getElementById('m-an-lot');
 
     function renderLotOptions(coffeeId) {
-        const myLots = (lots || [])
+        const allLots = (lots || [])
             .filter(l => l.green_coffee_id === coffeeId)
             .sort((a, b) => (b.arrival_date || '').localeCompare(a.arrival_date || '') || b.id - a.id);
+        // Every lot still holding stock, plus at most the 2 most recent
+        // depleted ones (a coffee that's been arriving for months can have
+        // dozens of long-emptied lots — showing all of them just buries the
+        // handful anyone would actually pick).
+        const withStock = allLots.filter(l => parseFloat(l.remaining_kg || 0) > 0);
+        const depleted = allLots.filter(l => parseFloat(l.remaining_kg || 0) <= 0).slice(0, 2);
+        let myLots = [...withStock, ...depleted];
+        // Editing: always include the record's own lot, even if it's an
+        // older depleted one trimmed above — otherwise the (disabled) select
+        // would show the wrong lot for this reading.
+        if (record && !myLots.some(l => l.id === record.green_coffee_lot_id)) {
+            const ownLot = allLots.find(l => l.id === record.green_coffee_lot_id);
+            if (ownLot) myLots.push(ownLot);
+        }
+        myLots = myLots.sort((a, b) => (b.arrival_date || '').localeCompare(a.arrival_date || '') || b.id - a.id);
         lotSelect.innerHTML = myLots.map(l =>
             `<option value="${l.id}" ${record && record.green_coffee_lot_id === l.id ? 'selected' : ''}>${l.lot_code} · ${l.arrival_date || '-'} · ${parseFloat(l.remaining_kg || 0).toFixed(1)}kg left</option>`
         ).join('') || `<option value="" disabled selected>-- No lots yet --</option>`;
