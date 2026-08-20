@@ -594,6 +594,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS packed_coffee_lots_strip_code_live_uniq
 ON public.packed_coffee_lots (strip_code)
 WHERE remaining_pcs > 0 AND strip_code IS NOT NULL;
 
+-- packed_coffee.quantity becomes a DERIVED value (applied to production
+-- 2026-08-19), mirroring green_coffee.stock_kg (section 12/22 above) — that
+-- migration's own comment flagged this as "planned for 1G-1" but it was
+-- never implemented, and quantity drifted from packed_coffee_lots'
+-- remaining_pcs sum on ~9 separate write paths across js/packing.js
+-- (checkout, pack bulk, repack, close lot, waste, stock release, ...),
+-- some under by a few pcs, some over by 100+ (the table showing stock that
+-- didn't physically exist). See
+-- database/v2_packed_coffee_quantity_derived_migration.sql for the backfill.
+CREATE OR REPLACE FUNCTION public.sync_packed_coffee_quantity() RETURNS TRIGGER AS $$
+DECLARE
+    target_id INTEGER;
+BEGIN
+    target_id := COALESCE(NEW.packed_coffee_id, OLD.packed_coffee_id);
+    IF target_id IS NOT NULL THEN
+        UPDATE public.packed_coffee
+        SET quantity = (
+            SELECT COALESCE(SUM(remaining_pcs), 0)
+            FROM public.packed_coffee_lots
+            WHERE packed_coffee_id = target_id
+        )
+        WHERE id = target_id;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_packed_coffee_quantity ON public.packed_coffee_lots;
+CREATE TRIGGER trg_sync_packed_coffee_quantity
+AFTER INSERT OR UPDATE OF remaining_pcs OR DELETE ON public.packed_coffee_lots
+FOR EACH ROW EXECUTE FUNCTION sync_packed_coffee_quantity();
+
 -- 25. Production lots (traceability for "Ready to Pack" barcode workflow —
 -- see database/production_lots_migration.sql for the migration + full notes).
 -- One row per (bulk_roasted_coffee row, production_date); the Tracking page
