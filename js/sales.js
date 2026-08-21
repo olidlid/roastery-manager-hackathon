@@ -1699,14 +1699,29 @@ async function approveSalesOrder(orderId) {
 
             await saveData('request_order_items', item);
             
-            // Deduct packed stock — machine-partitioned (confirmed 2026-07-15):
-            // must only deduct from the SAME machine the item requested,
-            // otherwise this would silently deplete a different machine's
-            // stock than what the "Packed Stock" figure shown to the approver
-            // was actually based on.
+            // Deduct packed stock. Non-trade-name items are machine-
+            // partitioned (confirmed 2026-07-15): findMatchingPacked already
+            // restricts them to the SAME machine the item requested. Trade-
+            // name (coffee_code) items intentionally pool across every
+            // machine sharing the code (see findMatchingPacked/findMatchingBulk
+            // above) — "which origin/machine ends up filling the order" is
+            // deferred to packing/dispatch, not decided here. What WAS
+            // missing for the pooled case: szItems had no ordering, so this
+            // drew from whichever packed_coffee row happened to come first in
+            // fetch order — not FIFO. Found 2026-08-22 via a live repro: a
+            // GIESEN-tagged order line drew from STRONGHOLD stock instead
+            // while GIESEN's own (newer) stock sat untouched. Sorting by each
+            // row's oldest live lot date restores real cross-machine FIFO.
             if (fQty > 0) {
                 const matchingPacked = findMatchingPacked(item);
-                const szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
+                let szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
+
+                if (item.coffee_code) {
+                    const oldestLiveLotDate = (packedCoffeeId) => (packedCoffeeLots || [])
+                        .filter(l => l.packed_coffee_id === packedCoffeeId && (parseInt(l.remaining_pcs) || 0) > 0)
+                        .reduce((min, l) => (!min || (l.packed_date || '') < min) ? (l.packed_date || '') : min, null);
+                    szItems = [...szItems].sort((a, b) => (oldestLiveLotDate(a.id) || '9999-99-99').localeCompare(oldestLiveLotDate(b.id) || '9999-99-99') || a.id - b.id);
+                }
 
                 let remainingDeduct = fQty;
                 for (const p of szItems) {
@@ -1714,9 +1729,15 @@ async function approveSalesOrder(orderId) {
                     let avail = parseInt(p.quantity) || 0;
                     if (avail > 0) {
                         let take = Math.min(avail, remainingDeduct);
+                        // In-memory only — tracks how much of this row later
+                        // items in the SAME approval batch may still draw
+                        // (packedGoods is fetched once for the whole
+                        // function). The DB write is intentionally skipped:
+                        // packed_coffee.quantity is trigger-derived from
+                        // packed_coffee_lots (sync_packed_coffee_quantity), so
+                        // the lot writes below already persist the real value.
                         p.quantity = avail - take;
                         remainingDeduct -= take;
-                        await saveData('packed_coffee', p);
 
                         // Keep packed_coffee_lots (the per-lot FIFO source of
                         // truth the dispatch checkout modal reads) in sync,
