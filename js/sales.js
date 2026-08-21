@@ -1701,66 +1701,59 @@ async function approveSalesOrder(orderId) {
             
             // Deduct packed stock. Non-trade-name items are machine-
             // partitioned (confirmed 2026-07-15): findMatchingPacked already
-            // restricts them to the SAME machine the item requested. Trade-
-            // name (coffee_code) items intentionally pool across every
-            // machine sharing the code (see findMatchingPacked/findMatchingBulk
+            // restricts them to the SAME machine the item requested, so
+            // szItems is always exactly one row and this is just that row's
+            // own lots in date order (unchanged behavior). Trade-name
+            // (coffee_code) items intentionally pool across every machine
+            // sharing the code (see findMatchingPacked/findMatchingBulk
             // above) — "which origin/machine ends up filling the order" is
-            // deferred to packing/dispatch, not decided here. What WAS
-            // missing for the pooled case: szItems had no ordering, so this
-            // drew from whichever packed_coffee row happened to come first in
-            // fetch order — not FIFO. Found 2026-08-22 via a live repro: a
-            // GIESEN-tagged order line drew from STRONGHOLD stock instead
-            // while GIESEN's own (newer) stock sat untouched. Sorting by each
-            // row's oldest live lot date restores real cross-machine FIFO.
+            // deferred to packing/dispatch, not decided here.
+            //
+            // What WAS missing for the pooled case: draws happened row-by-row
+            // (fully drain one packed_coffee row before touching the next) in
+            // whatever order fetch returned them — not FIFO. Found 2026-08-22
+            // via a live repro: a GIESEN-tagged order line drew from
+            // STRONGHOLD stock instead while GIESEN's own stock sat
+            // untouched. Sorting the ROWS by oldest date isn't enough either
+            // — two rows can tie on their oldest lot's date while one of them
+            // only has a handful of pcs left at that date, so draining it
+            // first still skips over an equally-old lot sitting in the other
+            // row. The only correct fix is to flatten every pooled row's live
+            // lots into ONE list and sort THAT by date, so the draw crosses
+            // rows/machines exactly when the calendar says it should.
             if (fQty > 0) {
                 const matchingPacked = findMatchingPacked(item);
-                let szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
+                const szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
+                const szItemById = new Map(szItems.map(p => [p.id, p]));
 
-                if (item.coffee_code) {
-                    const oldestLiveLotDate = (packedCoffeeId) => (packedCoffeeLots || [])
-                        .filter(l => l.packed_coffee_id === packedCoffeeId && (parseInt(l.remaining_pcs) || 0) > 0)
-                        .reduce((min, l) => (!min || (l.packed_date || '') < min) ? (l.packed_date || '') : min, null);
-                    szItems = [...szItems].sort((a, b) => (oldestLiveLotDate(a.id) || '9999-99-99').localeCompare(oldestLiveLotDate(b.id) || '9999-99-99') || a.id - b.id);
-                }
+                const drawLots = szItems
+                    .flatMap(p => (packedCoffeeLots || []).filter(l => l.packed_coffee_id === p.id && (parseInt(l.remaining_pcs) || 0) > 0))
+                    .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id);
 
                 let remainingDeduct = fQty;
-                for (const p of szItems) {
+                for (const lot of drawLots) {
                     if (remainingDeduct <= 0) break;
-                    let avail = parseInt(p.quantity) || 0;
-                    if (avail > 0) {
-                        let take = Math.min(avail, remainingDeduct);
-                        // In-memory only — tracks how much of this row later
-                        // items in the SAME approval batch may still draw
-                        // (packedGoods is fetched once for the whole
-                        // function). The DB write is intentionally skipped:
-                        // packed_coffee.quantity is trigger-derived from
-                        // packed_coffee_lots (sync_packed_coffee_quantity), so
-                        // the lot writes below already persist the real value.
-                        p.quantity = avail - take;
-                        remainingDeduct -= take;
+                    const lotAvail = parseInt(lot.remaining_pcs) || 0;
+                    if (lotAvail <= 0) continue;
+                    const take = Math.min(lotAvail, remainingDeduct);
+                    lot.remaining_pcs = lotAvail - take;
+                    remainingDeduct -= take;
+                    // Per-lot write — packed_coffee_lots is the FIFO source of
+                    // truth the dispatch checkout modal reads; without this,
+                    // fulfilling an order from existing stock at approval time
+                    // would leave every lot's remaining_pcs stale/overstated
+                    // so checkout could still offer units already consumed
+                    // here (found 2026-07-27).
+                    await saveData('packed_coffee_lots', lot);
 
-                        // Keep packed_coffee_lots (the per-lot FIFO source of
-                        // truth the dispatch checkout modal reads) in sync,
-                        // oldest lot first — without this, fulfilling an
-                        // order from existing stock at approval time only
-                        // shrank this flattened total, leaving every lot's
-                        // remaining_pcs stale/overstated so checkout could
-                        // still offer units already consumed here (found
-                        // 2026-07-27, see also js/packing.js's checkout
-                        // deduction which already does both together).
-                        const myLots = (packedCoffeeLots || [])
-                            .filter(l => l.packed_coffee_id === p.id && (parseInt(l.remaining_pcs) || 0) > 0)
-                            .sort((a, b) => new Date(a.packed_date) - new Date(b.packed_date) || a.id - b.id);
-                        let lotDeduct = take;
-                        for (const lot of myLots) {
-                            if (lotDeduct <= 0) break;
-                            const lotAvail = parseInt(lot.remaining_pcs) || 0;
-                            const lotTake = Math.min(lotAvail, lotDeduct);
-                            lot.remaining_pcs = lotAvail - lotTake;
-                            lotDeduct -= lotTake;
-                            await saveData('packed_coffee_lots', lot);
-                        }
-                    }
+                    // In-memory only — packed_coffee.quantity is trigger-
+                    // derived from the lot write above
+                    // (sync_packed_coffee_quantity). Tracked here purely so a
+                    // later item in the SAME approval batch sees this row's
+                    // reduced total (packedGoods/matchingPacked is fetched
+                    // once for the whole function, not re-queried per item).
+                    const parentRow = szItemById.get(lot.packed_coffee_id);
+                    if (parentRow) parentRow.quantity = Math.max(0, (parseInt(parentRow.quantity) || 0) - take);
                 }
             }
 
