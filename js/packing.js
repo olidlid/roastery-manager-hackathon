@@ -1217,11 +1217,9 @@ async function submitCustomBlend({ name, coffeeCode, sourceRows, machineId }) {
             const kg = Math.min(row.amountKg, availKg); // capped
             if (kg <= 0) continue;
             const bagsUsed = bagSizeG > 0 ? Math.round(kg / (bagSizeG / 1000)) : 0;
+            // packed_coffee.quantity is trigger-derived from this lots write
+            // (sync_packed_coffee_quantity) — no separate packed_coffee write needed.
             await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: Math.max(0, availPcs - bagsUsed) });
-            if (packedRow) {
-                packedRow.quantity = Math.max(0, (parseInt(packedRow.quantity) || 0) - bagsUsed);
-                await saveData('packed_coffee', packedRow);
-            }
             totalKg += kg;
             componentsToInsert.push({ source_type: 'Packed', source_bulk_id: null, source_packed_lot_id: row.lotId, kg });
         }
@@ -1454,12 +1452,9 @@ async function openEditPackingRecordModal(recordId) {
 
         const newRemaining = Math.max(0, currentRemaining + delta);
 
+        // packed_coffee.quantity is trigger-derived from this lots write
+        // (sync_packed_coffee_quantity) — no separate packed_coffee write needed.
         await saveData('packed_coffee_lots', { id: lot.id, quantity_pcs: newQty, remaining_pcs: newRemaining });
-
-        if (parentPacked) {
-            const newParentQty = Math.max(0, (parseInt(parentPacked.quantity) || 0) + (newRemaining - currentRemaining));
-            await saveData('packed_coffee', { id: parentPacked.id, quantity: newParentQty });
-        }
 
         // More bags packed = more bulk kg consumed, so bulk moves the
         // opposite direction of the packed-quantity delta. Optional: the
@@ -1886,10 +1881,15 @@ async function openDispatchCheckoutModal(orderId) {
     const machineName = (id) => { const m = (machines || []).find(mm => mm.id === id); return m ? m.name : 'Unknown'; };
     const fifoLotForItemMachine = (itemId) => {
         const item = items.find(i => i.id === itemId);
+        // Only recommend/flag a lot that still has live stock — otherwise a
+        // fully-taken lot (liveRemaining 0, not yet persisted since Checkout
+        // hasn't been clicked) keeps winning "oldest" and triggers the FIFO
+        // warning against itself, contradicting its own "0 left" message.
+        const available = (lotsByItem[itemId] || []).filter(l => (liveRemaining[l.id] || 0) > 0);
         // A trade-name item isn't tied to one machine — the oldest lot from
         // ANY origin/machine sharing the code is the FIFO recommendation.
-        if (item.coffee_code) return (lotsByItem[itemId] || [])[0] || null;
-        return (lotsByItem[itemId] || []).find(l => l.machineId === item.machine_id) || null;
+        if (item.coffee_code) return available[0] || null;
+        return available.find(l => l.machineId === item.machine_id) || null;
     };
     const alreadyInCartForItem = (itemId) => {
         let sum = 0;
@@ -2059,10 +2059,7 @@ async function openDispatchCheckoutModal(orderId) {
         if (undoQty <= 0) return;
         if (undoQty > prepared) undoQty = prepared;
 
-        const [{ data: freshLots }, { data: freshPacked }] = await Promise.all([
-            fetchData('packed_coffee_lots'),
-            fetchData('packed_coffee')
-        ]);
+        const { data: freshLots } = await fetchData('packed_coffee_lots');
 
         let remaining = undoQty;
         for (const d of trail) {
@@ -2075,13 +2072,14 @@ async function openDispatchCheckoutModal(orderId) {
                 const lot = (freshLots || []).find(l => l.id === d.packed_coffee_lot_id);
                 if (lot) {
                     const newRemainingPcs = (parseInt(lot.remaining_pcs) || 0) + take;
+                    // packed_coffee.quantity is trigger-derived from this lots write
+                    // (sync_packed_coffee_quantity) — no separate packed_coffee write needed.
+                    // A manual write here used a stale pre-loop `freshPacked` snapshot and
+                    // could clobber the trigger's correct value when a sibling lot under the
+                    // same packed_coffee_id changed concurrently — this caused the reported
+                    // "undo restores less than what was taken" bug.
                     await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemainingPcs });
                     liveRemaining[lot.id] = (liveRemaining[lot.id] || 0) + take;
-                    const packedRow = (freshPacked || []).find(p => p.id === lot.packed_coffee_id);
-                    if (packedRow) {
-                        packedRow.quantity = (parseInt(packedRow.quantity) || 0) + take;
-                        await saveData('packed_coffee', packedRow);
-                    }
                 }
             }
 
@@ -2401,30 +2399,24 @@ async function submitDispatchCheckout(order, items, cart, cust) {
         return;
     }
 
-    const [{ data: freshItems }, { data: freshLots }, { data: freshPacked }] = await Promise.all([
+    const [{ data: freshItems }, { data: freshLots }] = await Promise.all([
         fetchData('request_order_items'),
-        fetchData('packed_coffee_lots'),
-        fetchData('packed_coffee')
+        fetchData('packed_coffee_lots')
     ]);
 
     // Sum cart qty per order line.
     const qtyByItem = new Map();
     cart.forEach(row => { qtyByItem.set(row.orderItemId, (qtyByItem.get(row.orderItemId) || 0) + row.qty); });
 
-    // Deduct packed_coffee_lots (the per-lot source of truth) and keep the
-    // parent packed_coffee row's flattened total in sync (not yet derived —
-    // see V2_ROADMAP.md 1G), then record the fulfillment for traceability.
+    // Deduct packed_coffee_lots (the per-lot source of truth). The parent
+    // packed_coffee row's flattened total is trigger-derived
+    // (sync_packed_coffee_quantity) from this write, no separate write needed —
+    // then record the fulfillment for traceability.
     for (const row of cart.values()) {
         const lot = (freshLots || []).find(l => l.id === row.lotId);
         if (!lot) continue;
         const newRemaining = Math.max(0, (parseInt(lot.remaining_pcs) || 0) - row.qty);
         await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemaining });
-
-        const packedRow = (freshPacked || []).find(p => p.id === lot.packed_coffee_id);
-        if (packedRow) {
-            packedRow.quantity = Math.max(0, (parseInt(packedRow.quantity) || 0) - row.qty);
-            await saveData('packed_coffee', packedRow);
-        }
 
         await saveData('dispatch_lot_items', {
             request_order_item_id: row.orderItemId,
@@ -3310,9 +3302,8 @@ async function openPackBulkModal(bulkId) {
             for (const add of additions) {
                 const packedRow = await getOrCreatePackedCoffeeRow(bulk.coffee_name, add.gram, bulk.machine_id);
                 if (!packedRow) continue;
-                packedRow.quantity = (parseInt(packedRow.quantity) || 0) + add.qty;
-                await saveData('packed_coffee', packedRow);
-
+                // packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity)
+                // from the packed_coffee_lots write below — no separate write needed.
                 const packedLot = await getOrCreatePackedCoffeeLot(packedRow.id, add.qty, productionLot ? productionLot.id : null);
                 await saveData('packing_records', {
                     date: packingDate,
@@ -3532,6 +3523,38 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId) 
     return newLot;
 }
 
+// packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity) from
+// SUM(packed_coffee_lots.remaining_pcs) — a manual stock-count correction (Adjust
+// Stock / Edit Packed Stock) can no longer write packed_coffee.quantity directly,
+// since the trigger would silently revert it the next time ANY lot for that row
+// changes. Instead this applies the requested delta to the lots themselves:
+// an increase lands in the existing/newest manual lot (via getOrCreatePackedCoffeeLot,
+// same as a fresh manual pack); a decrease is drawn FIFO (oldest packed_date
+// first, same convention as every other consumption flow in this file) across
+// however many lots it takes, clamped so no lot goes negative.
+async function applyPackedCoffeeManualQtyDelta(packedCoffeeId, delta) {
+    if (!delta) return;
+    if (delta > 0) {
+        await getOrCreatePackedCoffeeLot(packedCoffeeId, delta, null);
+        return;
+    }
+    let remaining = -delta;
+    const { data: lots } = await fetchData('packed_coffee_lots');
+    const ordered = (lots || [])
+        .filter(l => l.packed_coffee_id === packedCoffeeId && (parseInt(l.remaining_pcs) || 0) > 0)
+        .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id);
+    for (const lot of ordered) {
+        if (remaining <= 0) break;
+        const avail = parseInt(lot.remaining_pcs) || 0;
+        const take = Math.min(avail, remaining);
+        if (take <= 0) continue;
+        await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: avail - take });
+        remaining -= take;
+    }
+    // Any shortfall (asking to remove more than the lots actually hold) is
+    // simply not applied further — quantity floors at whatever the lots sum to.
+}
+
 // Shared by openPackBulkModal, openPrintBarcodeModal, AND
 // openCustomPackingModal so none of them can create two separate
 // packed_coffee rows for the same name+size+machine — quantity starts at 0
@@ -3594,8 +3617,9 @@ async function adjustPackedStock(id) {
     const newQty = parseInt(newQtyStr);
     
     if (!isNaN(newQty) && newQty >= 0) {
-        record.quantity = newQty;
-        await saveData('packed_coffee', record);
+        // quantity is trigger-derived from packed_coffee_lots — apply the
+        // change as a lot delta, not a direct write (see applyPackedCoffeeManualQtyDelta).
+        await applyPackedCoffeeManualQtyDelta(id, newQty - (parseInt(record.quantity) || 0));
         loadPackingSection();
         scheduleDashboardRefresh();
     } else {
@@ -4343,8 +4367,9 @@ async function openEditPackedModal(coffeeName) {
             
             const targetRec = packed.find(p => p.id === id);
             if (targetRec && parseInt(targetRec.quantity) !== newVal) {
-                targetRec.quantity = newVal;
-                await saveData('packed_coffee', targetRec);
+                // quantity is trigger-derived from packed_coffee_lots — apply the
+                // change as a lot delta, not a direct write (see applyPackedCoffeeManualQtyDelta).
+                await applyPackedCoffeeManualQtyDelta(id, newVal - (parseInt(targetRec.quantity) || 0));
             }
         }
         
@@ -4470,12 +4495,9 @@ async function openCustomPackingModal() {
             // then we add this entry's qty on top — same two-step shape as
             // openPackBulkModal.
             const packedRow = await getOrCreatePackedCoffeeRow(coffeeName, item.gram, machineId);
-            let packedCoffeeId = null;
-            if (packedRow) {
-                packedRow.quantity = (parseInt(packedRow.quantity) || 0) + item.qty;
-                await saveData('packed_coffee', packedRow);
-                packedCoffeeId = packedRow.id;
-            }
+            const packedCoffeeId = packedRow ? packedRow.id : null;
+            // packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity)
+            // from the packed_coffee_lots write below — no separate write needed.
             // V2 1G-1: no source bulk/production lot for a manual entry — link left null.
             if (packedCoffeeId) {
                 await getOrCreatePackedCoffeeLot(packedCoffeeId, item.qty, null);
@@ -5269,18 +5291,14 @@ async function submitRepack(group, rows, roastDate) {
     }
 
     const { data: freshLots } = await fetchData('packed_coffee_lots');
-    const { data: freshPacked } = await fetchData('packed_coffee');
 
     for (const r of rows) {
         const lot = (freshLots || []).find(l => l.id === r.lotId);
         if (lot) {
             const newRemaining = Math.max(0, (parseInt(lot.remaining_pcs) || 0) - r.pcs);
+            // packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity)
+            // from this lots write — no separate packed_coffee write needed.
             await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemaining });
-        }
-        const packedRow = (freshPacked || []).find(p => p.id === r.packedCoffeeId);
-        if (packedRow) {
-            const newQty = Math.max(0, (parseInt(packedRow.quantity) || 0) - r.pcs);
-            await saveData('packed_coffee', { id: packedRow.id, quantity: newQty });
         }
         await saveData('repack_sources', {
             repack_bulk_id: newBulk.id,
@@ -5980,8 +5998,6 @@ async function submitStockRelease({ date, category, salesName, notes, lines }) {
         return;
     }
 
-    const { data: freshPacked } = await fetchData('packed_coffee');
-
     for (const line of lines) {
         await saveData('stock_release_items', {
             stock_release_id: header.id,
@@ -5995,12 +6011,9 @@ async function submitStockRelease({ date, category, salesName, notes, lines }) {
         const lot = (freshLots || []).find(l => l.id === line.lotId);
         if (lot) {
             const newRemaining = Math.max(0, (parseInt(lot.remaining_pcs) || 0) - line.qty);
+            // packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity)
+            // from this lots write — no separate packed_coffee write needed.
             await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemaining });
-        }
-        const packedRow = (freshPacked || []).find(p => p.id === line.packedCoffeeId);
-        if (packedRow) {
-            const newQty = Math.max(0, (parseInt(packedRow.quantity) || 0) - line.qty);
-            await saveData('packed_coffee', { id: packedRow.id, quantity: newQty });
         }
     }
 
