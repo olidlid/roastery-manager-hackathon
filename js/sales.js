@@ -1744,7 +1744,11 @@ async function approveSalesOrder(orderId) {
                     // read-modify-write, which is exactly what let two concurrent
                     // approvals (or an approval racing a checkout) silently
                     // under-deduct a shared lot (found 2026-08-22).
-                    const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', { p_lot_id: lot.id, p_pcs: remainingDeduct });
+                    const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', {
+                        p_lot_id: lot.id, p_pcs: remainingDeduct,
+                        p_operation: 'approval_fulfil', p_ref_table: 'request_order_items', p_ref_id: item.id,
+                        p_user: (currentUser && currentUser.name) || null
+                    });
                     if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
                     const take = parseInt(taken) || 0;
                     if (take <= 0) continue;

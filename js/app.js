@@ -3613,7 +3613,7 @@ function applyStockGroupAdjustment(group, actual) {
 // NOT touch quantity_kg/quantity_pcs on existing lots (STOCK_LEDGER_PLAN.md
 // F6) — an increase always lands as a new, clearly-labeled adjustment
 // record rather than rewriting how much an existing lot originally held.
-async function applyStockGroupAdjustmentToLots(group, actual) {
+async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
     const delta = actual - group.systemQty;
     if (Math.abs(delta) < 1e-9) return;
 
@@ -3649,7 +3649,7 @@ async function applyStockGroupAdjustmentToLots(group, actual) {
         // the same row order applyStockGroupAdjustment used: surplus lands
         // on the first row, shortage drains rows in list order.
         if (delta > 0) {
-            await applyPackedCoffeeManualQtyDelta(group.rows[0].rec.id, delta);
+            await applyPackedCoffeeManualQtyDelta(group.rows[0].rec.id, delta, 'stocktake', 'stock_takes', stockTakeId);
         } else {
             let remaining = -delta;
             for (const row of group.rows) {
@@ -3657,7 +3657,7 @@ async function applyStockGroupAdjustmentToLots(group, actual) {
                 const avail = parseFloat(row.rec.quantity) || 0;
                 const take = Math.min(avail, remaining);
                 if (take <= 0) continue;
-                await applyPackedCoffeeManualQtyDelta(row.rec.id, -take);
+                await applyPackedCoffeeManualQtyDelta(row.rec.id, -take, 'stocktake', 'stock_takes', stockTakeId);
                 remaining -= take;
             }
         }
@@ -3719,7 +3719,7 @@ async function finalizeStockTake() {
                 await saveData(row.table, row.rec);
             }
         } else {
-            await applyStockGroupAdjustmentToLots(adj.group, adj.actual);
+            await applyStockGroupAdjustmentToLots(adj.group, adj.actual, parent.id);
         }
     }
 
