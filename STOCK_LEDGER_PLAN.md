@@ -1,6 +1,6 @@
 # Stock Ledger — Execution Plan
 
-**Status:** approved for execution, not started
+**Status:** Phase 0 done (commit `272557d`), Phase 1 done (commit `3f0719f`), Phase 2 done (commit `e975c10`) — see addendum before Phase 3.
 **Audit date:** 2026-08-22 (live, against production)
 **Goal:** every change to packed stock is atomic, lot-specific, and permanently traceable — so any future error can be found and reversed.
 
@@ -330,6 +330,39 @@ NOTIFY pgrst, 'reload schema';
 **Verify:** the hard invariant query in §Appendix must return zero rows.
 
 ---
+
+## Addendum (found while verifying Phase 2, 2026-08-22) — RPC signatures need a context parameter before Phase 3
+
+Live verification of the Phase 2 trigger set context by calling `saveData('packed_coffee_lots', {id, mv_operation, mv_ref_table, mv_ref_id, mv_reason})` — a **separate** UPDATE — immediately before calling `consume_packed_lot`. This worked in the test (the ledger trigger only fires on `remaining_pcs`/`packed_coffee_id` changes, so the mv_*-only write doesn't fire it; the context sits on the row until the RPC's UPDATE does), but it is not safe as a general pattern: between the two calls, any OTHER concurrent write to the same lot (another RPC call from a different request) could consume — or overwrite — that context, mislabeling an unrelated movement. This defeats Phase 1's whole point of making these single atomic statements.
+
+**Before Phase 3 begins:** extend `consume_packed_lot`, `refund_packed_lot`, and `set_packed_lot_remaining` (`database/v2_packed_lot_atomic_functions_migration.sql`) to accept optional context parameters set in the SAME UPDATE, e.g.:
+
+```sql
+CREATE OR REPLACE FUNCTION public.consume_packed_lot(
+    p_lot_id INTEGER, p_pcs INTEGER,
+    p_operation TEXT DEFAULT NULL, p_ref_table TEXT DEFAULT NULL,
+    p_ref_id INTEGER DEFAULT NULL, p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+)
+RETURNS INTEGER
+LANGUAGE sql
+SET search_path = public
+AS $$
+    WITH before AS (
+        SELECT remaining_pcs FROM public.packed_coffee_lots WHERE id = p_lot_id FOR UPDATE
+    ), updated AS (
+        UPDATE public.packed_coffee_lots
+        SET remaining_pcs = remaining_pcs - LEAST(remaining_pcs, GREATEST(p_pcs, 0)),
+            mv_operation = p_operation, mv_ref_table = p_ref_table,
+            mv_ref_id = p_ref_id, mv_reason = p_reason, mv_user = p_user
+        WHERE id = p_lot_id
+        RETURNING remaining_pcs
+    )
+    SELECT COALESCE((SELECT remaining_pcs FROM before), 0)
+         - COALESCE((SELECT remaining_pcs FROM updated), 0);
+$$;
+```
+
+Same shape for `refund_packed_lot` and `set_packed_lot_remaining`. Defaults keep every existing JS call site working unchanged (falls back to `'unspecified'` per the trigger's own `COALESCE`) — Phase 3 then goes through the 10 call sites and adds the trailing arguments, one at a time, using the "still unattributed" query to track progress. Re-verify the race test (concurrent 30+20 against a 100-pc lot) still leaves exactly 50 after this change before touching any call site.
 
 ## Phase 3 — Populate context
 
