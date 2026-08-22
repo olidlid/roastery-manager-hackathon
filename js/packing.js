@@ -2062,70 +2062,141 @@ async function openDispatchCheckoutModal(orderId) {
     }
 
     // Lets a wrongly-fulfilled line be walked back even after the order shows
-    // fully "Ready" (see actionBtnHtml's Edit button). Restores stock for
-    // whatever portion has a dispatch_lot_items trail (this modal's own past
-    // checkouts), newest-first; anything beyond that trail came from order
-    // approval's stock-fulfill (js/sales.js, no per-lot record) and can only
-    // have its counted quantity reduced, not its stock restored.
+    // fully "Ready" (see actionBtnHtml's Edit button).
+    //
+    // STOCK_LEDGER_PLAN.md Phase 5: source of truth is now the movement
+    // ledger (packed_stock_movements), not dispatch_lot_items — that table
+    // only ever recorded checkout draws, so the approval-fulfilled portion
+    // (F4) had no record anywhere and could never be restored, only have
+    // its counted quantity reduced. Every draw tagged with
+    // ref_table='request_order_items'/ref_id=itemId since Phase 3 (both
+    // 'dispatch' and 'approval_fulfil') is undoable here, newest-first per
+    // lot. Net delta per lot already accounts for any earlier undo (its own
+    // refund carries the same ref), so this can't double-refund.
+    //
+    // Draws from before Phase 3 shipped have no ref on their ledger row, so
+    // step 1 can't see them — step 2 falls back to the original
+    // dispatch_lot_items trail for whatever step 1 didn't cover (checkout
+    // draws only; a pre-Phase-3 approval-fulfil draw still has no record
+    // anywhere and falls through to the quantity_allocated adjustment at
+    // the end, same as before this phase).
     async function undoCommittedQty(itemId, requestedUndoQty) {
         const item = items.find(i => i.id === itemId);
         if (!item) return;
         const prepared = parseInt(item.quantity_prepared) || 0;
         if (prepared <= 0) return;
 
-        const trail = dispatchLotItemsAll.filter(d => d.request_order_item_id === itemId).sort((a, b) => b.id - a.id);
-
         let undoQty = parseInt(requestedUndoQty) || 0;
         if (undoQty <= 0) return;
         if (undoQty > prepared) undoQty = prepared;
-
-        const { data: freshLots } = await fetchData('packed_coffee_lots');
-
         let remaining = undoQty;
-        for (const d of trail) {
-            if (remaining <= 0) break;
-            const dQty = parseInt(d.qty) || 0;
-            if (dQty <= 0) continue;
-            const take = Math.min(dQty, remaining);
 
-            if (d.packed_coffee_lot_id) {
-                const lot = (freshLots || []).find(l => l.id === d.packed_coffee_lot_id);
-                if (lot) {
-                    // packed_coffee.quantity is trigger-derived from this lots write
-                    // (sync_packed_coffee_quantity) — no separate packed_coffee write needed.
-                    // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — a manual read-modify-
-                    // write here used a stale pre-loop `freshPacked` snapshot and could
-                    // clobber the trigger's correct value when a sibling lot under the
-                    // same packed_coffee_id changed concurrently — this caused the
-                    // reported "undo restores less than what was taken" bug.
-                    const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
-                        p_lot_id: lot.id, p_pcs: take,
-                        p_operation: 'undo', p_ref_table: 'request_order_items', p_ref_id: itemId,
-                        p_reason: `Undo of dispatch_lot_items #${d.id}`, p_user: (currentUser && currentUser.name) || null
-                    });
-                    if (refundErr) console.error('refund_packed_lot RPC failed:', refundErr);
-                    liveRemaining[lot.id] = (liveRemaining[lot.id] || 0) + take;
+        // Decrements/deletes this item's dispatch_lot_items rows for one lot
+        // (oldest checkout session first is irrelevant here — any order
+        // nets to the same result) so the modal's "already committed" lot
+        // display stays in sync with a refund made via the ledger path.
+        // Loops across rows because multiple checkout sessions can each
+        // leave their own row for the same lot.
+        const syncDispatchLotItems = async (lotId, takeTotal) => {
+            let left = takeTotal;
+            const rows = dispatchLotItemsAll.filter(x => x.request_order_item_id === itemId && x.packed_coffee_lot_id === lotId && !x._undone);
+            for (const d of rows) {
+                if (left <= 0) break;
+                const dQty = parseInt(d.qty) || 0;
+                if (dQty <= 0) continue;
+                const t = Math.min(dQty, left);
+                const newDQty = dQty - t;
+                if (newDQty <= 0) {
+                    await deleteData('dispatch_lot_items', d.id);
+                    d.qty = 0;
+                    d._undone = true;
+                } else {
+                    d.qty = newDQty;
+                    await saveData('dispatch_lot_items', { id: d.id, qty: newDQty });
+                }
+                left -= t;
+            }
+        };
+
+        // 1) Ledger-tracked draws.
+        const { data: movements, error: mvErr } = await window.supabaseClient
+            .from('packed_stock_movements')
+            .select('id, packed_coffee_lot_id, delta_pcs')
+            .eq('ref_table', 'request_order_items')
+            .eq('ref_id', itemId)
+            .order('id', { ascending: true });
+        if (mvErr) console.error('Failed to read packed_stock_movements for undo:', mvErr);
+
+        const perLot = new Map();
+        for (const m of (movements || [])) {
+            if (!m.packed_coffee_lot_id) continue;
+            const entry = perLot.get(m.packed_coffee_lot_id) || { net: 0, lastId: m.id };
+            entry.net += (parseInt(m.delta_pcs) || 0);
+            entry.lastId = m.id; // ascending order, so the last write seen is the max id
+            perLot.set(m.packed_coffee_lot_id, entry);
+        }
+        const outstandingLots = [...perLot.entries()]
+            .map(([lotId, e]) => ({ lotId, outstanding: -e.net, lastId: e.lastId }))
+            .filter(e => e.outstanding > 0)
+            .sort((a, b) => b.lastId - a.lastId);
+
+        const ledgerCoveredLotIds = new Set();
+        for (const { lotId, outstanding } of outstandingLots) {
+            if (remaining <= 0) break;
+            const take = Math.min(outstanding, remaining);
+            if (take <= 0) continue;
+            // packed_coffee.quantity is trigger-derived from this lots write
+            // (sync_packed_coffee_quantity) — no separate packed_coffee write needed.
+            const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
+                p_lot_id: lotId, p_pcs: take,
+                p_operation: 'undo', p_ref_table: 'request_order_items', p_ref_id: itemId,
+                p_reason: `Undo for request_order_items #${itemId}`, p_user: (currentUser && currentUser.name) || null
+            });
+            if (refundErr) { console.error('refund_packed_lot RPC failed:', refundErr); continue; }
+            liveRemaining[lotId] = (liveRemaining[lotId] || 0) + take;
+            ledgerCoveredLotIds.add(lotId);
+            await syncDispatchLotItems(lotId, take);
+            remaining -= take;
+        }
+
+        // 2) Legacy fallback for pre-Phase-3 checkout draws the ledger query
+        // above can't see (no ref on their movement row).
+        if (remaining > 0) {
+            const trail = dispatchLotItemsAll
+                .filter(d => d.request_order_item_id === itemId && !d._undone && !ledgerCoveredLotIds.has(d.packed_coffee_lot_id))
+                .sort((a, b) => b.id - a.id);
+            if (trail.length) {
+                const { data: freshLots } = await fetchData('packed_coffee_lots');
+                for (const d of trail) {
+                    if (remaining <= 0) break;
+                    const dQty = parseInt(d.qty) || 0;
+                    if (dQty <= 0) continue;
+                    const take = Math.min(dQty, remaining);
+                    if (d.packed_coffee_lot_id) {
+                        const lot = (freshLots || []).find(l => l.id === d.packed_coffee_lot_id);
+                        if (lot) {
+                            const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
+                                p_lot_id: lot.id, p_pcs: take,
+                                p_operation: 'undo', p_ref_table: 'request_order_items', p_ref_id: itemId,
+                                p_reason: `Undo of dispatch_lot_items #${d.id}`, p_user: (currentUser && currentUser.name) || null
+                            });
+                            if (refundErr) console.error('refund_packed_lot RPC failed:', refundErr);
+                            liveRemaining[lot.id] = (liveRemaining[lot.id] || 0) + take;
+                        }
+                    }
+                    await syncDispatchLotItems(d.packed_coffee_lot_id, take);
+                    remaining -= take;
                 }
             }
-
-            const newDQty = dQty - take;
-            if (newDQty <= 0) {
-                await deleteData('dispatch_lot_items', d.id);
-                d.qty = 0;
-                d._undone = true;
-            } else {
-                d.qty = newDQty;
-                await saveData('dispatch_lot_items', { id: d.id, qty: newDQty });
-            }
-            remaining -= take;
         }
         dispatchLotItemsAll = dispatchLotItemsAll.filter(d => !d._undone);
 
         const newPrepared = Math.max(0, prepared - undoQty);
         item.quantity_prepared = newPrepared;
         if (remaining > 0) {
-            // Leftover after the trail is exhausted came out of the
-            // untracked (approval-fulfilled) portion.
+            // Leftover after both sources are exhausted has no record
+            // anywhere (pre-ledger draw) — at least stop counting it as
+            // allocated, same fallback as before this phase.
             item.quantity_allocated = Math.max(0, (parseInt(item.quantity_allocated) || 0) - remaining);
         }
         const requested = parseInt(item.quantity_requested) || 0;
