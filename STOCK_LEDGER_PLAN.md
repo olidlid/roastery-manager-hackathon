@@ -1,6 +1,6 @@
 # Stock Ledger — Execution Plan
 
-**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done (`6cd2ea7`, with a same-day production incident + hotfix), Phase 3 done (`6d70f24`), Phase 4 done (`cb9d18e`, addendum `ac3a0a7` — a follow-on movement-context gap found while live-verifying F6), Phase 5 done (`8b2514d`, verified by direct ledger/RPC simulation — true end-to-end UI pass still pending, see Phase 5 note), Phase 7 done (`d228832`, two live-verification fixes: `3a3bb35`, `08e801e`). Only Phase 6 remains, deferred by design (no active corruption found).
+**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done (`6cd2ea7`, with a same-day production incident + hotfix), Phase 3 done (`6d70f24`), Phase 4 done (`cb9d18e`, addendum `ac3a0a7` — a follow-on movement-context gap found while live-verifying F6), Phase 5 done (`8b2514d`, verified by direct ledger/RPC simulation — true end-to-end UI pass still pending, see Phase 5 note), Phase 6 done (`7014acb`, a migration statement-ordering bug caught and fixed while applying it), Phase 7 done (`d228832`, two live-verification fixes: `3a3bb35`, `08e801e`). **All 7 phases complete.**
 **Audit date:** 2026-08-22 (live, against production)
 **Goal:** every change to packed stock is atomic, lot-specific, and permanently traceable — so any future error can be found and reversed.
 
@@ -431,9 +431,28 @@ Keep `dispatch_lot_items` writes for now; retire only once the ledger has covere
 
 ---
 
-## Phase 6 — Bulk roasted coffee (deferred)
+## Phase 6 — Bulk roasted coffee — DONE (`7014acb`)
 
-Not started, and deliberately so: the audit found **no evidence of active corruption**. But `bulk_available` is a plain column mutated by read-modify-write across ~10 sites in `js/roasting.js` and `js/packing.js`, with no lot table, so it carries the same race exposure and cannot be reconciled per unit. Apply the same three steps in this order: atomic RPCs → derived/logged → context. Do not start before Phase 5 is verified in production.
+The audit found **no evidence of active corruption**, but `bulk_available` was a plain column mutated by read-modify-write across ~11 sites in `js/roasting.js`, `js/packing.js`, and `js/app.js` (Stock Take's bulk branch), carrying the same race exposure packed_coffee_lots had before Phase 1.
+
+**No separate lot table was built.** Each `bulk_roasted_coffee` row is already one lot (one coffee+machine+production_date combination, or one post-blend/custom-blend/repack batch — see that column's own comment), so `bulk_available` became the atomically-written, ledger-logged value directly. "Derived" from the original 3-step plan doesn't apply here — there's no child-row aggregate to derive from, only the direct atomic-RPC + ledger + context steps.
+
+Built as **one migration** (`database/v2_bulk_stock_ledger_migration.sql`) with the full 7-argument RPC signature from the start, specifically to avoid a repeat of the Phase 2→3 CREATE-OR-REPLACE-overload incident. Three RPCs (`consume_bulk_lot`, `refund_bulk_lot`, `set_bulk_lot_available`), a `bulk_stock_movements` ledger table, `mv_*` context columns, BEFORE trigger, backfilled opening balances.
+
+**Applying this migration surfaced a real ordering bug**, caught immediately by the SQL Editor: the RPC bodies (`LANGUAGE sql`, validated at `CREATE FUNCTION` time, unlike `plpgsql`) referenced `mv_operation` before the `ALTER TABLE` adding it had run, so the very first `CREATE FUNCTION` failed with `column "mv_operation" does not exist`. Nothing had committed, so reordering (ALTER TABLE first) and re-running the corrected file was safe.
+
+Converted every read-modify-write site to the new RPCs, threading `operation`/`ref_table`/`ref_id` per call site: roast batch approve/edit/delete, post-blend leftover assembly, custom blend source consumption, pack-bulk-into-packed-stock, close lot, Edit Bulk Stock modal, packing-record correction, repack. Stock Take's bulk branch (`js/app.js`, `finalizeStockTake`) was also moved off the old `applyStockGroupAdjustment`/plain-`saveData` path — that function's own comment had called bulk "the one category still safe to adjust this way ... until Phase 6"; it no longer is, so `applyStockGroupAdjustment` is now dead code and was removed.
+
+**Verified live (2026-08-22):**
+- All three RPCs tested directly on a throwaway ZZ TEST bulk row: consume/refund/set all produced the correct `bulk_available` and a correctly-shaped ledger row. Hard invariant checked across all 138 production rows at that point: 0 mismatches.
+- `addWeightToBulkRoastedCoffee` (the shared helper roast-batch approval and post-blend assembly both call): both its merge branch (existing lot, via `refund_bulk_lot`) and its fresh-insert branch (new lot, with `mv_*` context) tested directly and produced correct balances + correctly-attributed movements (`operation:'roast'`, right `ref_table`/`ref_id`).
+- `openEditBulkModal` tested through the **real UI** end to end: opened the actual modal for a ZZ TEST coffee, changed the quantity input, clicked Save, confirmed `bulk_available` and the movement (`operation:'manual_edit'`, correct `ref_table`/`ref_id`/`reason`) in the DB.
+- Stock Take's new `'bulk'` branch in `applyStockGroupAdjustmentToLots` tested directly for both directions: an increase (delta credited to the first row, matching the pre-existing row-order convention) and a decrease spanning two rows (FIFO-drained the first row before touching the second) — both produced correct balances and correctly-tagged `stocktake`/`stock_takes` movements.
+- Hard invariant re-checked after cleanup: 0 mismatches across 137 rows (back to baseline).
+
+*Not verified through the real UI: `submitCustomBlend`, `openPackBulkModal`, `openCloseLotModal`, the Edit Packing Record bulk-adjust checkbox, `submitRepack`'s bulk insert, and the roast-batch-edit refund+re-add branches. Each of these is a thin wrapper calling either the already-verified `consume_bulk_lot`/`refund_bulk_lot`/`set_bulk_lot_available` RPCs or the already-verified `addWeightToBulkRoastedCoffee` helper, so the underlying arithmetic is proven — what's unverified is only the surrounding UI glue (variable references, event wiring) in each. Worth a UI pass opportunistically the next time each of these flows is used for real.*
+
+**Known gap, explicitly out of scope for this phase:** `bulk_roasted_coffee` still has no F3-equivalent `BEFORE DELETE` guard — the whole-row Delete button in the Bulk Roasted Coffee section's own Edit modal can still destroy live stock via delete. It's now at least logged (the new `BEFORE DELETE` trigger fires `'lot_deleted'` with the correct negative delta) instead of vanishing with zero trace, the same parity `packed_coffee` had before its own F3 fix in Phase 4. This plan explicitly scoped Phase 6 to RPCs+ledger+context, not a delete guard, so it's noted here rather than fixed — worth a look if this area is revisited.
 
 ---
 
