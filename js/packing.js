@@ -4077,8 +4077,7 @@ async function loadPackedCoffeeSection() {
             const groupBorder = idx > 0 ? 'border-left: 2px solid var(--border);' : '';
             row1 += `<th colspan="${sizeCount}" class="text-center" style="${groupBorder}">${m.name}</th>`;
         });
-        row1 += `<th colspan="${sizeCount}" class="text-center" style="border-left: 2px solid var(--border); font-weight:700;" data-i18n="col_total">${window.t ? window.t('col_total') : 'Total'}</th>`;
-        row1 += `<th rowspan="2" data-i18n="col_action">${window.t ? window.t('col_action') : 'Action'}</th></tr>`;
+        row1 += `<th colspan="${sizeCount}" class="text-center" style="border-left: 2px solid var(--border); font-weight:700;" data-i18n="col_total">${window.t ? window.t('col_total') : 'Total'}</th></tr>`;
 
         let row2 = '<tr>';
         activeMachinesList.forEach((m, mIdx) => {
@@ -4097,7 +4096,7 @@ async function loadPackedCoffeeSection() {
     }
 
     if (Object.keys(grouped).length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${(activeMachinesList.length + 1) * sizeCount + 2}" class="text-center-muted">${window.t ? window.t("msg_no_packed_avail") : 'No packed coffee available.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${(activeMachinesList.length + 1) * sizeCount + 1}" class="text-center-muted">${window.t ? window.t("msg_no_packed_avail") : 'No packed coffee available.'}</td></tr>`;
         return;
     }
 
@@ -4107,7 +4106,7 @@ async function loadPackedCoffeeSection() {
         tr.classList.add('packed-stock-row');
         tr.setAttribute('data-coffee', encodeURIComponent(group.coffeeName));
         tr.style.cursor = 'pointer';
-        tr.title = 'Click to view stock by lot';
+        tr.title = 'Click to view/edit stock by lot';
 
         const codeLabel = group.coffeeCode ? `<code style="font-size:0.78rem; color:var(--text-muted); margin-right:6px;">${group.coffeeCode}</code>` : '';
         let html = `<td>${codeLabel}<strong>${group.coffeeName}</strong></td>`;
@@ -4135,55 +4134,24 @@ async function loadPackedCoffeeSection() {
             html += `<td class="text-center" style="font-weight:700; ${groupBorder}">${total}</td>`;
         });
 
-        html += `
-            <td style="white-space: nowrap;">
-                <button class="btn btn-outline btn-sm btn-edit-packed" data-coffee="${encodeURIComponent(group.coffeeName)}">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit
-                </button>
-                <button class="btn btn-danger btn-sm btn-delete-packed ml-1" data-coffee="${encodeURIComponent(group.coffeeName)}" >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-                </button>
-            </td>
-        `;
-
         tr.innerHTML = html;
         tbody.appendChild(tr);
     });
 
     document.querySelectorAll('.packed-stock-row').forEach(row => {
-        row.addEventListener('click', () => openPackedLotsModal(decodeURIComponent(row.getAttribute('data-coffee'))));
-    });
-
-    document.querySelectorAll('.btn-edit-packed').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            openEditPackedModal(decodeURIComponent(btn.getAttribute('data-coffee')));
-        });
-    });
-
-    document.querySelectorAll('.btn-delete-packed').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            const coffeeName = decodeURIComponent(btn.getAttribute('data-coffee'));
-            const confirmed = await showWarningModal(`Are you sure you want to delete all packed stock for "${coffeeName}"?\n\nThis action cannot be undone.`);
-            if (!confirmed) return;
-            const { data: allPacked } = await fetchData('packed_coffee');
-            const toDelete = (allPacked || []).filter(p => (p.custom_coffee_name === coffeeName || p.custom_coffee_name === coffeeName.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '')));
-            for (const item of toDelete) {
-                await deleteData('packed_coffee', item.id);
-            }
-            await loadPackedCoffeeSection();
-            scheduleDashboardRefresh();
-        });
+        row.addEventListener('click', () => openStockByLotModal(decodeURIComponent(row.getAttribute('data-coffee'))));
     });
 }
 
-// V2 1G-1: read-only drill-down of a coffee's packed stock by individual
-// lot (machine + size + packed date + remaining pcs) — the first visible
-// proof that packed_coffee_lots (populated by getOrCreatePackedCoffeeLot on
-// every pack action) is actually tracking real per-lot stock, ahead of the
-// bigger FIFO-dispatch rework that will make it the source of truth.
-async function openPackedLotsModal(coffeeName) {
+// V2 1G/Phase 7 (STOCK_LEDGER_PLAN.md): combined "Stock by Lot" view and
+// edit — merges what used to be two separate modals (a read-only drill-down
+// and a stocktake-correction form) into one, so there's a single place to
+// see and correct a coffee's per-lot stock. Read-only by default; the
+// footer's Edit button switches every row's quantity to an input and swaps
+// in a per-lot Delete button. All edits go through set_packed_lot_remaining
+// (STOCK_LEDGER_PLAN.md Phase 1, mv_operation='manual_edit') so every
+// correction is logged the same way a stocktake or checkout draw is.
+async function openStockByLotModal(coffeeName) {
     const [
         { data: packed },
         { data: packedLots },
@@ -4191,7 +4159,8 @@ async function openPackedLotsModal(coffeeName) {
         { data: batches },
         { data: greenbeans },
         { data: recipes },
-        { data: productionLots }
+        { data: productionLots },
+        { data: bulkRoasted }
     ] = await Promise.all([
         fetchData('packed_coffee'),
         fetchData('packed_coffee_lots'),
@@ -4199,7 +4168,8 @@ async function openPackedLotsModal(coffeeName) {
         fetchData('roast_batches'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
-        fetchData('production_lots')
+        fetchData('production_lots'),
+        fetchData('bulk_roasted_coffee')
     ]);
 
     const resolved = (packed || []).map(item => {
@@ -4229,11 +4199,24 @@ async function openPackedLotsModal(coffeeName) {
     const coffeeCode = (gbMatch && gbMatch.code) || (rMatch && rMatch.code) || '';
     const displayName = coffeeCode ? `${coffeeCode} — ${coffeeName}` : coffeeName;
 
+    // dd-mm-yyyy per STOCK_LEDGER_PLAN.md Phase 7 — string split, not a Date
+    // round-trip, since these are already plain YYYY-MM-DD DATE columns and
+    // a Date object would risk a timezone-shifted day.
+    const fmtDate = (iso) => {
+        if (!iso) return '-';
+        const parts = iso.split('-');
+        return parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : iso;
+    };
+
     const matchingPackedIds = new Set(resolved.filter(r => r.resolvedName === coffeeName).map(r => r.id));
-    const lotRows = (packedLots || [])
-        .filter(pl => matchingPackedIds.has(pl.packed_coffee_id) && parseInt(pl.remaining_pcs) > 0)
+    const packedById = new Map((packed || []).map(p => [p.id, p]));
+    const allLots = (packedLots || [])
+        // Zero-stock lots stay hidden (STOCK_LEDGER_PLAN.md Phase 7,
+        // confirmed decision) — they remain in packed_coffee_lots/the
+        // movement ledger as history, just not shown in this working view.
+        .filter(pl => matchingPackedIds.has(pl.packed_coffee_id) && (parseInt(pl.remaining_pcs) || 0) > 0)
         .map(pl => {
-            const parentPacked = resolved.find(r => r.id === pl.packed_coffee_id);
+            const parentPacked = packedById.get(pl.packed_coffee_id);
             const machine = parentPacked && parentPacked.machine_id ? (machines || []).find(m => m.id === parentPacked.machine_id) : null;
             // Roast date only exists for production-linked lots (production_lots
             // is one row per bulk-roasted day, production_date IS the roast
@@ -4241,13 +4224,15 @@ async function openPackedLotsModal(coffeeName) {
             // and therefore no roast date to show — deliberate, per the
             // decision that physical packaging already carries it for those.
             const productionLot = pl.production_lot_id ? (productionLots || []).find(l => l.id === pl.production_lot_id) : null;
+            const bulk = productionLot && productionLot.bulk_roasted_coffee_id
+                ? (bulkRoasted || []).find(b => b.id === productionLot.bulk_roasted_coffee_id) : null;
             return {
                 lotId: pl.id,
                 lotCode: pl.lot_code,
                 stripCode: pl.strip_code,
                 machineName: machine ? machine.name : 'Unknown',
                 machineId: parentPacked ? parentPacked.machine_id : null,
-                sizeG: parentPacked ? parentPacked.bag_size_g : '-',
+                sizeG: parentPacked ? parseInt(parentPacked.bag_size_g) || 0 : 0,
                 roastDate: productionLot ? productionLot.production_date : null,
                 packedDate: pl.packed_date,
                 remaining: parseInt(pl.remaining_pcs) || 0,
@@ -4255,106 +4240,210 @@ async function openPackedLotsModal(coffeeName) {
                 // rather than produced through Ready to Pack, which is exactly
                 // the stock the KELUAR DULU sticker is for — so the checkbox
                 // in the print dialog defaults to this.
-                isManual: !pl.production_lot_id
+                isManual: !pl.production_lot_id,
+                isBlend: !!(bulk && bulk.is_post_blend),
+                isRepack: !!(bulk && bulk.is_repack)
             };
-        })
-        // Grouped by machine+size first (so the same fulfillable bucket
-        // stays together), oldest-first within each group — the top row of
-        // each group is exactly the lot FIFO dispatch should pick next.
-        .sort((a, b) =>
-            a.machineName.localeCompare(b.machineName) ||
-            (parseInt(a.sizeG) || 0) - (parseInt(b.sizeG) || 0) ||
-            new Date(a.packedDate || 0) - new Date(b.packedDate || 0)
-        );
+        });
+
+    // Two side-by-side columns split by bag size (further sizes become
+    // additional columns) — machine is shown as a tag on each row instead
+    // of the old modal's separate machine-heading groups. Rows within a
+    // column stay sorted machine-then-date so "pick first" still marks
+    // exactly the lot FIFO dispatch would pick next for that machine.
+    const sizeGroups = new Map();
+    allLots.forEach(l => {
+        if (!sizeGroups.has(l.sizeG)) sizeGroups.set(l.sizeG, []);
+        sizeGroups.get(l.sizeG).push(l);
+    });
+    const sortedSizes = [...sizeGroups.keys()].sort((a, b) => a - b);
+    sortedSizes.forEach(sz => {
+        const rows = sizeGroups.get(sz);
+        rows.sort((a, b) => a.machineName.localeCompare(b.machineName) || new Date(a.packedDate || 0) - new Date(b.packedDate || 0));
+        let prevMachine = null;
+        rows.forEach(r => {
+            r.pickFirst = r.machineName !== prevMachine;
+            prevMachine = r.machineName;
+        });
+    });
 
     // Same gate as the Barcode button on Ready to Pack cards — printing a
     // sticker is the same privilege wherever it happens.
     const canPrintSticker = hasPermission('packing_print_barcode');
+    const allLotsById = new Map(allLots.map(r => [r.lotId, r]));
 
-    let rowsHtml = '';
-    if (lotRows.length === 0) {
-        rowsHtml = `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.9rem;">No per-lot stock recorded yet for this coffee — only packing done after this feature shipped is tracked by lot.</div>`;
-    } else {
-        let bodyRows = '';
-        let prevGroupKey = null;
-        let groupTotal = 0;
-        const groupBlocks = [];
-        let currentBlockRows = '';
-
-        const flushGroup = () => {
-            if (prevGroupKey !== null) {
-                groupBlocks.push({ rows: currentBlockRows, total: groupTotal });
-            }
-            currentBlockRows = '';
-            groupTotal = 0;
-        };
-
-        lotRows.forEach(r => {
-            const groupKey = `${r.machineName}|${r.sizeG}`;
-            const isNewGroup = groupKey !== prevGroupKey;
-            if (isNewGroup) {
-                flushGroup();
-                prevGroupKey = groupKey;
-            }
-            groupTotal += r.remaining;
-            const cell = 'padding:5px 10px; text-align:center; white-space:nowrap;';
-            currentBlockRows += `
-                <tr>
-                    <td style="${cell}">${r.stripCode ? `<b>${r.stripCode}</b>` : `<code>${r.lotCode}</code>`}${isNewGroup ? '<br><span style="font-size:0.62rem; font-weight:700; color:var(--primary); background:rgba(45,106,79,0.12); padding:1px 6px; border-radius:9999px;">PICK FIRST</span>' : ''}</td>
-                    <td style="${cell}">${r.machineName}</td>
-                    <td style="${cell}">${r.sizeG}g</td>
-                    <td style="${cell}">${r.roastDate || '-'}</td>
-                    <td style="${cell}">${r.packedDate || '-'}</td>
-                    <td style="${cell}"><strong>${r.remaining}</strong></td>
-                    <td style="${cell}">${r.stripCode
-                        ? `<button type="button" class="btn btn-secondary btn-sm btn-print-lot-sticker" data-lot-id="${r.lotId}" title="${canPrintSticker ? 'Print sticker' : ''}"><i class="icon-printer va-middle-mr-1"></i>Sticker</button>`
-                        : `<span style="font-size:0.7rem; color:var(--text-muted);" title="This size has no FIFO digit configured (Settings &rarr; Production &rarr; Packaging Sizes), so there is no scannable strip code to print.">no code</span>`}</td>
-                </tr>
-            `;
-        });
-        flushGroup();
-
-        const grandTotal = lotRows.reduce((sum, r) => sum + r.remaining, 0);
-        const headCell = 'padding:6px 10px; text-align:center; white-space:nowrap;';
-
-        rowsHtml = `
-            <table class="table" style="width:100%; border-collapse:collapse;">
-                <thead><tr>
-                    <th style="${headCell}">Strip Code</th><th style="${headCell}">Machine</th><th style="${headCell}">Size</th><th style="${headCell}">Roast Date</th><th style="${headCell}">Packed Date</th><th style="${headCell}">Remaining</th><th style="${headCell}"></th>
-                </tr></thead>
-                <tbody>
-                    ${groupBlocks.map(g => g.rows).join('')}
-                </tbody>
-                <tfoot>
-                    <tr style="border-top: 2px solid var(--border);">
-                        <td colspan="5" style="padding:6px 10px; text-align:right; font-weight:700; white-space:nowrap;">Total (all lots)</td>
-                        <td style="padding:6px 10px; text-align:center; font-weight:700; white-space:nowrap;">${grandTotal}</td>
-                        <td></td>
-                    </tr>
-                </tfoot>
-            </table>
-        `;
-    }
-
-    const html = `
-        <div>
-            <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px;">Packed stock by lot for <strong>${displayName}</strong>, oldest first (FIFO order).</p>
-            <div style="max-height: 480px; overflow-y: auto;">
-                ${rowsHtml}
+    const rowHtml = (r, editMode) => `
+        <div class="sbl-row" data-lot-id="${r.lotId}">
+            <div class="sbl-row-top">
+                <span class="sbl-row-code">${r.stripCode ? `<b>${r.stripCode}</b>` : `<code>${r.lotCode}</code>`}</span>
+                <span class="sbl-tag-machine">${r.machineName}</span>
+                ${r.pickFirst ? '<span class="sbl-badge sbl-badge-pick">PICK FIRST</span>' : ''}
+                ${r.isBlend ? '<span class="badge-post-blend sbl-badge" style="border-radius:4px;">Blend</span>' : ''}
+                ${r.isRepack ? '<span class="badge-repack sbl-badge" style="border-radius:4px;" data-i18n="badge_repack">Repack</span>' : ''}
             </div>
-            <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Close</button>
+            <div class="sbl-row-bottom">
+                <span class="sbl-row-dates">Roast ${fmtDate(r.roastDate)} &middot; Packed ${fmtDate(r.packedDate)}</span>
+                <span class="sbl-row-qty">
+                    <span class="sbl-qty-view" ${editMode ? 'hidden' : ''}>${r.remaining} pcs</span>
+                    <input type="number" class="form-control sbl-qty-input" data-lot-id="${r.lotId}" value="${r.remaining}" min="0" ${editMode ? '' : 'hidden'}>
+                    ${!editMode && r.stripCode ? `<button type="button" class="btn btn-secondary btn-sm sbl-print-lot" data-lot-id="${r.lotId}" title="${canPrintSticker ? 'Print sticker' : ''}"><i class="icon-printer"></i></button>` : ''}
+                    <button type="button" class="btn btn-danger btn-sm sbl-delete-lot" data-lot-id="${r.lotId}" title="Delete this lot" ${editMode ? '' : 'hidden'}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                    </button>
+                </span>
             </div>
         </div>
     `;
-    openModal(`Stock by Lot — ${displayName}`, html, '850px');
 
-    document.querySelectorAll('.btn-print-lot-sticker').forEach(btn => {
-        if (!canPrintSticker) { btn.style.display = 'none'; return; }
-        btn.addEventListener('click', () => {
-            const row = lotRows.find(r => r.lotId === parseInt(btn.getAttribute('data-lot-id')));
-            if (row) openPrintLotStickerModal(row, coffeeName, machines);
+    const renderColumns = (editMode, deletedLotIds) => {
+        if (allLots.length === 0) {
+            return `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 0.9rem;">No per-lot stock recorded yet for this coffee — only packing done after this feature shipped is tracked by lot.</div>`;
+        }
+        const cols = sortedSizes.map(sz => {
+            const rows = (sizeGroups.get(sz) || []).filter(r => !deletedLotIds.has(r.lotId));
+            const total = rows.reduce((s, r) => s + r.remaining, 0);
+            return `
+                <div class="sbl-column">
+                    <div class="sbl-column-head"><span>${sz}g</span><span class="sbl-column-total">${total} pcs</span></div>
+                    <div class="sbl-column-body">${rows.length ? rows.map(r => rowHtml(r, editMode)).join('') : '<div class="sbl-empty">No stock</div>'}</div>
+                </div>
+            `;
         });
+        return `<div class="sbl-columns" style="grid-template-columns: repeat(${sortedSizes.length}, minmax(230px, 1fr));">${cols.join('')}</div>`;
+    };
+
+    const html = `
+        <div id="stock-by-lot-modal">
+            <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 14px;">Packed stock by lot for <strong>${displayName}</strong>.</p>
+            <div class="sbl-scroll" style="max-height: 480px; overflow-y: auto; overflow-x: auto;">${renderColumns(false, new Set())}</div>
+            <div class="modal-footer-actions-lg" style="justify-content:space-between; align-items:center;">
+                <span id="sbl-edit-hint" style="font-size:0.76rem; color:var(--text-muted);" hidden>Changes are logged as manual corrections.</span>
+                <span id="sbl-view-spacer"></span>
+                <div style="display:flex; gap:10px;">
+                    <button type="button" id="sbl-btn-cancel" class="btn btn-secondary" hidden>Cancel</button>
+                    <button type="button" id="sbl-btn-close" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Close</button>
+                    <button type="button" id="sbl-btn-edit" class="btn btn-outline">Edit</button>
+                    <button type="button" id="sbl-btn-save" class="btn btn-primary" hidden>Save changes</button>
+                </div>
+            </div>
+        </div>
+        <style>
+            #stock-by-lot-modal .sbl-columns { display: grid; gap: 14px; align-items: start; }
+            #stock-by-lot-modal .sbl-column { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+            #stock-by-lot-modal .sbl-column-head { display:flex; justify-content:space-between; align-items:center; padding: 8px 12px; background: var(--bg-glass-active); font-weight:700; font-size:0.85rem; }
+            #stock-by-lot-modal .sbl-column-total { font-weight:600; color: var(--text-secondary); font-size:0.78rem; }
+            #stock-by-lot-modal .sbl-column-body { display:flex; flex-direction:column; }
+            #stock-by-lot-modal .sbl-row { padding: 8px 12px; border-top: 1px solid var(--border); display:flex; flex-direction:column; gap:4px; }
+            #stock-by-lot-modal .sbl-column-body .sbl-row:first-child { border-top: none; }
+            #stock-by-lot-modal .sbl-row-top { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:0.82rem; }
+            #stock-by-lot-modal .sbl-row-bottom { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+            #stock-by-lot-modal .sbl-row-dates { font-size:0.72rem; color: var(--text-muted); white-space:nowrap; }
+            #stock-by-lot-modal .sbl-row-qty { display:flex; align-items:center; gap:6px; }
+            #stock-by-lot-modal .sbl-qty-view { font-weight:700; font-size:0.85rem; }
+            #stock-by-lot-modal .sbl-qty-input { width: 72px; height: 30px; padding: 2px 8px; }
+            #stock-by-lot-modal .sbl-tag-machine { font-size:0.68rem; font-weight:600; color: var(--text-secondary); background: var(--bg-glass-active); border-radius:4px; padding:1px 6px; }
+            #stock-by-lot-modal .sbl-badge { font-size:0.62rem; font-weight:700; text-transform:uppercase; padding:1px 6px; vertical-align:middle; }
+            #stock-by-lot-modal .sbl-badge-pick { color:var(--primary); background:rgba(45,106,79,0.12); border-radius:9999px; }
+            #stock-by-lot-modal .sbl-empty { padding: 14px 12px; font-size:0.78rem; color: var(--text-muted); }
+            /* Spinner arrows suppressed — the field is for keyboard entry only. */
+            #stock-by-lot-modal input[type=number]::-webkit-outer-spin-button,
+            #stock-by-lot-modal input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+            #stock-by-lot-modal input[type=number] { -moz-appearance: textfield; }
+        </style>
+    `;
+    openModal(`Stock by Lot — ${displayName}`, html, '920px');
+
+    let editMode = false;
+    const deletedLotIds = new Set();
+
+    const wireRowButtons = () => {
+        if (canPrintSticker) {
+            document.querySelectorAll('.sbl-print-lot').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const row = allLotsById.get(parseInt(btn.getAttribute('data-lot-id')));
+                    if (row) openPrintLotStickerModal(row, coffeeName, machines);
+                });
+            });
+        } else {
+            document.querySelectorAll('.sbl-print-lot').forEach(btn => btn.style.display = 'none');
+        }
+        document.querySelectorAll('.sbl-delete-lot').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const lotId = parseInt(btn.getAttribute('data-lot-id'));
+                const row = allLotsById.get(lotId);
+                if (!row) return;
+                const confirmed = await showWarningModal(`Delete lot ${row.stripCode || row.lotCode}? This removes ${row.remaining} pcs from stock. The lot is logged, not silently erased.`);
+                if (!confirmed) return;
+                deletedLotIds.add(lotId);
+                rerender();
+            });
+        });
+    };
+
+    const rerender = () => {
+        document.querySelector('#stock-by-lot-modal .sbl-scroll').innerHTML = renderColumns(editMode, deletedLotIds);
+        wireRowButtons();
+    };
+
+    wireRowButtons();
+
+    document.getElementById('sbl-btn-edit').addEventListener('click', () => {
+        editMode = true;
+        document.getElementById('sbl-btn-edit').hidden = true;
+        document.getElementById('sbl-btn-close').hidden = true;
+        document.getElementById('sbl-btn-cancel').hidden = false;
+        document.getElementById('sbl-btn-save').hidden = false;
+        document.getElementById('sbl-edit-hint').hidden = false;
+        rerender();
+    });
+
+    document.getElementById('sbl-btn-cancel').addEventListener('click', () => {
+        editMode = false;
+        deletedLotIds.clear();
+        document.getElementById('sbl-btn-edit').hidden = false;
+        document.getElementById('sbl-btn-close').hidden = false;
+        document.getElementById('sbl-btn-cancel').hidden = true;
+        document.getElementById('sbl-btn-save').hidden = true;
+        document.getElementById('sbl-edit-hint').hidden = true;
+        rerender();
+    });
+
+    document.getElementById('sbl-btn-save').addEventListener('click', async () => {
+        const inputs = document.querySelectorAll('.sbl-qty-input');
+        for (const inp of inputs) {
+            const lotId = parseInt(inp.getAttribute('data-lot-id'));
+            if (deletedLotIds.has(lotId)) continue;
+            const newVal = parseInt(inp.value);
+            if (isNaN(newVal) || newVal < 0) continue;
+            const row = allLotsById.get(lotId);
+            if (row && row.remaining !== newVal) {
+                // packed_coffee.quantity is trigger-derived from this write
+                // (sync_packed_coffee_quantity) — no separate packed_coffee
+                // write needed. Only remaining_pcs changes here, not
+                // quantity_pcs — this corrects "how much is actually left",
+                // not the historical record of what was originally packed.
+                // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1).
+                const { error: setErr } = await window.supabaseClient.rpc('set_packed_lot_remaining', {
+                    p_lot_id: lotId, p_pcs: newVal,
+                    p_operation: 'manual_edit', p_ref_table: 'packed_coffee_lots', p_ref_id: lotId,
+                    p_reason: `${row.remaining} → ${newVal} pcs (Stock by Lot)`, p_user: (currentUser && currentUser.name) || null
+                });
+                if (setErr) console.error('set_packed_lot_remaining RPC failed:', setErr);
+            }
+        }
+        // A straight DELETE, not an RPC — Phase 1's RPCs exist to make a
+        // read-modify-write atomic, and a delete has no such race. The
+        // BEFORE DELETE trigger (STOCK_LEDGER_PLAN.md Phase 2) already logs
+        // it as 'lot_deleted' with the lot's own remaining_pcs as the
+        // negative delta, so this is a fully audited write-off, not a
+        // silent loss.
+        for (const lotId of deletedLotIds) {
+            await deleteData('packed_coffee_lots', lotId);
+        }
+
+        document.getElementById('btn-close-modal').click();
+        loadPackedCoffeeSection();
+        scheduleDashboardRefresh();
     });
 }
 
@@ -4421,149 +4510,6 @@ function openPrintLotStickerModal(row, coffeeName, machines) {
         document.getElementById('btn-close-modal').click();
         printLotBarcodeLabels(lotShape, requested, machines, { priorityMark });
     });
-}
-
-async function openEditPackedModal(coffeeName) {
-    const [
-        { data: packed },
-        { data: machines },
-        { data: batches },
-        { data: greenbeans },
-        { data: recipes },
-        { data: lots }
-    ] = await Promise.all([
-        fetchData('packed_coffee'),
-        fetchData('machines'),
-        fetchData('roast_batches'),
-        fetchData('green_coffee'),
-        fetchData('blend_recipes'),
-        fetchData('packed_coffee_lots')
-    ]);
-    
-    const resolved = packed.map(item => {
-        let name = item.custom_coffee_name || 'Roasted Coffee';
-        if (item.roast_batch_id) {
-            const b = batches.find(x => x.id === item.roast_batch_id);
-            if (b) {
-                if (b.coffee_type === 'Single') {
-                    const gb = greenbeans.find(g => g.id === b.single_coffee_id);
-                    if (gb) name = gb.name;
-                } else {
-                    const r = recipes.find(rec => rec.id === b.blend_recipe_id);
-                    if (r) name = r.name;
-                }
-            }
-        }
-        // Match loadPackedCoffeeSection's grouping key (it strips these
-        // suffixes off custom_coffee_name rows) — without this, Edit on any
-        // bulk-packed coffee (custom_coffee_name ending "(Single)"/"(Blend)")
-        // always showed "never been packed" even with real stock (found
-        // 2026-07-16 while building the lot drill-down view alongside it).
-        name = name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
-        return { ...item, resolvedName: name };
-    });
-
-    const records = resolved.filter(r => r.resolvedName === coffeeName);
-    
-    let rowsHtml = '';
-    
-    if (records.length === 0) {
-        rowsHtml = `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.9rem;">This coffee has never been packed.<br>Please use the <strong>Packing</strong> feature to add stock first.</div>`;
-    } else {
-        records.sort((a,b) => (a.machine_id || 0) - (b.machine_id || 0) || (a.bag_size_g || 0) - (b.bag_size_g || 0)).forEach(rec => {
-        let machineName = 'Unknown';
-        if (rec.machine_id) {
-            const m = machines.find(mac => mac.id === rec.machine_id);
-            if (m) machineName = m.name;
-        } else if (rec.roast_batch_id) {
-            const b = batches.find(x => x.id === rec.roast_batch_id);
-            if (b && b.machine_id) {
-                const m = machines.find(mac => mac.id === b.machine_id);
-                if (m) machineName = m.name;
-            }
-        }
-
-        // Every lot as its own editable row — a stocktake correction usually
-        // targets a SPECIFIC physical batch, not "the total", and picking
-        // which lot silently absorbs an aggregate delta (the old behavior)
-        // could land the correction on the wrong one.
-        const recLots = (lots || [])
-            .filter(l => l.packed_coffee_id === rec.id)
-            .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id);
-
-        const lotRowsHtml = recLots.length > 0
-            ? recLots.map(l => `
-                <div style="display:flex; justify-content:space-between; align-items:center; gap: 8px; padding: 2px 0 2px 10px; border-left: 2px solid var(--border);">
-                    <div style="font-size: 0.75rem;">
-                        ${l.strip_code ? `<span style="font-weight:600;">${l.strip_code}</span> &middot; ` : ''}${l.lot_code || '-'}
-                        <span style="color: var(--text-muted);"> &middot; packed ${l.packed_date || '-'}</span>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:6px;">
-                        <input type="number" class="form-control packed-lot-edit-input" data-lot-id="${l.id}" value="${l.remaining_pcs}" min="0" style="width: 68px; height: 28px;">
-                        <span style="font-size:0.75rem; color:var(--text-secondary);">bags</span>
-                    </div>
-                </div>
-            `).join('')
-            : `<div style="padding: 2px 0 2px 10px; font-size:0.75rem; color: var(--text-muted);">No lots recorded for this row.</div>`;
-
-        rowsHtml += `
-            <div class="form-group" style="border-bottom: 1px dashed var(--border); padding-bottom: 8px; margin-bottom: 8px;">
-                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
-                    <label class="form-label flex-1-mb-0">
-                        <div style="font-size: 0.75rem; color: var(--text-secondary);">${machineName}</div>
-                        <div style="font-weight: 600; font-size: 0.875rem;">${rec.bag_size_g}g</div>
-                    </label>
-                    <div style="font-size: 0.75rem; color: var(--text-muted);">Total: ${rec.quantity} bags${recLots.length > 1 ? ` &middot; ${recLots.length} lots` : ''}</div>
-                </div>
-                ${lotRowsHtml}
-            </div>
-        `;
-    });
-    }
-    
-    const html = `
-        <div id="modal-edit-packed-form">
-            <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 20px;">Edit packed inventory for <strong>${coffeeName}</strong></p>
-            <div style="max-height: 400px; overflow-y: auto; padding-right: 10px;">
-                ${rowsHtml}
-            </div>
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
-                <button type="button" id="btn-save-edit-packed" class="btn btn-primary">Save Changes</button>
-            </div>
-        </div>
-    `;
-    
-    openModal('Edit Packed Stock', html);
-    
-    document.getElementById('btn-save-edit-packed').onclick = async () => {
-        const inputs = document.querySelectorAll('.packed-lot-edit-input');
-        for (const inp of inputs) {
-            const lotId = parseInt(inp.getAttribute('data-lot-id'));
-            const newVal = parseInt(inp.value);
-            if (isNaN(newVal) || newVal < 0) continue;
-
-            const lot = (lots || []).find(l => l.id === lotId);
-            if (lot && (parseInt(lot.remaining_pcs) || 0) !== newVal) {
-                // packed_coffee.quantity is trigger-derived from this write
-                // (sync_packed_coffee_quantity) — no separate packed_coffee
-                // write needed. Only remaining_pcs changes here, not
-                // quantity_pcs — this corrects "how much is actually left",
-                // not the historical record of what was originally packed.
-                // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1).
-                const { error: setErr } = await window.supabaseClient.rpc('set_packed_lot_remaining', {
-                    p_lot_id: lotId, p_pcs: newVal,
-                    p_operation: 'manual_edit', p_ref_table: 'packed_coffee_lots', p_ref_id: lotId,
-                    p_reason: `${lot.remaining_pcs} → ${newVal} bags`, p_user: (currentUser && currentUser.name) || null
-                });
-                if (setErr) console.error('set_packed_lot_remaining RPC failed:', setErr);
-            }
-        }
-
-        modalContainer.classList.add('hidden');
-        loadPackedCoffeeSection();
-        scheduleDashboardRefresh();
-    };
 }
 
 async function openCustomPackingModal() {
