@@ -4289,13 +4289,15 @@ async function openEditPackedModal(coffeeName) {
         { data: machines },
         { data: batches },
         { data: greenbeans },
-        { data: recipes }
+        { data: recipes },
+        { data: lots }
     ] = await Promise.all([
         fetchData('packed_coffee'),
         fetchData('machines'),
         fetchData('roast_batches'),
         fetchData('green_coffee'),
-        fetchData('blend_recipes')
+        fetchData('blend_recipes'),
+        fetchData('packed_coffee_lots')
     ]);
     
     const resolved = packed.map(item => {
@@ -4340,17 +4342,40 @@ async function openEditPackedModal(coffeeName) {
                 if (m) machineName = m.name;
             }
         }
-        
-        rowsHtml += `
-            <div class="form-group" style="display:flex; justify-content:space-between; align-items:center; gap: 10px; border-bottom: 1px dashed var(--border); padding-bottom: 10px; margin-bottom: 10px;">
-                <label class="form-label flex-1-mb-0" >
-                    <div style="font-size: 0.8rem; color: var(--text-secondary);">${machineName}</div>
-                    <div style="font-weight: 600;">Size: ${rec.bag_size_g}g</div>
-                </label>
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <input type="number" class="form-control packed-edit-input" data-id="${rec.id}" value="${rec.quantity}" min="0" style="width: 100px;">
-                    <span style="font-size:0.85rem; color:var(--text-secondary);">bags</span>
+
+        // Every lot as its own editable row — a stocktake correction usually
+        // targets a SPECIFIC physical batch, not "the total", and picking
+        // which lot silently absorbs an aggregate delta (the old behavior)
+        // could land the correction on the wrong one.
+        const recLots = (lots || [])
+            .filter(l => l.packed_coffee_id === rec.id)
+            .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id);
+
+        const lotRowsHtml = recLots.length > 0
+            ? recLots.map(l => `
+                <div style="display:flex; justify-content:space-between; align-items:center; gap: 8px; padding: 2px 0 2px 10px; border-left: 2px solid var(--border);">
+                    <div style="font-size: 0.75rem;">
+                        ${l.strip_code ? `<span style="font-weight:600;">${l.strip_code}</span> &middot; ` : ''}${l.lot_code || '-'}
+                        <span style="color: var(--text-muted);"> &middot; packed ${l.packed_date || '-'}</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <input type="number" class="form-control packed-lot-edit-input" data-lot-id="${l.id}" value="${l.remaining_pcs}" min="0" style="width: 68px; height: 28px;">
+                        <span style="font-size:0.75rem; color:var(--text-secondary);">bags</span>
+                    </div>
                 </div>
+            `).join('')
+            : `<div style="padding: 2px 0 2px 10px; font-size:0.75rem; color: var(--text-muted);">No lots recorded for this row.</div>`;
+
+        rowsHtml += `
+            <div class="form-group" style="border-bottom: 1px dashed var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+                    <label class="form-label flex-1-mb-0">
+                        <div style="font-size: 0.75rem; color: var(--text-secondary);">${machineName}</div>
+                        <div style="font-weight: 600; font-size: 0.875rem;">${rec.bag_size_g}g</div>
+                    </label>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">Total: ${rec.quantity} bags${recLots.length > 1 ? ` &middot; ${recLots.length} lots` : ''}</div>
+                </div>
+                ${lotRowsHtml}
             </div>
         `;
     });
@@ -4372,19 +4397,23 @@ async function openEditPackedModal(coffeeName) {
     openModal('Edit Packed Stock', html);
     
     document.getElementById('btn-save-edit-packed').onclick = async () => {
-        const inputs = document.querySelectorAll('.packed-edit-input');
+        const inputs = document.querySelectorAll('.packed-lot-edit-input');
         for (const inp of inputs) {
-            const id = parseInt(inp.getAttribute('data-id'));
+            const lotId = parseInt(inp.getAttribute('data-lot-id'));
             const newVal = parseInt(inp.value);
-            
-            const targetRec = packed.find(p => p.id === id);
-            if (targetRec && parseInt(targetRec.quantity) !== newVal) {
-                // quantity is trigger-derived from packed_coffee_lots — apply the
-                // change as a lot delta, not a direct write (see applyPackedCoffeeManualQtyDelta).
-                await applyPackedCoffeeManualQtyDelta(id, newVal - (parseInt(targetRec.quantity) || 0));
+            if (isNaN(newVal) || newVal < 0) continue;
+
+            const lot = (lots || []).find(l => l.id === lotId);
+            if (lot && (parseInt(lot.remaining_pcs) || 0) !== newVal) {
+                // packed_coffee.quantity is trigger-derived from this write
+                // (sync_packed_coffee_quantity) — no separate packed_coffee
+                // write needed. Only remaining_pcs changes here, not
+                // quantity_pcs — this corrects "how much is actually left",
+                // not the historical record of what was originally packed.
+                await saveData('packed_coffee_lots', { id: lotId, remaining_pcs: newVal });
             }
         }
-        
+
         modalContainer.classList.add('hidden');
         loadPackedCoffeeSection();
         scheduleDashboardRefresh();
