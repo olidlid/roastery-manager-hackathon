@@ -1,6 +1,6 @@
 # Stock Ledger — Execution Plan
 
-**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done (`6cd2ea7`, with a same-day production incident + hotfix), Phase 3 done (`6d70f24`), Phase 4 done (`cb9d18e`, addendum `ac3a0a7` — a follow-on movement-context gap found while live-verifying F6), Phase 5 done (`8b2514d`, verified by direct ledger/RPC simulation — true end-to-end UI pass still pending, see Phase 5 note). Ready for Phase 6 (deferred by design) or Phase 7.
+**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done (`6cd2ea7`, with a same-day production incident + hotfix), Phase 3 done (`6d70f24`), Phase 4 done (`cb9d18e`, addendum `ac3a0a7` — a follow-on movement-context gap found while live-verifying F6), Phase 5 done (`8b2514d`, verified by direct ledger/RPC simulation — true end-to-end UI pass still pending, see Phase 5 note), Phase 7 done (`d228832`, two live-verification fixes: `3a3bb35`, `08e801e`). Only Phase 6 remains, deferred by design (no active corruption found).
 **Audit date:** 2026-08-22 (live, against production)
 **Goal:** every change to packed stock is atomic, lot-specific, and permanently traceable — so any future error can be found and reversed.
 
@@ -437,7 +437,7 @@ Not started, and deliberately so: the audit found **no evidence of active corrup
 
 ---
 
-## Phase 7 — Combined Stock by Lot + Edit modal
+## Phase 7 — Combined Stock by Lot + Edit modal — DONE (`d228832`, fixes `3a3bb35` + `08e801e`)
 
 Design already approved by the user (mockups iterated and signed off). Build only after Phase 5.
 
@@ -453,6 +453,16 @@ Design already approved by the user (mockups iterated and signed off). Build onl
 - Remove the Actions column from the Packed Coffee Stock table entirely.
 
 All writes from this modal must go through Phase 1's RPCs with `mv_operation = 'manual_edit'`.
+
+**Verified live (2026-08-22), on throwaway ZZ TEST coffees/lots (not real stock):**
+- Read-only view renders correctly: columns split by size, one row per lot, machine as an inline tag, PICK FIRST badge on the oldest lot per machine within a column, dates as `dd-mm-yyyy`.
+- **Bug caught and fixed right after first deploy** (`3a3bb35`): all four footer buttons and the per-row Delete button showed at once regardless of mode — `.btn`'s `display:inline-flex` was beating the bare `[hidden]` attribute, the exact same CSS specificity gotcha the dispatch checkout modal already had to work around. Added the matching `#stock-by-lot-modal [hidden] { display:none !important; }` override; re-verified read-only and edit mode both show only their own buttons.
+- **Second bug caught during live verification** (`08e801e`): columns sorted ascending (smallest size first), but the spec says "1000g left, 250g right" — a two-size test coffee (250g + 1000g) rendered 250g first. Fixed to sort descending; re-verified the same test coffee now renders 1000g, then 250g.
+- Edit → change quantity → Save: RPC call confirmed (`set_packed_lot_remaining`, `operation:'manual_edit'`, correct `ref_table`/`ref_id`/`reason`), `remaining_pcs` updated correctly in the DB.
+- Edit → Delete a lot → confirm dialog → Save: lot removed from the DB, movement logged as `lot_deleted` with the lot's own `remaining_pcs` as the negative delta (an audited write-off, not a silent loss) — and separately confirmed the F3 delete guard still correctly blocks deleting the *parent* `packed_coffee` row while a lot still holds stock, only succeeding once cleared.
+- Hard invariant re-checked after all of the above: 0 mismatches across 256 lots. All test rows cleaned up.
+
+*Not verified: the Blend/Repack badges (no production-linked ZZ TEST lot with `is_post_blend`/`is_repack` was set up this pass — every test lot was a manual/unlinked one, which the app itself never marks with either badge). The code path (`packed_coffee_lots` → `production_lots` → `bulk_roasted_coffee.is_post_blend`/`is_repack`) is straightforward and mirrors the same lookup already used elsewhere in this file, but worth a spot-check next time a real blend or repack lot is on hand.*
 
 ---
 
