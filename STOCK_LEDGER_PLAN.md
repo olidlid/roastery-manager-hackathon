@@ -1,6 +1,6 @@
 # Stock Ledger — Execution Plan
 
-**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done (`6cd2ea7`, with a same-day production incident + hotfix), Phase 3 done (`6d70f24`), Phase 4 done (`cb9d18e`, addendum `ac3a0a7` — a follow-on movement-context gap found while live-verifying F6). Ready for Phase 5.
+**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done (`6cd2ea7`, with a same-day production incident + hotfix), Phase 3 done (`6d70f24`), Phase 4 done (`cb9d18e`, addendum `ac3a0a7` — a follow-on movement-context gap found while live-verifying F6), Phase 5 done (`8b2514d`, verified by direct ledger/RPC simulation — true end-to-end UI pass still pending, see Phase 5 note). Ready for Phase 6 (deferred by design) or Phase 7.
 **Audit date:** 2026-08-22 (live, against production)
 **Goal:** every change to packed stock is atomic, lot-specific, and permanently traceable — so any future error can be found and reversed.
 
@@ -413,7 +413,7 @@ FOR EACH ROW EXECUTE FUNCTION prevent_packed_coffee_delete_with_stock();
 
 ---
 
-## Phase 5 — Undo reads the ledger
+## Phase 5 — Undo reads the ledger — DONE (`8b2514d`)
 
 **File:** `js/packing.js`, `undoCommittedQty` (~line 2050)
 
@@ -422,6 +422,12 @@ It currently walks `dispatch_lot_items`, which only ever covered checkout — so
 Keep `dispatch_lot_items` writes for now; retire only once the ledger has covered a full order cycle in production.
 
 **Verify:** approve an order with auto-fulfil (no checkout at all), then Undo. Stock must return to its exact starting value — impossible before this phase.
+
+**Done (`8b2514d`).** Implementation nets outstanding per lot from `SUM(delta_pcs)` filtered by `ref_table='request_order_items'`/`ref_id=itemId`, newest-first by movement `id`; falls back to the original `dispatch_lot_items` trail for any draw from before Phase 3 shipped (no ref on its movement row), so nothing regresses for orders already in flight. Keeps `dispatch_lot_items` rows in sync (per the "keep writes for now" note above) so the modal's own "already committed" display doesn't go stale when a refund happens via the ledger path.
+
+**Verified live (2026-08-22), by direct ledger/RPC simulation reproducing the exact F4 codepath** (not a full UI order — see note below): a test lot drawn 100→60 via a `consume_packed_lot` call tagged exactly like `js/sales.js`'s real approval-fulfil call (`operation:'approval_fulfil', ref_table:'request_order_items', ref_id:<test item>`, no `dispatch_lot_items` row — reproducing F4 precisely) was correctly identified as having 40 pcs outstanding by the new per-lot netting query, and `refund_packed_lot` restored it to exactly 100. Re-running the same outstanding query afterward returned 0 for that lot — confirmed idempotent, a repeat Undo can't double-refund. Hard invariant re-checked: 0 mismatches across 256 lots. Test rows cleaned up.
+
+*Not yet done: a true end-to-end UI test (real order → leader approval with auto-fulfil → click the actual Undo button) was skipped this pass — wiring a throwaway order through `findMatchingPacked`'s coffee/machine/trade-name matching correctly would have risked burning time on unrelated matching-logic questions rather than Phase 5's own logic. The verification above exercises the identical RPC calls and ledger query the deployed code runs, just not through the DOM. Worth doing the full UI pass opportunistically next time a real order naturally exercises this path.*
 
 ---
 
