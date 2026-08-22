@@ -3576,9 +3576,21 @@ async function applyPackedCoffeeManualQtyDelta(packedCoffeeId, delta) {
 // source-pool dropdown, and as the root risk for the new lot fifo_code below
 // — two duplicate rows would each mint their own conflicting number).
 async function getOrCreatePackedCoffeeRow(name, gram, machineId) {
+    // Match with the " (Single)"/" (Blend)" type suffix stripped from BOTH
+    // sides — callers are inconsistent about including it (roasting.js's
+    // normal batch-completion path always appends it; its post-blend
+    // leftover-distribution path and packing.js's manual/custom entry form
+    // never do), and an exact-string match treated "BRAZIL ROSA (Single)"
+    // and "BRAZIL ROSA" as two different coffees. Found 2026-08-22 via a
+    // live duplicate: two packed_coffee rows for the same GIESEN/250g stock,
+    // splitting what should have been one pool. The DB's own dedup index
+    // (packed_coffee_dedup_migration.sql) only catches an EXACT repeat name,
+    // so it never caught this — this in-memory match is what actually
+    // prevents it now.
+    const stripType = (s) => (s || '').trim().replace(/ \(Single\)$/i, '').replace(/ \(Blend\)$/i, '');
     const findExisting = (list) => (list || []).find(p =>
         !p.roast_batch_id &&
-        (p.custom_coffee_name || '').trim().toLowerCase() === (name || '').trim().toLowerCase() &&
+        stripType(p.custom_coffee_name).toLowerCase() === stripType(name).toLowerCase() &&
         parseInt(p.bag_size_g) === parseInt(gram) &&
         parseInt(p.machine_id) === parseInt(machineId)
     );
