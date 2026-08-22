@@ -1,6 +1,6 @@
 # Stock Ledger — Execution Plan
 
-**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done — RPC context params added and a production incident from it hotfixed same-day. Ready for Phase 3.
+**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done (`6cd2ea7`, with a same-day production incident + hotfix), Phase 3 done (`6d70f24`). Ready for Phase 4.
 **Audit date:** 2026-08-22 (live, against production)
 **Goal:** every change to packed stock is atomic, lot-specific, and permanently traceable — so any future error can be found and reversed.
 
