@@ -1217,11 +1217,18 @@ async function submitCustomBlend({ name, coffeeCode, sourceRows, machineId }) {
             const kg = Math.min(row.amountKg, availKg); // capped
             if (kg <= 0) continue;
             const bagsUsed = bagSizeG > 0 ? Math.round(kg / (bagSizeG / 1000)) : 0;
-            // packed_coffee.quantity is trigger-derived from this lots write
-            // (sync_packed_coffee_quantity) — no separate packed_coffee write needed.
-            await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: Math.max(0, availPcs - bagsUsed) });
-            totalKg += kg;
-            componentsToInsert.push({ source_type: 'Packed', source_bulk_id: null, source_packed_lot_id: row.lotId, kg });
+            // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — clamps and locks
+            // in the DB instead of trusting this read-then-write's stale
+            // availPcs snapshot, and packed_coffee.quantity is trigger-
+            // derived from this write (sync_packed_coffee_quantity), so no
+            // separate packed_coffee write is needed either.
+            const { data: bagsTaken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', { p_lot_id: lot.id, p_pcs: bagsUsed });
+            if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+            const actualBags = parseInt(bagsTaken) || 0;
+            if (actualBags <= 0) continue;
+            const actualKg = bagSizeG > 0 ? (actualBags * bagSizeG) / 1000 : 0;
+            totalKg += actualKg;
+            componentsToInsert.push({ source_type: 'Packed', source_bulk_id: null, source_packed_lot_id: row.lotId, kg: actualKg });
         }
     }
 
@@ -1453,8 +1460,14 @@ async function openEditPackingRecordModal(recordId) {
         const newRemaining = Math.max(0, currentRemaining + delta);
 
         // packed_coffee.quantity is trigger-derived from this lots write
-        // (sync_packed_coffee_quantity) — no separate packed_coffee write needed.
-        await saveData('packed_coffee_lots', { id: lot.id, quantity_pcs: newQty, remaining_pcs: newRemaining });
+        // (sync_packed_coffee_quantity) — no separate packed_coffee write
+        // needed. remaining_pcs goes through the atomic RPC (STOCK_LEDGER_
+        // PLAN.md Phase 1); quantity_pcs is a plain write since this flow —
+        // unlike a stocktake/manual-adjust — IS meant to correct the lot's
+        // historical "originally packed" figure.
+        const { error: setErr } = await window.supabaseClient.rpc('set_packed_lot_remaining', { p_lot_id: lot.id, p_pcs: newRemaining });
+        if (setErr) { console.error('set_packed_lot_remaining RPC failed:', setErr); return; }
+        await saveData('packed_coffee_lots', { id: lot.id, quantity_pcs: newQty });
 
         // More bags packed = more bulk kg consumed, so bulk moves the
         // opposite direction of the packed-quantity delta. Optional: the
@@ -2071,14 +2084,15 @@ async function openDispatchCheckoutModal(orderId) {
             if (d.packed_coffee_lot_id) {
                 const lot = (freshLots || []).find(l => l.id === d.packed_coffee_lot_id);
                 if (lot) {
-                    const newRemainingPcs = (parseInt(lot.remaining_pcs) || 0) + take;
                     // packed_coffee.quantity is trigger-derived from this lots write
                     // (sync_packed_coffee_quantity) — no separate packed_coffee write needed.
-                    // A manual write here used a stale pre-loop `freshPacked` snapshot and
-                    // could clobber the trigger's correct value when a sibling lot under the
-                    // same packed_coffee_id changed concurrently — this caused the reported
-                    // "undo restores less than what was taken" bug.
-                    await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemainingPcs });
+                    // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — a manual read-modify-
+                    // write here used a stale pre-loop `freshPacked` snapshot and could
+                    // clobber the trigger's correct value when a sibling lot under the
+                    // same packed_coffee_id changed concurrently — this caused the
+                    // reported "undo restores less than what was taken" bug.
+                    const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', { p_lot_id: lot.id, p_pcs: take });
+                    if (refundErr) console.error('refund_packed_lot RPC failed:', refundErr);
                     liveRemaining[lot.id] = (liveRemaining[lot.id] || 0) + take;
                 }
             }
@@ -2404,25 +2418,31 @@ async function submitDispatchCheckout(order, items, cart, cust) {
         fetchData('packed_coffee_lots')
     ]);
 
-    // Sum cart qty per order line.
+    // Deduct packed_coffee_lots (the per-lot source of truth) via the atomic
+    // RPC (STOCK_LEDGER_PLAN.md Phase 1) — clamps and locks in the DB
+    // instead of trusting a freshLots snapshot, which is exactly what let
+    // two concurrent checkouts silently under-deduct a shared lot. The
+    // parent packed_coffee row's flattened total is trigger-derived
+    // (sync_packed_coffee_quantity) from this write, no separate write
+    // needed — then record the fulfillment for traceability. quantity_prepared
+    // below is credited from the pcs ACTUALLY taken (qtyByItem), not the
+    // cart's requested amount — if a race clamps a take below what was
+    // requested, the order must not be credited for stock it never got.
     const qtyByItem = new Map();
-    cart.forEach(row => { qtyByItem.set(row.orderItemId, (qtyByItem.get(row.orderItemId) || 0) + row.qty); });
-
-    // Deduct packed_coffee_lots (the per-lot source of truth). The parent
-    // packed_coffee row's flattened total is trigger-derived
-    // (sync_packed_coffee_quantity) from this write, no separate write needed —
-    // then record the fulfillment for traceability.
     for (const row of cart.values()) {
         const lot = (freshLots || []).find(l => l.id === row.lotId);
         if (!lot) continue;
-        const newRemaining = Math.max(0, (parseInt(lot.remaining_pcs) || 0) - row.qty);
-        await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemaining });
+        const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', { p_lot_id: lot.id, p_pcs: row.qty });
+        if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+        const actualQty = parseInt(taken) || 0;
+        if (actualQty <= 0) continue;
+        qtyByItem.set(row.orderItemId, (qtyByItem.get(row.orderItemId) || 0) + actualQty);
 
         await saveData('dispatch_lot_items', {
             request_order_item_id: row.orderItemId,
             packed_coffee_lot_id: row.lotId,
             customer_id: cust ? cust.id : null,
-            qty: row.qty
+            qty: actualQty
         });
     }
 
@@ -3407,9 +3427,14 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId) 
         ? (existingLots || []).find(l => l.packed_coffee_id === packedCoffeeId && l.production_lot_id === productionLotId)
         : (existingLots || []).find(l => l.packed_coffee_id === packedCoffeeId && !l.production_lot_id && (parseInt(l.remaining_pcs) || 0) > 0);
     if (existing) {
+        // remaining_pcs goes through the atomic RPC (STOCK_LEDGER_PLAN.md
+        // Phase 1) — two concurrent "pack more into this shelf lot" actions
+        // must not silently lose pcs the way a plain read-modify-write did.
         const newQtyPcs = (parseInt(existing.quantity_pcs) || 0) + qty;
-        const newRemaining = (parseInt(existing.remaining_pcs) || 0) + qty;
-        await saveData('packed_coffee_lots', { id: existing.id, quantity_pcs: newQtyPcs, remaining_pcs: newRemaining });
+        const { data: newRemainingResult, error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', { p_lot_id: existing.id, p_pcs: qty });
+        if (refundErr) { console.error('refund_packed_lot RPC failed:', refundErr); return null; }
+        const newRemaining = parseInt(newRemainingResult) || 0;
+        await saveData('packed_coffee_lots', { id: existing.id, quantity_pcs: newQtyPcs });
         return { ...existing, quantity_pcs: newQtyPcs, remaining_pcs: newRemaining };
     }
 
@@ -3545,11 +3570,12 @@ async function applyPackedCoffeeManualQtyDelta(packedCoffeeId, delta) {
         .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id);
     for (const lot of ordered) {
         if (remaining <= 0) break;
-        const avail = parseInt(lot.remaining_pcs) || 0;
-        const take = Math.min(avail, remaining);
-        if (take <= 0) continue;
-        await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: avail - take });
-        remaining -= take;
+        // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — clamps in the DB
+        // against the lot's real current remaining_pcs, not this stale
+        // `lots` snapshot.
+        const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', { p_lot_id: lot.id, p_pcs: remaining });
+        if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+        remaining -= parseInt(taken) || 0;
     }
     // Any shortfall (asking to remove more than the lots actually hold) is
     // simply not applied further — quantity floors at whatever the lots sum to.
@@ -4410,7 +4436,9 @@ async function openEditPackedModal(coffeeName) {
                 // write needed. Only remaining_pcs changes here, not
                 // quantity_pcs — this corrects "how much is actually left",
                 // not the historical record of what was originally packed.
-                await saveData('packed_coffee_lots', { id: lotId, remaining_pcs: newVal });
+                // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1).
+                const { error: setErr } = await window.supabaseClient.rpc('set_packed_lot_remaining', { p_lot_id: lotId, p_pcs: newVal });
+                if (setErr) console.error('set_packed_lot_remaining RPC failed:', setErr);
             }
         }
 
@@ -5331,21 +5359,21 @@ async function submitRepack(group, rows, roastDate) {
         return;
     }
 
-    const { data: freshLots } = await fetchData('packed_coffee_lots');
-
     for (const r of rows) {
-        const lot = (freshLots || []).find(l => l.id === r.lotId);
-        if (lot) {
-            const newRemaining = Math.max(0, (parseInt(lot.remaining_pcs) || 0) - r.pcs);
-            // packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity)
-            // from this lots write — no separate packed_coffee write needed.
-            await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemaining });
-        }
+        // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — packed_coffee.quantity
+        // is trigger-derived (sync_packed_coffee_quantity) from this lots
+        // write, no separate packed_coffee write needed. repack_sources
+        // below records the pcs ACTUALLY taken, in case a race clamped it
+        // below what was requested.
+        const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', { p_lot_id: r.lotId, p_pcs: r.pcs });
+        if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+        const actualPcs = parseInt(taken) || 0;
+        if (actualPcs <= 0) continue;
         await saveData('repack_sources', {
             repack_bulk_id: newBulk.id,
             source_packed_lot_id: r.lotId,
-            pcs: r.pcs,
-            kg: (r.pcs * r.sizeG) / 1000
+            pcs: actualPcs,
+            kg: (actualPcs * r.sizeG) / 1000
         });
     }
 
@@ -6040,22 +6068,24 @@ async function submitStockRelease({ date, category, salesName, notes, lines }) {
     }
 
     for (const line of lines) {
+        // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — packed_coffee.quantity
+        // is trigger-derived (sync_packed_coffee_quantity) from this lots
+        // write, no separate packed_coffee write needed. Consumed first so
+        // stock_release_items below records the pcs ACTUALLY taken, in case
+        // a race clamped it below what was requested.
+        const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', { p_lot_id: line.lotId, p_pcs: line.qty });
+        if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+        const actualQty = parseInt(taken) || 0;
+        if (actualQty <= 0) continue;
+
         await saveData('stock_release_items', {
             stock_release_id: header.id,
             packed_coffee_lot_id: line.lotId,
             packed_coffee_id: line.packedCoffeeId,
             coffee_name: line.coffeeName,
             bag_size_g: line.sizeG,
-            qty: line.qty
+            qty: actualQty
         });
-
-        const lot = (freshLots || []).find(l => l.id === line.lotId);
-        if (lot) {
-            const newRemaining = Math.max(0, (parseInt(lot.remaining_pcs) || 0) - line.qty);
-            // packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity)
-            // from this lots write — no separate packed_coffee write needed.
-            await saveData('packed_coffee_lots', { id: lot.id, remaining_pcs: newRemaining });
-        }
     }
 
     document.getElementById('btn-close-modal').click();

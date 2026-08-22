@@ -955,6 +955,67 @@ GRANT EXECUTE ON FUNCTION public.refund_green_coffee_lot(INTEGER, NUMERIC) TO an
 GRANT EXECUTE ON FUNCTION public.adjust_green_coffee_lot(INTEGER, NUMERIC) TO anon, authenticated;
 
 -- ============================================================================
+-- PACKED COFFEE LOT ATOMIC FUNCTIONS (STOCK_LEDGER_PLAN.md Phase 1, applied
+-- to production 2026-08-22)
+-- ----------------------------------------------------------------------------
+-- Same fix as the greenbean lot functions above, applied to
+-- packed_coffee_lots.remaining_pcs: reproduced live on a throwaway test lot
+-- before this migration — two concurrent takes of 30 and 20 pcs against a
+-- 100-pc lot only deducted 20, leaving 30 pcs unaccounted for. The JS side
+-- (submitDispatchCheckout / undoCommittedQty / applyPackedCoffeeManualQtyDelta
+-- / getOrCreatePackedCoffeeLot / submitRepack / stock release / sales.js
+-- order-approval auto-fulfil, all in js/packing.js or js/sales.js) calls
+-- these via window.supabaseClient.rpc(...) instead of read-modify-write. See
+-- database/v2_packed_lot_atomic_functions_migration.sql.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.consume_packed_lot(p_lot_id INTEGER, p_pcs INTEGER)
+RETURNS INTEGER
+LANGUAGE sql
+SET search_path = public
+AS $$
+    WITH before AS (
+        SELECT remaining_pcs FROM public.packed_coffee_lots WHERE id = p_lot_id FOR UPDATE
+    ), updated AS (
+        UPDATE public.packed_coffee_lots
+        SET remaining_pcs = remaining_pcs - LEAST(remaining_pcs, GREATEST(p_pcs, 0))
+        WHERE id = p_lot_id
+        RETURNING remaining_pcs
+    )
+    SELECT COALESCE((SELECT remaining_pcs FROM before), 0)
+         - COALESCE((SELECT remaining_pcs FROM updated), 0);
+$$;
+
+CREATE OR REPLACE FUNCTION public.refund_packed_lot(p_lot_id INTEGER, p_pcs INTEGER)
+RETURNS INTEGER
+LANGUAGE sql
+SET search_path = public
+AS $$
+    UPDATE public.packed_coffee_lots
+    SET remaining_pcs = remaining_pcs + GREATEST(p_pcs, 0)
+    WHERE id = p_lot_id
+    RETURNING remaining_pcs;
+$$;
+
+-- Sets an absolute remaining count. Deliberately does NOT touch quantity_pcs
+-- — that column is the lot's historical "how much was originally packed"
+-- figure and must not be rewritten by a stock correction
+-- (STOCK_LEDGER_PLAN.md F6).
+CREATE OR REPLACE FUNCTION public.set_packed_lot_remaining(p_lot_id INTEGER, p_pcs INTEGER)
+RETURNS INTEGER
+LANGUAGE sql
+SET search_path = public
+AS $$
+    UPDATE public.packed_coffee_lots
+    SET remaining_pcs = GREATEST(0, p_pcs)
+    WHERE id = p_lot_id
+    RETURNING remaining_pcs;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.consume_packed_lot(INTEGER, INTEGER) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refund_packed_lot(INTEGER, INTEGER) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.set_packed_lot_remaining(INTEGER, INTEGER) TO anon, authenticated;
+
+-- ============================================================================
 -- GREEN COFFEE STOCK SYNC TRIGGER (added V2 1·CHAIN, 2026-07-12 — see
 -- database/v2_lot_tracking_migration.sql)
 -- ============================================================================

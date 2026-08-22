@@ -1735,19 +1735,24 @@ async function approveSalesOrder(orderId) {
                     if (remainingDeduct <= 0) break;
                     const lotAvail = parseInt(lot.remaining_pcs) || 0;
                     if (lotAvail <= 0) continue;
-                    const take = Math.min(lotAvail, remainingDeduct);
+                    // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — packed_coffee_lots
+                    // is the FIFO source of truth the dispatch checkout modal reads;
+                    // without this, fulfilling an order from existing stock at
+                    // approval time would leave every lot's remaining_pcs stale/
+                    // overstated so checkout could still offer units already
+                    // consumed here (found 2026-07-27). Previously a plain
+                    // read-modify-write, which is exactly what let two concurrent
+                    // approvals (or an approval racing a checkout) silently
+                    // under-deduct a shared lot (found 2026-08-22).
+                    const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', { p_lot_id: lot.id, p_pcs: remainingDeduct });
+                    if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+                    const take = parseInt(taken) || 0;
+                    if (take <= 0) continue;
                     lot.remaining_pcs = lotAvail - take;
                     remainingDeduct -= take;
-                    // Per-lot write — packed_coffee_lots is the FIFO source of
-                    // truth the dispatch checkout modal reads; without this,
-                    // fulfilling an order from existing stock at approval time
-                    // would leave every lot's remaining_pcs stale/overstated
-                    // so checkout could still offer units already consumed
-                    // here (found 2026-07-27).
-                    await saveData('packed_coffee_lots', lot);
 
                     // In-memory only — packed_coffee.quantity is trigger-
-                    // derived from the lot write above
+                    // derived from the RPC write above
                     // (sync_packed_coffee_quantity). Tracked here purely so a
                     // later item in the SAME approval batch sees this row's
                     // reduced total (packedGoods/matchingPacked is fetched
