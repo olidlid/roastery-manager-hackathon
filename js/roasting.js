@@ -2230,8 +2230,13 @@ async function deleteBatch(id) {
                     b.production_date === batch.roast_date
                 );
                 if (bulkRec) {
-                    bulkRec.bulk_available = Math.max(0, parseFloat(bulkRec.bulk_available) - parseFloat(batch.output_weight_kg));
-                    await saveData('bulk_roasted_coffee', bulkRec);
+                    // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
+                    const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
+                        p_bulk_id: bulkRec.id, p_kg: parseFloat(batch.output_weight_kg),
+                        p_operation: 'undo', p_ref_table: 'roast_batches', p_ref_id: id,
+                        p_reason: 'Roast batch log deleted', p_user: (currentUser && currentUser.name) || null
+                    });
+                    if (consumeErr) console.error('consume_bulk_lot RPC failed:', consumeErr);
                 }
             }
         }
@@ -2252,7 +2257,7 @@ async function deleteBatch(id) {
 // different day must land in its own row/card, not accumulate into an
 // older day's pool (which would blur FIFO and misdate printed lot codes —
 // see database/bulk_production_date_migration.sql).
-async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, weightKg, roastDate) {
+async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, weightKg, roastDate, movementRefTable = 'roast_batches', movementRefId = null) {
     const { data: bulkList } = await fetchData('bulk_roasted_coffee');
     // V2 Repack: excludes is_repack rows on purpose — a repack bulk can
     // share the exact same coffee+machine+production_date key as a fresh
@@ -2268,8 +2273,15 @@ async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, 
     );
 
     if (existingBulk) {
-        existingBulk.bulk_available = parseFloat(existingBulk.bulk_available || 0) + weightKg;
-        await saveData('bulk_roasted_coffee', existingBulk);
+        // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6) — two concurrent adds to
+        // the same day's bulk row must not silently lose kg the way a plain
+        // read-modify-write did for packed lots before Phase 1.
+        const { error: refundErr } = await window.supabaseClient.rpc('refund_bulk_lot', {
+            p_bulk_id: existingBulk.id, p_kg: weightKg,
+            p_operation: 'roast', p_ref_table: movementRefTable, p_ref_id: movementRefId,
+            p_user: (currentUser && currentUser.name) || null
+        });
+        if (refundErr) console.error('refund_bulk_lot RPC failed:', refundErr);
     } else {
         const newBulk = {
             coffee_type: type,
@@ -2278,7 +2290,13 @@ async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, 
             machine_id: machineId,
             coffee_name: coffeeName,
             bulk_available: weightKg,
-            production_date: roastDate
+            production_date: roastDate,
+            // Movement context on the fresh INSERT (STOCK_LEDGER_PLAN.md
+            // Phase 4 addendum lesson: a new row's own insert must carry
+            // mv_* too, or the trigger logs it as an anonymous 'lot_created'
+            // with no ref).
+            mv_operation: 'roast', mv_ref_table: movementRefTable, mv_ref_id: movementRefId,
+            mv_user: (currentUser && currentUser.name) || null
         };
         await saveData('bulk_roasted_coffee', newBulk);
     }
@@ -2356,7 +2374,7 @@ async function finalizePostBlendPlan(parentPlanId) {
             const leftoverRoastDate = subPlanBatchDates.length > 0
                 ? subPlanBatchDates[subPlanBatchDates.length - 1]
                 : s.plan_date;
-            await addWeightToBulkRoastedCoffee('Single', s.single_coffee_id, null, s.machine_id, gb ? gb.name : 'Roasted Coffee', leftover, leftoverRoastDate);
+            await addWeightToBulkRoastedCoffee('Single', s.single_coffee_id, null, s.machine_id, gb ? gb.name : 'Roasted Coffee', leftover, leftoverRoastDate, 'roasting_plans', s.id);
         }
     }
 
@@ -2378,7 +2396,11 @@ async function finalizePostBlendPlan(parentPlanId) {
             bulk_available: assembledKg,
             machine_id: null,
             source_plan_id: parent.id,
-            production_date: todayStr
+            production_date: todayStr,
+            // Movement context on the fresh INSERT (STOCK_LEDGER_PLAN.md
+            // Phase 4 addendum lesson).
+            mv_operation: 'blend', mv_ref_table: 'roasting_plans', mv_ref_id: parent.id,
+            mv_user: (currentUser && currentUser.name) || null
         });
     }
 
@@ -2464,7 +2486,7 @@ async function approveTestBatch(id) {
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
 
-            await addWeightToBulkRoastedCoffee(batch.coffee_type, batch.single_coffee_id, batch.blend_recipe_id, batch.machine_id, coffeeName, parseFloat(batch.output_weight_kg), batch.roast_date);
+            await addWeightToBulkRoastedCoffee(batch.coffee_type, batch.single_coffee_id, batch.blend_recipe_id, batch.machine_id, coffeeName, parseFloat(batch.output_weight_kg), batch.roast_date, 'roast_batches', batch.id);
 
             loadRoastingBatches();
             scheduleDashboardRefresh();
@@ -3329,7 +3351,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 const r = recipes.find(rec => rec.id === blendId);
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
-            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate);
+            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate, 'roast_batches', savedBatch.id);
 
         } else if (prevQcStatus === 'Success' && qcStatus !== 'Success') {
             // Transition: Success → Pending  (approved checkbox unchecked)
@@ -3345,8 +3367,13 @@ async function openRoastBatchModal(plan = null, editId = null) {
             );
             if (existingBulk) {
                 const prevOutputKg = parseFloat(existingBatch.output_weight_kg || 0);
-                existingBulk.bulk_available = Math.max(0, parseFloat(existingBulk.bulk_available || 0) - prevOutputKg);
-                await saveData('bulk_roasted_coffee', existingBulk);
+                // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
+                const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
+                    p_bulk_id: existingBulk.id, p_kg: prevOutputKg,
+                    p_operation: 'correction', p_ref_table: 'roast_batches', p_ref_id: existingBatch.id,
+                    p_reason: 'QC status reverted from Success', p_user: (currentUser && currentUser.name) || null
+                });
+                if (consumeErr) console.error('consume_bulk_lot RPC failed:', consumeErr);
             }
 
         } else if (qcStatus === 'Success' && prevQcStatus === 'Success' && editId && existingBatch) {
@@ -3368,8 +3395,13 @@ async function openRoastBatchModal(plan = null, editId = null) {
                 b.production_date === existingBatch.roast_date
             );
             if (oldBulk) {
-                oldBulk.bulk_available = Math.max(0, parseFloat(oldBulk.bulk_available || 0) - parseFloat(existingBatch.output_weight_kg || 0));
-                await saveData('bulk_roasted_coffee', oldBulk);
+                // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
+                const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
+                    p_bulk_id: oldBulk.id, p_kg: parseFloat(existingBatch.output_weight_kg || 0),
+                    p_operation: 'correction', p_ref_table: 'roast_batches', p_ref_id: existingBatch.id,
+                    p_reason: 'Output weight edited — refund old amount before re-adding new', p_user: (currentUser && currentUser.name) || null
+                });
+                if (consumeErr) console.error('consume_bulk_lot RPC failed:', consumeErr);
             }
             let coffeeName = '';
             if (type === 'Single') {
@@ -3382,7 +3414,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
             // Refund matched the OLD roast_date (existingBatch.roast_date);
             // re-add uses the NEW roastDate (form value) — these can differ
             // if the user also changed the roast date during this edit.
-            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate);
+            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate, 'roast_batches', savedBatch.id);
         }
         // else: new batch not Success (Pending, first save) → nothing counted yet
 
@@ -4220,7 +4252,7 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
                 const r = (recipes || []).find(rec => rec.id === blendId);
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
-            await addWeightToBulkRoastedCoffee(type, singleId, blendId, mId, coffeeName, outputKg, roastDate);
+            await addWeightToBulkRoastedCoffee(type, singleId, blendId, mId, coffeeName, outputKg, roastDate, 'roast_batches', savedBatch.id);
         }
 
         // Show success toast

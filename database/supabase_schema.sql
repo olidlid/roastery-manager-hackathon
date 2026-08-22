@@ -294,7 +294,18 @@ CREATE TABLE IF NOT EXISTS public.bulk_roasted_coffee (
     source_plan_id INTEGER REFERENCES public.roasting_plans(id) ON DELETE SET NULL,  -- V2 1I-b: links a recipe-assembled post-blend back to its parent roasting_plans row, so composition is derived from that parent's sub-plans (parent_plan_id) instead of a components table
     custom_coffee_code TEXT,              -- V2 Custom Blend: user-typed short code for a custom blend (distinct from custom_blend_code, which is the auto-generated date-based bulk/lot code)
     production_date DATE NOT NULL DEFAULT CURRENT_DATE,  -- V2: re-keys bulk pooling by (coffee, machine, roast day) instead of pooling indefinitely — see bulk_production_date_migration.sql
-    is_repack BOOLEAN DEFAULT FALSE        -- V2 Repack (applied to production 2026-08-03): true for a bulk row created by opening finished packed stock back into loose bulk for re-packing (never renames the coffee — see repack_sources below). See database/repack_migration.sql.
+    is_repack BOOLEAN DEFAULT FALSE,       -- V2 Repack (applied to production 2026-08-03): true for a bulk row created by opening finished packed stock back into loose bulk for re-packing (never renames the coffee — see repack_sources below). See database/repack_migration.sql.
+    -- Phase 6 (STOCK_LEDGER_PLAN.md, applied to production 2026-08-22):
+    -- movement-context columns, single-use — see log_bulk_stock_movement()
+    -- below. Each row here is already one "lot" (coffee+machine+production_
+    -- date, or one post-blend/custom-blend/repack batch), so bulk_available
+    -- is the atomically-written, ledger-logged value directly, not a
+    -- derived sum the way packed_coffee.quantity is.
+    mv_operation TEXT,
+    mv_ref_table TEXT,
+    mv_ref_id    INTEGER,
+    mv_reason    TEXT,
+    mv_user      TEXT
 );
 
 -- 12. Waste inventory (failed test batches etc.)
@@ -777,6 +788,149 @@ CREATE TRIGGER trg_prevent_packed_coffee_delete
 BEFORE DELETE ON public.packed_coffee
 FOR EACH ROW EXECUTE FUNCTION prevent_packed_coffee_delete_with_stock();
 
+-- ============================================================================
+-- Phase 6 (STOCK_LEDGER_PLAN.md, applied to production 2026-08-22): the same
+-- atomic-RPC + audit-ledger treatment packed_coffee_lots got in Phases 1-3,
+-- for bulk_roasted_coffee. Built as ONE migration with the full 7-arg
+-- signature from the start — the Phase 2->3 incident (CREATE OR REPLACE
+-- with an extended argument list creates a second overload, not a true
+-- replacement, breaking every existing 2-arg caller until the old signature
+-- is explicitly DROPped) is avoided entirely by never having a narrower
+-- signature to begin with.
+-- See database/v2_bulk_stock_ledger_migration.sql.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.consume_bulk_lot(
+    p_bulk_id INTEGER, p_kg NUMERIC,
+    p_operation TEXT DEFAULT NULL, p_ref_table TEXT DEFAULT NULL,
+    p_ref_id INTEGER DEFAULT NULL, p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+)
+RETURNS NUMERIC
+LANGUAGE sql
+SET search_path = public
+AS $$
+    WITH before AS (
+        SELECT bulk_available FROM public.bulk_roasted_coffee WHERE id = p_bulk_id FOR UPDATE
+    ), updated AS (
+        UPDATE public.bulk_roasted_coffee
+        SET bulk_available = bulk_available - LEAST(bulk_available, GREATEST(p_kg, 0)),
+            mv_operation = p_operation, mv_ref_table = p_ref_table,
+            mv_ref_id = p_ref_id, mv_reason = p_reason, mv_user = p_user
+        WHERE id = p_bulk_id
+        RETURNING bulk_available
+    )
+    SELECT COALESCE((SELECT bulk_available FROM before), 0)
+         - COALESCE((SELECT bulk_available FROM updated), 0);
+$$;
+
+CREATE OR REPLACE FUNCTION public.refund_bulk_lot(
+    p_bulk_id INTEGER, p_kg NUMERIC,
+    p_operation TEXT DEFAULT NULL, p_ref_table TEXT DEFAULT NULL,
+    p_ref_id INTEGER DEFAULT NULL, p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+)
+RETURNS NUMERIC
+LANGUAGE sql
+SET search_path = public
+AS $$
+    UPDATE public.bulk_roasted_coffee
+    SET bulk_available = bulk_available + GREATEST(p_kg, 0),
+        mv_operation = p_operation, mv_ref_table = p_ref_table,
+        mv_ref_id = p_ref_id, mv_reason = p_reason, mv_user = p_user
+    WHERE id = p_bulk_id
+    RETURNING bulk_available;
+$$;
+
+CREATE OR REPLACE FUNCTION public.set_bulk_lot_available(
+    p_bulk_id INTEGER, p_kg NUMERIC,
+    p_operation TEXT DEFAULT NULL, p_ref_table TEXT DEFAULT NULL,
+    p_ref_id INTEGER DEFAULT NULL, p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+)
+RETURNS NUMERIC
+LANGUAGE sql
+SET search_path = public
+AS $$
+    UPDATE public.bulk_roasted_coffee
+    SET bulk_available = GREATEST(0, p_kg),
+        mv_operation = p_operation, mv_ref_table = p_ref_table,
+        mv_ref_id = p_ref_id, mv_reason = p_reason, mv_user = p_user
+    WHERE id = p_bulk_id
+    RETURNING bulk_available;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.consume_bulk_lot(INTEGER, NUMERIC, TEXT, TEXT, INTEGER, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refund_bulk_lot(INTEGER, NUMERIC, TEXT, TEXT, INTEGER, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.set_bulk_lot_available(INTEGER, NUMERIC, TEXT, TEXT, INTEGER, TEXT, TEXT) TO anon, authenticated;
+
+CREATE TABLE IF NOT EXISTS public.bulk_stock_movements (
+    id BIGSERIAL PRIMARY KEY,
+    bulk_roasted_coffee_id INTEGER,   -- INTENTIONALLY no FK, same reasoning as packed_stock_movements
+    coffee_name TEXT,
+    machine_id INTEGER,
+    production_date DATE,
+    delta_kg NUMERIC NOT NULL,        -- (+) in, (-) out
+    balance_after NUMERIC,
+    operation TEXT,
+    ref_table TEXT,
+    ref_id INTEGER,
+    reason TEXT,
+    performed_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS bsm_bulk_idx ON public.bulk_stock_movements (bulk_roasted_coffee_id, id);
+CREATE INDEX IF NOT EXISTS bsm_created_idx ON public.bulk_stock_movements (created_at);
+CREATE INDEX IF NOT EXISTS bsm_ref_idx ON public.bulk_stock_movements (ref_table, ref_id);
+
+CREATE OR REPLACE FUNCTION public.log_bulk_stock_movement() RETURNS TRIGGER AS $$
+DECLARE
+    v_delta NUMERIC;
+    v_op    TEXT;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF COALESCE(OLD.bulk_available, 0) <> 0 THEN
+            INSERT INTO public.bulk_stock_movements (
+                bulk_roasted_coffee_id, coffee_name, machine_id, production_date,
+                delta_kg, balance_after, operation, ref_table, ref_id, reason, performed_by)
+            VALUES (OLD.id, OLD.coffee_name, OLD.machine_id, OLD.production_date,
+                -OLD.bulk_available, 0,
+                COALESCE(OLD.mv_operation, 'lot_deleted'), OLD.mv_ref_table, OLD.mv_ref_id,
+                OLD.mv_reason, OLD.mv_user);
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    IF TG_OP = 'INSERT' THEN
+        v_delta := COALESCE(NEW.bulk_available, 0);
+        v_op    := COALESCE(NEW.mv_operation, 'lot_created');
+    ELSE
+        v_delta := COALESCE(NEW.bulk_available, 0) - COALESCE(OLD.bulk_available, 0);
+        v_op    := COALESCE(NEW.mv_operation, 'unspecified');
+    END IF;
+
+    IF v_delta <> 0 THEN
+        INSERT INTO public.bulk_stock_movements (
+            bulk_roasted_coffee_id, coffee_name, machine_id, production_date,
+            delta_kg, balance_after, operation, ref_table, ref_id, reason, performed_by)
+        VALUES (NEW.id, NEW.coffee_name, NEW.machine_id, NEW.production_date,
+            v_delta, COALESCE(NEW.bulk_available, 0),
+            v_op, NEW.mv_ref_table, NEW.mv_ref_id, NEW.mv_reason, NEW.mv_user);
+    END IF;
+
+    NEW.mv_operation := NULL;
+    NEW.mv_ref_table := NULL;
+    NEW.mv_ref_id    := NULL;
+    NEW.mv_reason    := NULL;
+    NEW.mv_user      := NULL;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_log_bulk_stock_movement ON public.bulk_roasted_coffee;
+CREATE TRIGGER trg_log_bulk_stock_movement
+BEFORE INSERT OR UPDATE OF bulk_available OR DELETE
+ON public.bulk_roasted_coffee
+FOR EACH ROW EXECUTE FUNCTION log_bulk_stock_movement();
+
 -- 25. Production lots (traceability for "Ready to Pack" barcode workflow —
 -- see database/production_lots_migration.sql for the migration + full notes).
 -- One row per (bulk_roasted_coffee row, production_date); the Tracking page
@@ -1015,7 +1169,8 @@ BEGIN
     'bulk_reservations', -- applied to production 2026-08-16
     'green_coffee_analysis','roast_batch_analysis_snapshot', -- applied to production 2026-08-18
     'green_coffee_lot_adjustments','green_coffee_outbound_lots', -- applied to production 2026-08-19
-    'packed_stock_movements' -- applied to production 2026-08-22
+    'packed_stock_movements', -- applied to production 2026-08-22
+    'bulk_stock_movements' -- applied to production 2026-08-22 (Phase 6)
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);

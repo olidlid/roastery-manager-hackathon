@@ -684,7 +684,7 @@ async function openCloseLotModal(bulkId) {
 
         if (!await showWarningModal(window.t ? window.t('close_lot_confirm') : 'Close this lot?')) return;
 
-        const { error: wasteErr } = await saveData('waste_inventory', {
+        const { data: wasteRow, error: wasteErr } = await saveData('waste_inventory', {
             source_type: 'Bulk',
             source_name: `${bulk.coffee_name} (${lotCode})`,
             bulk_roasted_coffee_id: bulk.id,
@@ -698,7 +698,13 @@ async function openCloseLotModal(bulkId) {
             return;
         }
 
-        const { error: bulkErr } = await saveData('bulk_roasted_coffee', { id: bulk.id, bulk_available: 0 });
+        // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6) — an absolute set to 0,
+        // logged with a ref back to the waste_inventory row it just created.
+        const { error: bulkErr } = await window.supabaseClient.rpc('set_bulk_lot_available', {
+            p_bulk_id: bulk.id, p_kg: 0,
+            p_operation: 'close_lot', p_ref_table: 'waste_inventory', p_ref_id: wasteRow ? wasteRow.id : null,
+            p_reason: reason, p_user: (currentUser && currentUser.name) || null
+        });
         if (bulkErr) {
             await showWarningModal('Could not close the lot: ' + bulkErr.message, false);
             return;
@@ -1200,11 +1206,17 @@ async function submitCustomBlend({ name, coffeeCode, sourceRows, machineId }) {
         if (row.kind === 'bulk') {
             const fresh = (freshBulkList || []).find(b => b.id === row.refId);
             if (!fresh) continue;
-            const avail = parseFloat(fresh.bulk_available) || 0;
-            const kg = Math.min(row.amountKg, avail); // capped — never draws more than exists
+            // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6) — clamps and locks in
+            // the DB instead of trusting this read-then-write's stale avail
+            // snapshot; kg actually taken comes back from the RPC, same
+            // pattern as consume_packed_lot below.
+            const { data: kgTaken, error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
+                p_bulk_id: fresh.id, p_kg: row.amountKg,
+                p_operation: 'blend', p_reason: `Custom blend: ${name}`, p_user: (currentUser && currentUser.name) || null
+            });
+            if (consumeErr) { console.error('consume_bulk_lot RPC failed:', consumeErr); continue; }
+            const kg = parseFloat(kgTaken) || 0;
             if (kg <= 0) continue;
-            fresh.bulk_available = Math.max(0, avail - kg);
-            await saveData('bulk_roasted_coffee', fresh);
             totalKg += kg;
             componentsToInsert.push({ source_type: 'Bulk', source_bulk_id: row.refId, source_packed_lot_id: null, kg });
         } else {
@@ -1265,7 +1277,10 @@ async function submitCustomBlend({ name, coffeeCode, sourceRows, machineId }) {
         machine_id: machineId || null,
         single_coffee_id: null,
         blend_recipe_id: null,
-        production_date: todayStr
+        production_date: todayStr,
+        // Movement context on the fresh INSERT (STOCK_LEDGER_PLAN.md
+        // Phase 4 addendum lesson).
+        mv_operation: 'blend', mv_reason: `Custom blend: ${name}`, mv_user: (currentUser && currentUser.name) || null
     });
 
     if (error || !newBulk) {
@@ -1484,8 +1499,16 @@ async function openEditPackingRecordModal(recordId) {
         const adjustBulkEl = document.getElementById('m-correct-adjust-bulk');
         if (bulkRow && adjustBulkEl && adjustBulkEl.checked) {
             const bulkDeltaKg = -delta * bagSizeKg;
-            const newBulkAvailable = Math.max(0, bulkAvailable + bulkDeltaKg);
-            await saveData('bulk_roasted_coffee', { id: bulkRow.id, bulk_available: newBulkAvailable });
+            // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6) — delta applied
+            // server-side instead of computed from this modal's
+            // possibly-stale bulkAvailable snapshot.
+            const rpcName = bulkDeltaKg >= 0 ? 'refund_bulk_lot' : 'consume_bulk_lot';
+            const { error: bulkErr } = await window.supabaseClient.rpc(rpcName, {
+                p_bulk_id: bulkRow.id, p_kg: Math.abs(bulkDeltaKg),
+                p_operation: 'correction', p_ref_table: 'packing_records', p_ref_id: record.id,
+                p_reason: `${currentQty} → ${newQty} bags`, p_user: (currentUser && currentUser.name) || null
+            });
+            if (bulkErr) console.error(`${rpcName} RPC failed:`, bulkErr);
         }
 
         await saveData('packing_records', {
@@ -3380,12 +3403,16 @@ async function openPackBulkModal(bulkId) {
         }
 
         try {
-            const { data: freshBulkList } = await fetchData('bulk_roasted_coffee');
-            const freshBulk = (freshBulkList || []).find(b => b.id === bulk.id);
-            if (freshBulk) {
-                freshBulk.bulk_available = Math.max(0, parseFloat(freshBulk.bulk_available) - totalKg);
-                await saveData('bulk_roasted_coffee', freshBulk);
-            }
+            // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6) — this used to
+            // re-fetch fresh first specifically to dodge a stale read (see
+            // the removed comment), which the RPC's row lock makes
+            // unnecessary.
+            const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
+                p_bulk_id: bulk.id, p_kg: totalKg,
+                p_operation: 'pack', p_reason: `Packed ${additions.map(a => `${a.qty}x${a.gram}g`).join(', ')}`,
+                p_user: (currentUser && currentUser.name) || null
+            });
+            if (consumeErr) console.error('consume_bulk_lot RPC failed:', consumeErr);
 
             // Release whatever sales-order reservation(s) this bulk carried
             // (see database bulk_reservations comment / js/sales.js
@@ -3917,8 +3944,13 @@ async function openEditBulkModal(coffeeName) {
             
             const targetRec = bulkList.find(b => b.id === id);
             if (targetRec && parseFloat(targetRec.bulk_available) !== newVal) {
-                targetRec.bulk_available = newVal;
-                await saveData('bulk_roasted_coffee', targetRec);
+                // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
+                const { error: setErr } = await window.supabaseClient.rpc('set_bulk_lot_available', {
+                    p_bulk_id: id, p_kg: newVal,
+                    p_operation: 'manual_edit', p_ref_table: 'bulk_roasted_coffee', p_ref_id: id,
+                    p_reason: `${targetRec.bulk_available} → ${newVal} kg`, p_user: (currentUser && currentUser.name) || null
+                });
+                if (setErr) console.error('set_bulk_lot_available RPC failed:', setErr);
             }
         }
         
@@ -5425,7 +5457,10 @@ async function submitRepack(group, rows, roastDate) {
         machine_id: rows[0].machineId,
         bulk_available: totalKg,
         production_date: roastDate,
-        is_repack: true
+        is_repack: true,
+        // Movement context on the fresh INSERT (STOCK_LEDGER_PLAN.md
+        // Phase 4 addendum lesson).
+        mv_operation: 'repack', mv_reason: `Repacked from ${rows.length} lot(s)`, mv_user: (currentUser && currentUser.name) || null
     });
     if (bulkError || !newBulk) {
         alert('Failed to create repack bulk: ' + (bulkError ? bulkError.message : 'unknown error'));
