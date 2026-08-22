@@ -1,6 +1,6 @@
 # Stock Ledger — Execution Plan
 
-**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done (`6cd2ea7`, with a same-day production incident + hotfix), Phase 3 done (`6d70f24`). Ready for Phase 4.
+**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done (`6cd2ea7`, with a same-day production incident + hotfix), Phase 3 done (`6d70f24`), Phase 4 done (`cb9d18e`, addendum `ac3a0a7` — a follow-on movement-context gap found while live-verifying F6). Ready for Phase 5.
 **Audit date:** 2026-08-22 (live, against production)
 **Goal:** every change to packed stock is atomic, lot-specific, and permanently traceable — so any future error can be found and reversed.
 
@@ -378,7 +378,7 @@ Because the trigger logs regardless, completeness is already guaranteed — this
 
 ---
 
-## Phase 4 — Guards and history integrity
+## Phase 4 — Guards and history integrity — DONE (`cb9d18e`, addendum `ac3a0a7`)
 
 **F3 — block destructive deletes at the database level**, not only in the UI (the UI button is being removed anyway, but a guard must survive future UI changes):
 
@@ -404,6 +404,12 @@ FOR EACH ROW EXECUTE FUNCTION prevent_packed_coffee_delete_with_stock();
 **F6 — stop rewriting lot history.** In `applyPackedCoffeeManualQtyDelta` (`js/packing.js` ~3535), an increase currently routes through `getOrCreatePackedCoffeeLot`, which adds to an existing lot's `quantity_pcs`. Change it so a manual increase creates a **new correction lot** instead. `quantity_pcs` must remain what was physically packed.
 
 **Verify:** deleting a packed row that still holds stock must now fail with a clear message; existing lots' `quantity_pcs` must never change from a stocktake.
+
+**Verified live (2026-08-22):**
+- F3: delete of a `packed_coffee` row with a 50-pc live lot rejected with `"Cannot delete packed coffee 191: lots still hold stock..."`; same row deletes successfully once its lot is drawn to 0 (non-regression).
+- F6: a `+30` stocktake correction (`applyPackedCoffeeManualQtyDelta(id, 30, 'stocktake', 'stock_takes', 999)`) on a 100-pc lot left the original lot's `quantity_pcs` at 100 and created a separate 30-pc lot instead. Derived `packed_coffee.quantity` correctly read 130.
+- **Addendum found during this verification and fixed in the same phase (`ac3a0a7`):** the fresh-lot INSERT path inside `getOrCreatePackedCoffeeLot` never set `mv_operation`/`mv_ref_table`/`mv_ref_id`/`mv_reason`/`mv_user`, so every new lot — including the new correction lots F6 now creates — logged into `packed_stock_movements` as an opaque `lot_created` with no ref. Fixed by setting those fields on the insert payload (trigger already reads `NEW.mv_operation` etc. on INSERT, so no DB migration needed). Re-verified: the same correction now logs `operation:'stocktake', ref_table:'stock_takes', ref_id:999, reason:'correction'`.
+- Hard invariant (`SUM(delta_pcs) per lot == remaining_pcs`) re-checked after all of the above: 0 mismatches across 256 lots.
 
 ---
 
