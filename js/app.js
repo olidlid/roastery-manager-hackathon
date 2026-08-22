@@ -3563,13 +3563,25 @@ function cancelStockTake() {
     if (history) history.classList.remove('hidden');
 }
 
-// Push a group's counted total back onto its underlying source rows. Surplus is
-// added to the first row; a shortage is deducted across rows until satisfied.
-// Known limitation (pre-existing, not introduced by bulk's date-scoping):
-// surplus/shortage lands on group.rows in whatever order they were fetched,
-// not deliberately oldest/newest — was already true across machines, now
-// also true across roast dates within a machine since bulk_roasted_coffee
-// can have several date-rows per coffee+machine.
+// BULK ONLY. Push a group's counted total back onto its underlying source
+// rows. Surplus is added to the first row; a shortage is deducted across
+// rows until satisfied. Known limitation (pre-existing, not introduced by
+// bulk's date-scoping): surplus/shortage lands on group.rows in whatever
+// order they were fetched, not deliberately oldest/newest — was already
+// true across machines, now also true across roast dates within a machine
+// since bulk_roasted_coffee can have several date-rows per coffee+machine.
+//
+// greenbean and packed used to go through this same path, writing
+// green_coffee.stock_kg / packed_coffee.quantity directly — but BOTH are
+// now trigger-derived from their lots (sync_green_coffee_stock /
+// sync_packed_coffee_quantity), so a direct write here got silently
+// reverted the next time any lot for that coffee changed elsewhere in the
+// app. A real stock take: corrected count "saved" and shown, then reverted
+// to the pre-correction number after one unrelated lot activity. Verified
+// live 2026-08-22 on a throwaway test row (STOCK_LEDGER_PLAN.md Phase 0)
+// before this fix, and confirmed fixed after. bulk_roasted_coffee has no
+// lot table yet (STOCK_LEDGER_PLAN.md Phase 6), so it's the one category
+// still safe to adjust this way.
 function applyStockGroupAdjustment(group, actual) {
     const changed = [];
     const field = group.field;
@@ -3589,6 +3601,68 @@ function applyStockGroupAdjustment(group, actual) {
         }
     }
     return changed;
+}
+
+// GREENBEAN AND PACKED. Applies a stock-take count delta to the lot ledger
+// instead of the derived column — same reason and same shape as
+// applyStockGroupAdjustment's comment above, reusing the exact helpers the
+// Edit Green Coffee modal and Edit Packed Stock modal already use for this:
+// createGreenCoffeeLot / consumeGreenCoffeeLotsFifo (js/roasting.js — loads
+// before this file) for green, applyPackedCoffeeManualQtyDelta
+// (js/packing.js — loads before this file) for packed. Deliberately does
+// NOT touch quantity_kg/quantity_pcs on existing lots (STOCK_LEDGER_PLAN.md
+// F6) — an increase always lands as a new, clearly-labeled adjustment
+// record rather than rewriting how much an existing lot originally held.
+async function applyStockGroupAdjustmentToLots(group, actual) {
+    const delta = actual - group.systemQty;
+    if (Math.abs(delta) < 1e-9) return;
+
+    if (group.category === 'greenbean') {
+        const bean = group.rows[0].rec;
+        if (delta > 0) {
+            await createGreenCoffeeLot({
+                coffeeId: bean.id,
+                coffeeCode: bean.code,
+                arrivalDate: new Date().toISOString().split('T')[0],
+                quantityKg: delta,
+                supplier: 'Stock Take Adjustment',
+                purchasePricePerKg: null
+            });
+        } else {
+            const { draws } = await consumeGreenCoffeeLotsFifo(bean.id, -delta);
+            for (const d of draws) {
+                await saveData('green_coffee_lot_adjustments', {
+                    green_coffee_id: bean.id,
+                    green_coffee_lot_id: d.lotId,
+                    kg: d.kg,
+                    adjustment_date: new Date().toISOString().split('T')[0],
+                    adjusted_by: (currentUser && currentUser.name) || null
+                });
+            }
+        }
+        return;
+    }
+
+    if (group.category === 'packed') {
+        // A packed group can aggregate several packed_coffee rows (same
+        // coffee+size, different machines) — split the delta across them in
+        // the same row order applyStockGroupAdjustment used: surplus lands
+        // on the first row, shortage drains rows in list order.
+        if (delta > 0) {
+            await applyPackedCoffeeManualQtyDelta(group.rows[0].rec.id, delta);
+        } else {
+            let remaining = -delta;
+            for (const row of group.rows) {
+                if (remaining <= 0) break;
+                const avail = parseFloat(row.rec.quantity) || 0;
+                const take = Math.min(avail, remaining);
+                if (take <= 0) continue;
+                await applyPackedCoffeeManualQtyDelta(row.rec.id, -take);
+                remaining -= take;
+            }
+        }
+        return;
+    }
 }
 
 async function finalizeStockTake() {
@@ -3634,11 +3708,18 @@ async function finalizeStockTake() {
         return;
     }
 
-    // Adjust the live source rows.
+    // Adjust the live source rows. bulk_roasted_coffee is a plain column and
+    // still goes through applyStockGroupAdjustment/saveData; greenbean and
+    // packed are trigger-derived from their lots and must go through
+    // applyStockGroupAdjustmentToLots instead (see its comment above).
     for (const adj of adjustments) {
-        const changedRows = applyStockGroupAdjustment(adj.group, adj.actual);
-        for (const row of changedRows) {
-            await saveData(row.table, row.rec);
+        if (adj.group.category === 'bulk') {
+            const changedRows = applyStockGroupAdjustment(adj.group, adj.actual);
+            for (const row of changedRows) {
+                await saveData(row.table, row.rec);
+            }
+        } else {
+            await applyStockGroupAdjustmentToLots(adj.group, adj.actual);
         }
     }
 
