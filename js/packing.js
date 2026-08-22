@@ -3421,7 +3421,7 @@ async function releaseBulkReservations(bulkId, kgToRelease) {
 // numbering. Still only ever shown as
 // human-readable text under the barcode — the barcode itself encodes this
 // row's numeric id (see printLotBarcodeLabels).
-async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId, movementOperation = 'pack', movementRefTable = null, movementRefId = null) {
+async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId, movementOperation = 'pack', movementRefTable = null, movementRefId = null, forceNewLot = false) {
     const { data: existingLots } = await fetchData('packed_coffee_lots');
 
     // A production-linked pack merges on (packed_coffee_id, production_lot_id).
@@ -3439,9 +3439,17 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId, 
     // inherit its strip_code — a code that may already be printed on older
     // physical packaging. Requiring live stock means a fresh entry always
     // starts a clean code, and only genuinely-current stock accumulates.
-    const existing = productionLotId
+    //
+    // forceNewLot skips this merge entirely (STOCK_LEDGER_PLAN.md F6): a
+    // stocktake/manual-edit correction is not a real new pack, and merging
+    // its delta into an existing lot would rewrite that lot's quantity_pcs
+    // — its historical "how much was originally packed" figure — which must
+    // stay whatever was physically packed at the time. A correction gets
+    // its own lot instead. applyPackedCoffeeManualQtyDelta's increase path
+    // is the only caller that sets this.
+    const existing = forceNewLot ? null : (productionLotId
         ? (existingLots || []).find(l => l.packed_coffee_id === packedCoffeeId && l.production_lot_id === productionLotId)
-        : (existingLots || []).find(l => l.packed_coffee_id === packedCoffeeId && !l.production_lot_id && (parseInt(l.remaining_pcs) || 0) > 0);
+        : (existingLots || []).find(l => l.packed_coffee_id === packedCoffeeId && !l.production_lot_id && (parseInt(l.remaining_pcs) || 0) > 0));
     if (existing) {
         // remaining_pcs goes through the atomic RPC (STOCK_LEDGER_PLAN.md
         // Phase 1) — two concurrent "pack more into this shelf lot" actions
@@ -3581,7 +3589,7 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId, 
 async function applyPackedCoffeeManualQtyDelta(packedCoffeeId, delta, movementOperation = 'manual_edit', movementRefTable = null, movementRefId = null) {
     if (!delta) return;
     if (delta > 0) {
-        await getOrCreatePackedCoffeeLot(packedCoffeeId, delta, null, movementOperation, movementRefTable, movementRefId);
+        await getOrCreatePackedCoffeeLot(packedCoffeeId, delta, null, movementOperation, movementRefTable, movementRefId, true);
         return;
     }
     let remaining = -delta;

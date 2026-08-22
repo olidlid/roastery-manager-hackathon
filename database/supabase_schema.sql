@@ -753,6 +753,30 @@ BEFORE INSERT OR UPDATE OF remaining_pcs, packed_coffee_id OR DELETE
 ON public.packed_coffee_lots
 FOR EACH ROW EXECUTE FUNCTION log_packed_stock_movement();
 
+-- Phase 4 (F3, see STOCK_LEDGER_PLAN.md): packed_coffee_lots.packed_coffee_id
+-- is ON DELETE CASCADE, so deleting a packed_coffee row used to silently
+-- cascade-delete any of its lots even with live stock — reproduced live
+-- 2026-08-22 (a 50-pc test lot vanished with no error, only recorded after
+-- the fact as a 'lot_deleted' movement). This BEFORE trigger rejects the
+-- delete outright instead of letting it happen and only logging it.
+-- See database/v2_packed_coffee_delete_guard_migration.sql.
+CREATE OR REPLACE FUNCTION public.prevent_packed_coffee_delete_with_stock()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.packed_coffee_lots
+               WHERE packed_coffee_id = OLD.id AND COALESCE(remaining_pcs,0) > 0) THEN
+        RAISE EXCEPTION
+          'Cannot delete packed coffee %: lots still hold stock. Write it off or release it first.', OLD.id;
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql SET search_path = public;
+
+DROP TRIGGER IF EXISTS trg_prevent_packed_coffee_delete ON public.packed_coffee;
+CREATE TRIGGER trg_prevent_packed_coffee_delete
+BEFORE DELETE ON public.packed_coffee
+FOR EACH ROW EXECUTE FUNCTION prevent_packed_coffee_delete_with_stock();
+
 -- 25. Production lots (traceability for "Ready to Pack" barcode workflow —
 -- see database/production_lots_migration.sql for the migration + full notes).
 -- One row per (bulk_roasted_coffee row, production_date); the Tracking page
