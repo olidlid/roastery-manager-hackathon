@@ -1,6 +1,6 @@
 # Stock Ledger — Execution Plan
 
-**Status:** Phase 0 done (commit `272557d`), Phase 1 done (commit `3f0719f`), Phase 2 done (commit `e975c10`) — see addendum before Phase 3.
+**Status:** Phase 0 done (`272557d`), Phase 1 done (`3f0719f`), Phase 2 done (`e975c10`), Phase 2→3 addendum done — RPC context params added and a production incident from it hotfixed same-day. Ready for Phase 3.
 **Audit date:** 2026-08-22 (live, against production)
 **Goal:** every change to packed stock is atomic, lot-specific, and permanently traceable — so any future error can be found and reversed.
 
@@ -363,6 +363,10 @@ $$;
 ```
 
 Same shape for `refund_packed_lot` and `set_packed_lot_remaining`. Defaults keep every existing JS call site working unchanged (falls back to `'unspecified'` per the trigger's own `COALESCE`) — Phase 3 then goes through the 10 call sites and adds the trailing arguments, one at a time, using the "still unattributed" query to track progress. Re-verify the race test (concurrent 30+20 against a 100-pc lot) still leaves exactly 50 after this change before touching any call site.
+
+**RESOLVED, with a production incident along the way (2026-08-22).** Applying the migration above via `CREATE OR REPLACE FUNCTION` did *not* replace the 2-argument functions in place — Postgres treats a changed argument list as a distinct overload, not a true replacement. The database briefly had BOTH the old 2-argument and new 7-argument versions of all three functions defined simultaneously. Every existing 2-argument call site (all 10 of them, at the time) matched both overloads ambiguously and PostgREST rejected every call: *"Could not choose the best candidate function between: public.consume_packed_lot(p_lot_id => integer, p_pcs => integer), public.consume_packed_lot(p_lot_id => integer, p_pcs => integer, p_operation => text, ...)"*. This broke every dispatch checkout, undo, stock release, repack, and order-approval fulfillment in production for the several minutes between the addendum migration and `database/v2_packed_lot_rpc_drop_old_signature_HOTFIX.sql`, which explicitly `DROP FUNCTION`s the old 2-argument overloads so only the 7-argument one remains. Verified afterward: both call styles work, the hard invariant and the `packed_coffee.quantity` vs lot-sum invariant both hold at 0 mismatches across 256 lots — no lasting damage, but the outage was real while it lasted.
+
+**Lesson folded into `supabase_schema.sql`'s comment on these functions, and into this plan:** adding parameters to an existing RPC signature is not a safe `CREATE OR REPLACE` — it silently creates a second overload. Any future signature change to these functions must `DROP` the old overload explicitly in the same migration that adds the new one.
 
 ## Phase 3 — Populate context
 

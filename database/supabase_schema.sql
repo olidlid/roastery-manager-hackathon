@@ -1095,8 +1095,34 @@ GRANT EXECUTE ON FUNCTION public.adjust_green_coffee_lot(INTEGER, NUMERIC) TO an
 -- order-approval auto-fulfil, all in js/packing.js or js/sales.js) calls
 -- these via window.supabaseClient.rpc(...) instead of read-modify-write. See
 -- database/v2_packed_lot_atomic_functions_migration.sql.
+--
+-- Signatures extended 2026-08-22 (STOCK_LEDGER_PLAN.md Phase 2->3 addendum)
+-- with optional trailing p_operation/p_ref_table/p_ref_id/p_reason/p_user
+-- parameters, so a caller can label a packed_stock_movements row (the
+-- Phase 2 ledger) in the SAME atomic UPDATE that changes remaining_pcs,
+-- instead of a separate preceding write that a concurrent call could race.
+-- See database/v2_packed_lot_rpc_context_params_migration.sql.
+--
+-- IMPORTANT — this must stay CREATE OR REPLACE on the SAME 7-argument
+-- signature, never a bare "add trailing defaults" over the original
+-- 2-argument one. Postgres treats a changed argument list as a distinct
+-- overload rather than a true replacement: applying the context-params
+-- migration the first time left BOTH the old 2-argument and new
+-- 7-argument functions defined side by side, and every existing 2-argument
+-- call site (all of them, at the time) started failing with "Could not
+-- choose the best candidate function" — broke every dispatch checkout,
+-- undo, stock release, repack, and order-approval fulfillment in
+-- production for the several minutes until
+-- v2_packed_lot_rpc_drop_old_signature_HOTFIX.sql explicitly dropped the
+-- old 2-argument overloads. If this function signature ever needs to
+-- change again, DROP the old overload explicitly in the same migration
+-- that adds the new one — do not rely on CREATE OR REPLACE alone.
 -- ============================================================================
-CREATE OR REPLACE FUNCTION public.consume_packed_lot(p_lot_id INTEGER, p_pcs INTEGER)
+CREATE OR REPLACE FUNCTION public.consume_packed_lot(
+    p_lot_id INTEGER, p_pcs INTEGER,
+    p_operation TEXT DEFAULT NULL, p_ref_table TEXT DEFAULT NULL,
+    p_ref_id INTEGER DEFAULT NULL, p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+)
 RETURNS INTEGER
 LANGUAGE sql
 SET search_path = public
@@ -1105,7 +1131,9 @@ AS $$
         SELECT remaining_pcs FROM public.packed_coffee_lots WHERE id = p_lot_id FOR UPDATE
     ), updated AS (
         UPDATE public.packed_coffee_lots
-        SET remaining_pcs = remaining_pcs - LEAST(remaining_pcs, GREATEST(p_pcs, 0))
+        SET remaining_pcs = remaining_pcs - LEAST(remaining_pcs, GREATEST(p_pcs, 0)),
+            mv_operation = p_operation, mv_ref_table = p_ref_table,
+            mv_ref_id = p_ref_id, mv_reason = p_reason, mv_user = p_user
         WHERE id = p_lot_id
         RETURNING remaining_pcs
     )
@@ -1113,35 +1141,46 @@ AS $$
          - COALESCE((SELECT remaining_pcs FROM updated), 0);
 $$;
 
-CREATE OR REPLACE FUNCTION public.refund_packed_lot(p_lot_id INTEGER, p_pcs INTEGER)
+CREATE OR REPLACE FUNCTION public.refund_packed_lot(
+    p_lot_id INTEGER, p_pcs INTEGER,
+    p_operation TEXT DEFAULT NULL, p_ref_table TEXT DEFAULT NULL,
+    p_ref_id INTEGER DEFAULT NULL, p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+)
 RETURNS INTEGER
 LANGUAGE sql
 SET search_path = public
 AS $$
     UPDATE public.packed_coffee_lots
-    SET remaining_pcs = remaining_pcs + GREATEST(p_pcs, 0)
+    SET remaining_pcs = remaining_pcs + GREATEST(p_pcs, 0),
+        mv_operation = p_operation, mv_ref_table = p_ref_table,
+        mv_ref_id = p_ref_id, mv_reason = p_reason, mv_user = p_user
     WHERE id = p_lot_id
     RETURNING remaining_pcs;
 $$;
 
--- Sets an absolute remaining count. Deliberately does NOT touch quantity_pcs
--- — that column is the lot's historical "how much was originally packed"
--- figure and must not be rewritten by a stock correction
--- (STOCK_LEDGER_PLAN.md F6).
-CREATE OR REPLACE FUNCTION public.set_packed_lot_remaining(p_lot_id INTEGER, p_pcs INTEGER)
+-- Deliberately does NOT touch quantity_pcs — that column is the lot's
+-- historical "how much was originally packed" figure and must not be
+-- rewritten by a stock correction (STOCK_LEDGER_PLAN.md F6).
+CREATE OR REPLACE FUNCTION public.set_packed_lot_remaining(
+    p_lot_id INTEGER, p_pcs INTEGER,
+    p_operation TEXT DEFAULT NULL, p_ref_table TEXT DEFAULT NULL,
+    p_ref_id INTEGER DEFAULT NULL, p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+)
 RETURNS INTEGER
 LANGUAGE sql
 SET search_path = public
 AS $$
     UPDATE public.packed_coffee_lots
-    SET remaining_pcs = GREATEST(0, p_pcs)
+    SET remaining_pcs = GREATEST(0, p_pcs),
+        mv_operation = p_operation, mv_ref_table = p_ref_table,
+        mv_ref_id = p_ref_id, mv_reason = p_reason, mv_user = p_user
     WHERE id = p_lot_id
     RETURNING remaining_pcs;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.consume_packed_lot(INTEGER, INTEGER) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.refund_packed_lot(INTEGER, INTEGER) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.set_packed_lot_remaining(INTEGER, INTEGER) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.consume_packed_lot(INTEGER, INTEGER, TEXT, TEXT, INTEGER, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refund_packed_lot(INTEGER, INTEGER, TEXT, TEXT, INTEGER, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.set_packed_lot_remaining(INTEGER, INTEGER, TEXT, TEXT, INTEGER, TEXT, TEXT) TO anon, authenticated;
 
 -- ============================================================================
 -- GREEN COFFEE STOCK SYNC TRIGGER (added V2 1·CHAIN, 2026-07-12 — see
