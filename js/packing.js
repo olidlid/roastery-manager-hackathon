@@ -4256,7 +4256,10 @@ async function openStockByLotModal(coffeeName) {
         if (!sizeGroups.has(l.sizeG)) sizeGroups.set(l.sizeG, []);
         sizeGroups.get(l.sizeG).push(l);
     });
-    const sortedSizes = [...sizeGroups.keys()].sort((a, b) => a - b);
+    // Largest size first (STOCK_LEDGER_PLAN.md Phase 7 spec: "1000g left,
+    // 250g right") — descending, not the ascending order that would put
+    // the smallest size on the left.
+    const sortedSizes = [...sizeGroups.keys()].sort((a, b) => b - a);
     sortedSizes.forEach(sz => {
         const rows = sizeGroups.get(sz);
         rows.sort((a, b) => a.machineName.localeCompare(b.machineName) || new Date(a.packedDate || 0) - new Date(b.packedDate || 0));
