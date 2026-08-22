@@ -4345,6 +4345,12 @@ async function openStockByLotModal(coffeeName) {
             #stock-by-lot-modal .sbl-badge { font-size:0.62rem; font-weight:700; text-transform:uppercase; padding:1px 6px; vertical-align:middle; }
             #stock-by-lot-modal .sbl-badge-pick { color:var(--primary); background:rgba(45,106,79,0.12); border-radius:9999px; }
             #stock-by-lot-modal .sbl-empty { padding: 14px 12px; font-size:0.78rem; color: var(--text-muted); }
+            /* .btn sets display:inline-flex, which beats the bare [hidden]
+               attribute (author CSS always outranks the UA default that
+               makes [hidden] work) — same fix already used by the dispatch
+               checkout modal's Take/Cancel buttons, needed here too for the
+               footer buttons and the per-row print/delete buttons. */
+            #stock-by-lot-modal [hidden] { display: none !important; }
             /* Spinner arrows suppressed — the field is for keyboard entry only. */
             #stock-by-lot-modal input[type=number]::-webkit-outer-spin-button,
             #stock-by-lot-modal input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
