@@ -3545,7 +3545,17 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId, 
         quantity_pcs: qty,
         remaining_pcs: qty,
         packed_date: todayStr,
-        production_lot_id: productionLotId
+        production_lot_id: productionLotId,
+        // Movement context so the log_packed_stock_movement trigger records
+        // WHY this lot exists (STOCK_LEDGER_PLAN.md Phase 3/4) — without
+        // this, every new lot logs as an opaque 'lot_created' with no ref,
+        // which is especially misleading for a forceNewLot correction lot
+        // (it would be indistinguishable from a genuine new pack).
+        mv_operation: movementOperation,
+        mv_ref_table: movementRefTable,
+        mv_ref_id: movementRefId,
+        mv_reason: productionLotId ? `production_lot #${productionLotId}` : (forceNewLot ? 'correction' : 'manual pack'),
+        mv_user: (currentUser && currentUser.name) || null
     };
     // V2 FIFO strip code: a production-lot-linked pack copies that lot's
     // batch_no (every size packed from the same bulk/day shares one number —
