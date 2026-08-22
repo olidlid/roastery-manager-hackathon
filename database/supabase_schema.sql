@@ -621,10 +621,137 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- UPDATE OF list includes packed_coffee_id (fixed 2026-08-22, see
+-- v2_packed_stock_movements_migration.sql) — the original list only covered
+-- remaining_pcs, so reassigning a lot to a different parent (e.g. the
+-- 2026-08-22 duplicate-row merge) never fired this trigger at all; 23 rows
+-- went silently stale and had to be backfilled by hand.
 DROP TRIGGER IF EXISTS trg_sync_packed_coffee_quantity ON public.packed_coffee_lots;
 CREATE TRIGGER trg_sync_packed_coffee_quantity
-AFTER INSERT OR UPDATE OF remaining_pcs OR DELETE ON public.packed_coffee_lots
+AFTER INSERT OR UPDATE OF remaining_pcs, packed_coffee_id OR DELETE ON public.packed_coffee_lots
 FOR EACH ROW EXECUTE FUNCTION sync_packed_coffee_quantity();
+
+-- ============================================================================
+-- PACKED STOCK MOVEMENT LEDGER (STOCK_LEDGER_PLAN.md Phase 2, applied to
+-- production 2026-08-22)
+-- ----------------------------------------------------------------------------
+-- Every change to packed_coffee_lots.remaining_pcs is logged automatically —
+-- not by application code remembering to call a logging function, because
+-- that discipline already failed twice in this codebase before a trigger
+-- fixed it (green_coffee.stock_kg, then packed_coffee.quantity itself).
+-- Hard invariant checkable with one query from here on:
+--   SUM(delta_pcs) per lot  ==  packed_coffee_lots.remaining_pcs
+-- See database/v2_packed_stock_movements_migration.sql for the full
+-- migration, backfill, and reasoning (including why this trigger is BEFORE
+-- not AFTER, and why packed_coffee_lot_id has no FK).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.packed_stock_movements (
+    id BIGSERIAL PRIMARY KEY,
+    packed_coffee_lot_id INTEGER,   -- INTENTIONALLY no FK — see migration file
+    packed_coffee_id INTEGER,
+    lot_code TEXT,
+    strip_code TEXT,
+    coffee_name TEXT,
+    machine_id INTEGER,
+    bag_size_g INTEGER,
+    delta_pcs INTEGER NOT NULL,
+    balance_after INTEGER,
+    operation TEXT,
+    ref_table TEXT,
+    ref_id INTEGER,
+    reason TEXT,
+    performed_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS psm_lot_idx ON public.packed_stock_movements (packed_coffee_lot_id, id);
+CREATE INDEX IF NOT EXISTS psm_created_idx ON public.packed_stock_movements (created_at);
+CREATE INDEX IF NOT EXISTS psm_ref_idx ON public.packed_stock_movements (ref_table, ref_id);
+
+ALTER TABLE public.packed_coffee_lots
+    ADD COLUMN IF NOT EXISTS mv_operation TEXT,
+    ADD COLUMN IF NOT EXISTS mv_ref_table TEXT,
+    ADD COLUMN IF NOT EXISTS mv_ref_id    INTEGER,
+    ADD COLUMN IF NOT EXISTS mv_reason    TEXT,
+    ADD COLUMN IF NOT EXISTS mv_user      TEXT;
+
+CREATE OR REPLACE FUNCTION public.log_packed_stock_movement() RETURNS TRIGGER AS $$
+DECLARE
+    v_parent public.packed_coffee%ROWTYPE;
+    v_delta  INTEGER;
+    v_op     TEXT;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        SELECT * INTO v_parent FROM public.packed_coffee WHERE id = OLD.packed_coffee_id;
+        IF COALESCE(OLD.remaining_pcs, 0) <> 0 THEN
+            INSERT INTO public.packed_stock_movements (
+                packed_coffee_lot_id, packed_coffee_id, lot_code, strip_code,
+                coffee_name, machine_id, bag_size_g, delta_pcs, balance_after,
+                operation, ref_table, ref_id, reason, performed_by)
+            VALUES (OLD.id, OLD.packed_coffee_id, OLD.lot_code, OLD.strip_code,
+                v_parent.custom_coffee_name, v_parent.machine_id, v_parent.bag_size_g,
+                -OLD.remaining_pcs, 0,
+                COALESCE(OLD.mv_operation, 'lot_deleted'), OLD.mv_ref_table, OLD.mv_ref_id,
+                OLD.mv_reason, OLD.mv_user);
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    SELECT * INTO v_parent FROM public.packed_coffee WHERE id = NEW.packed_coffee_id;
+
+    IF TG_OP = 'INSERT' THEN
+        v_delta := COALESCE(NEW.remaining_pcs, 0);
+        v_op    := COALESCE(NEW.mv_operation, 'lot_created');
+    ELSE
+        v_delta := COALESCE(NEW.remaining_pcs, 0) - COALESCE(OLD.remaining_pcs, 0);
+        v_op    := COALESCE(NEW.mv_operation, 'unspecified');
+
+        IF NEW.packed_coffee_id IS DISTINCT FROM OLD.packed_coffee_id THEN
+            INSERT INTO public.packed_stock_movements (
+                packed_coffee_lot_id, packed_coffee_id, lot_code, strip_code,
+                coffee_name, machine_id, bag_size_g, delta_pcs, balance_after,
+                operation, ref_table, ref_id, reason, performed_by)
+            VALUES (OLD.id, OLD.packed_coffee_id, OLD.lot_code, OLD.strip_code,
+                NULL, NULL, NULL,
+                -COALESCE(OLD.remaining_pcs, 0), 0,
+                'transfer_out', NEW.mv_ref_table, NEW.mv_ref_id, NEW.mv_reason, NEW.mv_user);
+            INSERT INTO public.packed_stock_movements (
+                packed_coffee_lot_id, packed_coffee_id, lot_code, strip_code,
+                coffee_name, machine_id, bag_size_g, delta_pcs, balance_after,
+                operation, ref_table, ref_id, reason, performed_by)
+            VALUES (NEW.id, NEW.packed_coffee_id, NEW.lot_code, NEW.strip_code,
+                v_parent.custom_coffee_name, v_parent.machine_id, v_parent.bag_size_g,
+                COALESCE(OLD.remaining_pcs, 0), COALESCE(OLD.remaining_pcs, 0),
+                'transfer_in', NEW.mv_ref_table, NEW.mv_ref_id, NEW.mv_reason, NEW.mv_user);
+        END IF;
+    END IF;
+
+    IF v_delta <> 0 THEN
+        INSERT INTO public.packed_stock_movements (
+            packed_coffee_lot_id, packed_coffee_id, lot_code, strip_code,
+            coffee_name, machine_id, bag_size_g, delta_pcs, balance_after,
+            operation, ref_table, ref_id, reason, performed_by)
+        VALUES (NEW.id, NEW.packed_coffee_id, NEW.lot_code, NEW.strip_code,
+            v_parent.custom_coffee_name, v_parent.machine_id, v_parent.bag_size_g,
+            v_delta, COALESCE(NEW.remaining_pcs, 0),
+            v_op, NEW.mv_ref_table, NEW.mv_ref_id, NEW.mv_reason, NEW.mv_user);
+    END IF;
+
+    NEW.mv_operation := NULL;
+    NEW.mv_ref_table := NULL;
+    NEW.mv_ref_id    := NULL;
+    NEW.mv_reason    := NULL;
+    NEW.mv_user      := NULL;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_log_packed_stock_movement ON public.packed_coffee_lots;
+CREATE TRIGGER trg_log_packed_stock_movement
+BEFORE INSERT OR UPDATE OF remaining_pcs, packed_coffee_id OR DELETE
+ON public.packed_coffee_lots
+FOR EACH ROW EXECUTE FUNCTION log_packed_stock_movement();
 
 -- 25. Production lots (traceability for "Ready to Pack" barcode workflow —
 -- see database/production_lots_migration.sql for the migration + full notes).
@@ -863,7 +990,8 @@ BEGIN
     'stock_releases','stock_release_items', -- applied to production 2026-08-03
     'bulk_reservations', -- applied to production 2026-08-16
     'green_coffee_analysis','roast_batch_analysis_snapshot', -- applied to production 2026-08-18
-    'green_coffee_lot_adjustments','green_coffee_outbound_lots' -- applied to production 2026-08-19
+    'green_coffee_lot_adjustments','green_coffee_outbound_lots', -- applied to production 2026-08-19
+    'packed_stock_movements' -- applied to production 2026-08-22
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);
