@@ -1689,10 +1689,12 @@ async function loadPackingRequestsSection() {
             const isCompleted = alreadyPrepared >= totalRequested;
 
             linesHtml += `
-                <div style="display: flex; align-items: baseline; gap: 8px; font-size: 0.82rem;">
-                    <span style="font-weight: 600;">${coffeeName}</span>
-                    <span style="color: var(--text-muted);">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</span>
-                    <span style="margin-left: auto; font-weight: 600; color: ${isCompleted ? 'var(--success)' : 'var(--danger)'};">${alreadyPrepared} / ${totalRequested}</span>
+                <div>
+                    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.82rem;">
+                        <span style="font-weight: 600;">${coffeeName}</span>
+                        <span style="font-weight: 600; color: ${isCompleted ? 'var(--success)' : 'var(--danger)'}; white-space: nowrap; flex-shrink: 0;">${alreadyPrepared} / ${totalRequested}</span>
+                    </div>
+                    <div style="color: var(--text-muted); font-size: 0.76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</div>
                 </div>
             `;
         }
@@ -1717,7 +1719,7 @@ async function loadPackingRequestsSection() {
                     </div>
                     <span style="font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; background: rgba(217,119,6,0.12); color: #d97706; font-weight: 600; white-space: nowrap;">Preparing</span>
                 </div>
-                <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px;">
+                <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;">
                     ${linesHtml}
                 </div>
                 <div style="display: flex; gap: 8px;">
