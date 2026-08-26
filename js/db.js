@@ -65,6 +65,23 @@ async function fetchData(table) {
     }
 }
 
+// Stock Opname Phase 2: turns the freeze trigger's raw Postgres exception
+// (stock_take_freeze_guard, database/v2_stock_opname_freeze_migration.sql)
+// into a message a person can act on, instead of leaving every write call
+// site across the app to interpret a bare Postgres error object itself.
+// Checked here — the one place every mutation already passes through —
+// rather than at each call site. Fire-and-forget: does NOT await or change
+// what saveDataImpl/deleteDataImpl return, so every existing caller's own
+// error handling (alert/console.error/etc.) still runs exactly as before;
+// this only adds an extra, friendlier notice on top of it.
+function _handleStockFreezeError(e) {
+    if (e && typeof e.message === 'string' && e.message.includes('Stock opname sedang berjalan')) {
+        if (typeof showWarningModal === 'function') {
+            showWarningModal(e.message, false, null, null, 'warning');
+        }
+    }
+}
+
 async function saveDataImpl(table, record) {
     if (isMockMode) {
         let tableData = getMockTable(table);
@@ -97,6 +114,7 @@ async function saveDataImpl(table, record) {
             return { data: res.data, error: null };
         } catch (e) {
             console.error(`Supabase save failed for ${table}:`, e);
+            _handleStockFreezeError(e);
             return { data: null, error: e };
         }
     }
@@ -116,6 +134,7 @@ async function deleteDataImpl(table, id) {
             return { error: null };
         } catch (e) {
             console.error(`Supabase delete failed for ${table}:`, e);
+            _handleStockFreezeError(e);
             return { error: e };
         }
     }

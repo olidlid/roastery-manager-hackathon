@@ -151,7 +151,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
-                reports_view: true, reports_stockopname_view: true,
+                reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
                 tracking_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
                 user_management: true, user_delete: true
@@ -173,7 +173,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
-                reports_view: true, reports_stockopname_view: true,
+                reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
                 tracking_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
                 user_management: true, user_delete: true
@@ -195,7 +195,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: false, customer_edit: false, customer_delete: false,
-                reports_view: true, reports_stockopname_view: true,
+                reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
                 tracking_view: true,
                 settings_general: false, settings_production: true, settings_system: false,
                 user_management: false, user_delete: false
@@ -217,7 +217,7 @@ const MOCK_DB = {
                 sales_request_view: false, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
-                reports_view: false, reports_stockopname_view: false,
+                reports_view: false, reports_stockopname_view: false, reports_stockopname_perform: false,
                 tracking_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false, user_delete: false
@@ -239,7 +239,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
-                reports_view: false, reports_stockopname_view: false,
+                reports_view: false, reports_stockopname_view: false, reports_stockopname_perform: false,
                 tracking_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false, user_delete: false
@@ -261,7 +261,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: false,
-                reports_view: true, reports_stockopname_view: true,
+                reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: false,
                 tracking_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
                 user_management: false, user_delete: false
@@ -563,9 +563,40 @@ function restoreLastTab(sectionId) {
     }
 }
 
+// Stock Opname Phase 2: soft UX layer only — the database trigger
+// (stock_take_freeze_guard) already rejects writes regardless of whether
+// this banner is shown or a request never fires. Checked from navigateTo()
+// below (fire-and-forget, doesn't block navigation) so every page shows it
+// without needing a per-section integration; bootstrap() always ends by
+// calling navigateTo() too, so this also covers the very first page load.
+async function checkStockFreezeBanner() {
+    const banner = document.getElementById('stock-freeze-banner');
+    if (!banner) return;
+    try {
+        const { data: takes } = await fetchData('stock_takes');
+        const open = (takes || []).find(t => t.status === 'counting' || t.status === 'posting');
+        if (!open) {
+            banner.classList.add('hidden');
+            return;
+        }
+        const textEl = document.getElementById('stock-freeze-banner-text');
+        if (textEl) {
+            const template = window.t
+                ? (window.t('stockopname_banner_text') || 'Stock opname in progress (started {date} by {user}) — stock changes are locked until it is finalized or cancelled.')
+                : 'Stock opname in progress (started {date} by {user}) — stock changes are locked until it is finalized or cancelled.';
+            const dateStr = open.started_at ? open.started_at.split('T')[0] : (open.take_date || '');
+            textEl.textContent = template.replace('{date}', dateStr).replace('{user}', open.started_by || open.performed_by || '-');
+        }
+        banner.classList.remove('hidden');
+    } catch (e) {
+        console.error('Failed to check stock opname freeze status:', e);
+    }
+}
+
 function navigateTo(sectionId) {
     closeMobileSidebar();
-    
+    checkStockFreezeBanner();
+
     // Check permission for this section
     const perm = SECTION_PERMISSIONS[sectionId];
     if (perm) {
@@ -3471,12 +3502,34 @@ function stockCategoryLabel(cat) {
 
 async function loadStockOpnameReport(startDate, endDate) {
     // Wire buttons (idempotent — onclick assignment, not addEventListener).
+    // Start/Cancel/Finalize are gated on reports_stockopname_perform (Stock
+    // Opname Phase 2) — separate from reports_stockopname_view, which only
+    // controls whether this tab is visible at all. Opening a stock take
+    // freezes stock transactions for every user in the app (the database
+    // trigger enforces this regardless), so starting/ending one can't be
+    // left to whoever merely has view access to this tab. Disabled rather
+    // than hidden so a view-only user still understands the feature exists
+    // and why they can't use it, matching this file's own dispatch-button
+    // convention (~line 1685).
+    const canPerform = hasPermission('reports_stockopname_perform');
     const newBtn = document.getElementById('btn-stockopname-new');
-    if (newBtn) newBtn.onclick = startStockTake;
+    if (newBtn) {
+        newBtn.onclick = startStockTake;
+        newBtn.disabled = !canPerform;
+        newBtn.title = canPerform ? '' : 'No permission to start a stock opname';
+    }
     const cancelBtn = document.getElementById('btn-stockopname-cancel');
-    if (cancelBtn) cancelBtn.onclick = cancelStockTake;
+    if (cancelBtn) {
+        cancelBtn.onclick = cancelStockTake;
+        cancelBtn.disabled = !canPerform;
+        cancelBtn.title = canPerform ? '' : 'No permission to cancel a stock opname';
+    }
     const finalizeBtn = document.getElementById('btn-stockopname-finalize');
-    if (finalizeBtn) finalizeBtn.onclick = finalizeStockTake;
+    if (finalizeBtn) {
+        finalizeBtn.onclick = finalizeStockTake;
+        finalizeBtn.disabled = !canPerform;
+        finalizeBtn.title = canPerform ? '' : 'No permission to finalize a stock opname';
+    }
     const printBtn = document.getElementById('btn-stockopname-print');
     if (printBtn) printBtn.onclick = printStockCountForm;
 

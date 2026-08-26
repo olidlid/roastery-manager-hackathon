@@ -389,7 +389,8 @@ const PERMISSION_GROUPS = [
     ]},
     { label: '📈 Reports', keys: [
         { key: 'reports_view', label: 'View Reports' },
-        { key: 'reports_stockopname_view', label: 'Stock Opname Tab' }
+        { key: 'reports_stockopname_view', label: 'Stock Opname Tab' },
+        { key: 'reports_stockopname_perform', label: 'Start/Cancel/Finalize Stock Opname' }
     ]},
     { label: '🔍 Tracking', keys: [
         { key: 'tracking_view', label: 'View Tracking Page' }

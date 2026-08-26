@@ -1453,3 +1453,64 @@ DROP TRIGGER IF EXISTS trg_sync_green_coffee_stock ON public.green_coffee_lots;
 CREATE TRIGGER trg_sync_green_coffee_stock
 AFTER INSERT OR UPDATE OF remaining_kg OR DELETE ON public.green_coffee_lots
 FOR EACH ROW EXECUTE FUNCTION public.sync_green_coffee_stock();
+
+-- ============================================================================
+-- STOCK OPNAME PHASE 2 — FREEZE GUARD (STOCK_OPNAME_PLAN.md, applied to
+-- production 2026-08-26 — see database/v2_stock_opname_freeze_migration.sql)
+-- ============================================================================
+-- Rejects every INSERT/UPDATE/DELETE on the three stock-source tables while
+-- any stock_takes row is 'counting' — the rule this enforces ("stock can't
+-- move while a physical count is in progress") lives in the database, not
+-- in the app's UI, per the lesson STOCK_LEDGER_PLAN.md already paid for
+-- once. RAISE EXCEPTION here rolls back the whole calling statement,
+-- including a write made from inside an RPC (consume_packed_lot etc.) —
+-- the trigger fires on the underlying table UPDATE regardless of what
+-- called it.
+--
+-- Trigger name is DELIBERATELY prefixed "trg_aa_" — Postgres runs same-event
+-- BEFORE triggers in alphabetical order by trigger name, not creation order.
+-- "aa" sorts before "log" (trg_log_packed_stock_movement,
+-- trg_log_bulk_stock_movement) and "sync", so this guard always raises
+-- before any ledger/derived-column trigger gets a chance to write anything.
+-- Verified via information_schema.triggers before this migration was
+-- written: packed_coffee_lots and bulk_roasted_coffee each already had one
+-- BEFORE trigger (the ledger ones above); green_coffee_lots had none
+-- (sync_green_coffee_stock is AFTER), so this guard is the only BEFORE
+-- trigger there.
+--
+-- How the opname's own posting writes get through: finalizeStockTake()
+-- (Phase 6) flips status 'counting' -> 'posting' BEFORE writing any
+-- adjustment. This guard only blocks 'counting', not 'posting' — see
+-- STOCK_OPNAME_PLAN.md §2 for the deliberately-accepted brief window this
+-- leaves open.
+--
+-- Verified live 2026-08-26 on throwaway ZZ TEST rows: (a) normal
+-- INSERT/UPDATE(via RPC)/DELETE on all three tables succeed with no
+-- open take — non-regression; (b) with a 'counting' row open, the same
+-- three operations on all three tables are rejected with this exact
+-- message; (c) cancelling the take immediately unblocks them again.
+CREATE OR REPLACE FUNCTION public.stock_take_freeze_guard()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.stock_takes WHERE status = 'counting') THEN
+        RAISE EXCEPTION
+          'Stock opname sedang berjalan — perubahan stok dikunci sampai opname diposting atau dibatalkan.';
+    END IF;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql SET search_path = public;
+
+DROP TRIGGER IF EXISTS trg_aa_stock_take_freeze ON public.packed_coffee_lots;
+CREATE TRIGGER trg_aa_stock_take_freeze
+BEFORE INSERT OR UPDATE OR DELETE ON public.packed_coffee_lots
+FOR EACH ROW EXECUTE FUNCTION stock_take_freeze_guard();
+
+DROP TRIGGER IF EXISTS trg_aa_stock_take_freeze ON public.green_coffee_lots;
+CREATE TRIGGER trg_aa_stock_take_freeze
+BEFORE INSERT OR UPDATE OR DELETE ON public.green_coffee_lots
+FOR EACH ROW EXECUTE FUNCTION stock_take_freeze_guard();
+
+DROP TRIGGER IF EXISTS trg_aa_stock_take_freeze ON public.bulk_roasted_coffee;
+CREATE TRIGGER trg_aa_stock_take_freeze
+BEFORE INSERT OR UPDATE OR DELETE ON public.bulk_roasted_coffee
+FOR EACH ROW EXECUTE FUNCTION stock_take_freeze_guard();

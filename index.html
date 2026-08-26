@@ -362,6 +362,19 @@
                 </div>
             </div>
 
+            <!-- Stock Opname Phase 2: global freeze banner. Sits above every
+                 page-section (outside the toggled-hidden ones) so it shows
+                 no matter which section is active — one implementation
+                 point instead of one per section, since the database
+                 trigger already blocks stock writes everywhere regardless
+                 of what this banner shows or doesn't. See
+                 renderStockFreezeBanner() in js/app.js. -->
+            <div id="stock-freeze-banner" class="hidden" style="display:flex; align-items:center; gap:10px; background:rgba(220,38,38,0.1); border:1px solid var(--danger); color:var(--danger); border-radius:8px; padding:10px 16px; margin-bottom:16px; font-size:0.85rem;">
+                <i class="icon-lock" style="flex-shrink:0;"></i>
+                <span id="stock-freeze-banner-text" style="flex:1;"></span>
+                <a href="#" id="stock-freeze-banner-link" onclick="navigateTo('sec-reports'); document.querySelector('[data-tab=\'tab-rep-stockopname\']')?.click(); return false;" style="color:var(--danger); font-weight:600; text-decoration:underline; white-space:nowrap;" data-i18n="stockopname_banner_link">Open Stock Opname</a>
+            </div>
+
             <!-- ========================================== -->
             <!-- SECTION 1: DASHBOARD -->
             <!-- ========================================== -->
@@ -2658,18 +2671,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=41"></script>
+    <script src="js/translations.js?v=42"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/db.js?v=2"></script>
+    <script src="js/db.js?v=3"></script>
     <script src="js/auth.js?v=11"></script>
     <script src="js/greenbean.js?v=20"></script>
     <script src="js/roasting.js?v=38"></script>
     <script src="js/packing.js?v=111"></script>
     <script src="js/sales.js?v=27"></script>
-    <script src="js/settings.js?v=22"></script>
+    <script src="js/settings.js?v=23"></script>
     <script src="js/tracking.js?v=8"></script>
-    <script src="js/app.js?v=86"></script>
+    <script src="js/app.js?v=87"></script>
 </body>
 </html>
