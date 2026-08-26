@@ -1,6 +1,6 @@
 # Stock Opname Bulanan — Rencana Pengembangan
 
-**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada). Menunggu persetujuan lanjut ke Fase 3.
+**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada), Fase 3 selesai (`3fc3937`, `276c9b8`, diverifikasi live — termasuk temuan bahwa packed di produksi 100% bergantung pada pencocokan-nama untuk kode, dan koreksi toleransi bulk sesuai keputusan user). Menunggu persetujuan lanjut ke Fase 4.
 **Tanggal:** 2026-08-23
 **Tujuan:** Mengubah fitur Stock Opname dari "form penyesuaian stok" menjadi proses penghitungan fisik bulanan yang hasilnya bisa dipercaya, tanpa menambah beban tim di lapangan.
 
@@ -340,23 +340,37 @@ Dipasang `BEFORE INSERT OR UPDATE OR DELETE` pada tiga tabel: `packed_coffee_lot
 
 ---
 
-## Fase 3 — Tahap 1: pengelompokan, layar input, lembar cetak
+## Fase 3 — Tahap 1: pengelompokan, layar input, lembar cetak — SELESAI (`3fc3937`, `276c9b8`)
 
-**File:** `js/app.js` (`buildStockTakeGroups`, `startStockTake`, `printStockCountForm`)
+**File:** `js/app.js` (`buildStockTakeGroups`, `resolvePackedCoffeeIdentity`, `resolveBulkCoffeeCode`, `stockOpnameIsMatch`, `stockOpnameStatusHtml`, `renderStockTakeSheet`, `finalizeStockTake`, `printStockCountForm`), `js/translations.js`, `index.html`.
 
-**Pengelompokan (cacat #5):**
+**Pengelompokan (cacat #5) — DONE:** Packed dikelompokkan ulang menjadi `(nama kopi, bag_size_g, machine_id)` — `machine_id` adalah kolom langsung di `packed_coffee`, tidak perlu lewat `roast_batch`. Label menjadi `Nama · Ukuran · Mesin` (mis. `SUMATRA · 1kg · GIESEN W15A`). Green bean tetap satu baris per `green_coffee`; bulk tetap digabung per `coffee_name` (sesuai rencana awal).
 
-- **Packed** → kunci grup menjadi `(nama kopi, bag_size_g, machine_id)`. Sekarang `nama|size` tanpa mesin (`js/app.js:3434`), padahal stok packed dipisah per mesin dan FIFO/dispatch bekerja per mesin.
-- **Green bean** → tetap satu baris per `green_coffee`.
-- **Bulk** → tetap digabung per `coffee_name` (keputusan: bulk cukup per item).
+**Kolom Kode — DONE:** Tiap grup membawa `coffeeCode`. Temuan penting saat verifikasi: **semua 77 baris `packed_coffee` yang berstok di produksi TIDAK punya `roast_batch_id`/`single_coffee_id`/`blend_recipe_id` terisi** — jalur pencocokan-nama (`custom_coffee_name` dibersihkan dari sufiks " (Single)"/" (Blend)" lalu dicocokkan ke `green_coffee.name`/`blend_recipes.name`) bukan cadangan langka, melainkan SATU-SATUNYA jalur yang benar-benar dipakai untuk packed di produksi saat ini. Diverifikasi lewat dry-run SQL langsung ke tabel produksi: 39 dari 40 nama kopi packed berhasil resolve kode; 1 nama blend kustom tanpa definisi kode terkait (aman, tampil kosong, tidak error). Bulk resolve kode lewat `single_coffee_id`/`blend_recipe_id` langsung (kolom ini ADA di `bulk_roasted_coffee`, beda dari packed) — 12 dari 14 grup berkode benar, 2 sisanya data uji lama ("Test Custom Blend 2"/"Test House Blend", bukan stok nyata).
 
-Tiap grup membawa `coffee_code` untuk kolom Kode.
+**Kolom Status menggantikan Variance — DONE, lalu diganti kata "Difference":** Tabel input/riwayat sekarang punya kolom Kode dan Status (bukan lagi badge Category dan angka Variance mentah). Status menampilkan "✓ Match" (hijau) atau "Difference ±X" (hijau/merah sesuai arah). Kata **"Variance" diganti "Difference"** di semua teks tampilan (`col_variance`, `col_variances`, label Status, ringkasan dialog Finalize) atas permintaan user langsung — Bahasa Arab tidak perlu diubah karena terjemahannya (`الفرق`/`الفروقات`) sudah berarti "perbedaan", bukan istilah statistik.
 
-**Layar input** dan **lembar cetak** dibangun sesuai §4.1 dan §4.2.
+**Toleransi selisih — DIKONFIRMASI USER (2026-08-26):**
+- **Green bean saja** → toleransi `max(0.1 kg, 1% × angka sistem)`. Konstanta `STOCKOPNAME_KG_TOLERANCE_PCT`/`STOCKOPNAME_KG_TOLERANCE_MIN_KG` di `js/app.js`.
+- **Packed dan bulk → harus persis sama (exact match).** Catatan teknis: draft plan sebelumnya berasumsi bulk itu "satuan utuh" sehingga wajar exact-match — itu **keliru**, `bulk_roasted_coffee.bulk_available` adalah kolom desimal kg persis seperti `green_coffee.stock_kg`. Sempat diimplementasikan toleransi untuk bulk juga (alasan teknis di atas), tapi **user secara eksplisit memilih tetap exact-match untuk bulk** setelah temuan ini dijelaskan — dikembalikan ke exact-match sesuai keputusan tersebut, bukan karena revert teknis.
+- Fungsi `stockOpnameIsMatch(group, actual)` menentukan match berdasarkan `group.category === 'greenbean'`, bukan `group.unit === 'kg'` — supaya keputusan ini tidak diam-diam berubah lagi kalau ada kategori kg baru di masa depan.
 
-**Toleransi selisih (belum diputuskan — asumsi yang dipakai):** packed dan bulk dalam satuan utuh, jadi cocok berarti persis sama. Green bean dalam kg tidak akan pernah pas sampai desimal terakhir, jadi dipakai **toleransi 1% dari angka sistem, minimum 0,1 kg**. Angka ini ditulis sebagai konstanta bernama di satu tempat agar mudah diubah, dan **wajib dikonfirmasi ke user** sebelum fase ini dianggap selesai.
+**Permission granular — dikonfirmasi & didemonstrasikan:** `reports_stockopname_perform` (dibuat di Fase 2) sudah sepenuhnya granular — ada di `PERMISSION_GROUPS` (`js/settings.js`) dan muncul sebagai checkbox di modal Edit Role untuk *role apa pun*, termasuk role kustom. User sempat menemukan role kustom `admin2` belum mendapat izin ini (Fase 2 sengaja hanya memberi ke Developer/Admin/Production Leader). Alih-alih SQL manual, izin diberikan lewat **jalur self-service UI yang sama yang bisa user pakai untuk role lain** — dibuka via `openRoleModal(17)`, checkbox `perm_reports_stockopname_perform` dicentang, tombol "Save Role" — diverifikasi tersimpan benar di `custom_roles.permissions` produksi. User sekarang bisa memberi izin ini ke role mana pun sendiri tanpa perlu developer.
 
-**Verifikasi:** cetak lembar Tahap 1, pastikan kolom Kode terisi kode kopi asli dan baris kosong tersedia di bawah. Di layar input, isi satu angka yang cocok dan satu yang selisih — status kedua baris harus berbeda dan benar.
+**Verifikasi live (2026-08-26, akun `khaleed`/`admin2` via Claude in Chrome dengan sesi asli user):**
+1. `node test.js` — tanpa SyntaxError.
+2. Dry-run SQL terhadap 20 tabel produksi (read-only) untuk memastikan logika pengelompokan/resolusi kode benar SEBELUM diuji di browser — hasilnya cocok 100% dengan yang dilihat di browser setelahnya.
+3. Stock take sungguhan dibuat (id 13, ~133 grup: 42 green bean + 14 bulk + 77 packed) lewat tombol "New Stock Take" asli, bukan panggilan fungsi langsung.
+4. Kode & label diperiksa langsung dari `currentStockTakeGroups` — cocok dengan hasil dry-run SQL (mis. `BRAZIL ROSA`→kode 1, `SUMATRA`→kode 18, `DATES BLEND`→kode 34).
+5. Baris tabel `#stockopname-count-body` diperiksa — kolom Kode & Status tampil benar, baris belum diisi menampilkan "—".
+6. Toleransi diuji langsung di input sungguhan: green bean `SUMATRA` (sistem 156,6kg) diisi 157,5kg (selisih +0,9kg, dalam toleransi ±1,566kg) → "✓ Match"; diisi 165kg (selisih +8,4kg, di luar toleransi) → "Difference +8.4".
+7. Packed diuji exact-match: isi tepat sistem → Match; +1 → "Difference +1".
+8. Bulk diuji exact-match: selisih 0,05kg (jauh di bawah 1%/0,1kg) tetap → "Difference +0.1", BUKAN Match — membuktikan bulk tidak lagi dapat toleransi.
+9. Navigasi fokus Enter pada input Aktual berpindah ke baris berikutnya — diuji lewat `KeyboardEvent('keydown', {key:'Enter'})` asli pada elemen fokus.
+10. `printStockCountForm()` dipanggil sungguhan (dengan `window.open` di-intercept sementara untuk menangkap HTML, dikembalikan setelahnya) — header kolom pertama "Code", baris data pertama menunjukkan kode & nama asli.
+11. Take id 13 dibatalkan lewat `cancelStockTake()` asli (bukan SQL manual) — dikonfirmasi `status = 'cancelled'` di database, tidak ada penyesuaian stok terjadi (Cancel tidak pernah menyentuh stok).
+
+**Catatan teknis dari sesi ini:** verifikasi awal sempat terhambat masalah render di Browser pane bawaan (screenshot timeout, viewport salah lapor, sesi auth terputus di tengah jalan) — akhirnya diselesaikan dengan pindah ke alat "Claude in Chrome" yang memakai sesi Chrome asli user, dan menambah dry-run SQL sebagai lapis verifikasi tambahan sebelum uji browser.
 
 ---
 
