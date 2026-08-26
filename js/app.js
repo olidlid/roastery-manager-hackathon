@@ -3396,6 +3396,22 @@ let currentStockTakeId = null;
 // take (rather than freshly started this session) — shown in the progress
 // note so a returning counter knows they're picking up someone else's work.
 let stockTakeResumeInfo = null;
+// Fase 4: packed_coffee_lots + production_lots, fetched once per open take
+// and reused by every lot-detail screen (print Tahap 2, the detail modal,
+// the bottom bar's lot count) instead of refetching per group. Safe to
+// cache for the whole take because Fase 2's freeze trigger blocks writes to
+// these tables for as long as the take stays 'counting'/'posting'. Reset
+// whenever a take opens or ends so a later take starts with fresh data.
+let _stockOpnamePackedLotsCache = null;
+async function getStockOpnamePackedLotsCache() {
+    if (!_stockOpnamePackedLotsCache) {
+        const [{ data: lots }, { data: productionLots }] = await Promise.all([
+            fetchData('packed_coffee_lots'), fetchData('production_lots')
+        ]);
+        _stockOpnamePackedLotsCache = { lots: lots || [], productionLots: productionLots || [] };
+    }
+    return _stockOpnamePackedLotsCache;
+}
 
 // Stock Opname Fase 3: same identity resolution as the old
 // resolvePackedCoffeeName (name-resolution logic kept byte-for-byte
@@ -3647,8 +3663,9 @@ async function loadStockOpnameReport(startDate, endDate) {
 // 'counting'/'posting' row, and the check below avoids even attempting
 // that in the common case.
 async function startStockTake() {
+    _stockOpnamePackedLotsCache = null;
     const tbody = document.getElementById('stockopname-count-body');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">Loading…</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:16px;">Loading…</td></tr>`;
 
     const { data: existingTakes } = await fetchData('stock_takes');
     const openTake = (existingTakes || []).find(t => t.status === 'counting' || t.status === 'posting');
@@ -3722,12 +3739,24 @@ async function startStockTake() {
 // startStockTake() finds one already open.
 async function resumeStockTake(take) {
     currentStockTakeId = take.id;
+    _stockOpnamePackedLotsCache = null;
 
     const [{ data: items }, groups] = await Promise.all([
         fetchData('stock_take_items'),
         buildStockTakeGroups()
     ]);
-    const myItems = (items || []).filter(it => it.stock_take_id === take.id);
+    const allMyItems = (items || []).filter(it => it.stock_take_id === take.id);
+    // Fase 4: lot-detail rows (parent_item_id set) are children of a group
+    // row, not groups of their own — split them out first so the
+    // (category, item_name) matching below only ever sees top-level rows;
+    // otherwise every saved lot row would fail to match any group and get
+    // pushed in as a bogus extra "stale" row.
+    const myItems = allMyItems.filter(it => !it.parent_item_id);
+    const childItemsByParent = new Map();
+    allMyItems.filter(it => it.parent_item_id).forEach(it => {
+        if (!childItemsByParent.has(it.parent_item_id)) childItemsByParent.set(it.parent_item_id, []);
+        childItemsByParent.get(it.parent_item_id).push(it);
+    });
 
     // Match each saved item row back to a freshly-built group by
     // (category, item_name) — the same identity printStockCountForm and
@@ -3749,6 +3778,18 @@ async function resumeStockTake(take) {
             g.itemId = item.id;
             g.actualQty = actualQty;
             g.counted = !!item.counted;
+            const children = childItemsByParent.get(item.id);
+            if (children && children.length > 0) {
+                g.detailed = true;
+                g.lotBreakdown = children.map(c => ({
+                    lotId: c.ref_id,
+                    lotCode: c.lot_code,
+                    stripCode: c.strip_code,
+                    systemQty: parseFloat(c.system_qty) || 0,
+                    actualQty: (c.actual_qty === null || c.actual_qty === undefined) ? null : parseFloat(c.actual_qty),
+                    itemId: c.id
+                }));
+            }
             resumedGroups.push(g);
         } else {
             resumedGroups.push({
@@ -3793,6 +3834,13 @@ function renderStockTakeSheet() {
         const hasValue = g.actualQty !== null && g.actualQty !== undefined;
         const valueAttr = hasValue ? `value="${g.actualQty}"` : '';
         const staleTag = g.stale ? ` <span style="font-size:0.65rem; color:var(--warning);" title="${window.t ? (window.t('stockopname_stale_row') || 'not found — item changed since this take started') : 'not found — item changed since this take started'}">⚠</span>` : '';
+        // Fase 4 §4.5 point 1: the arrow opens the lot-detail modal for this
+        // group alone — only packed has lots to detail (§1: "Tahap 2 hanya
+        // berlaku untuk packed coffee"), and a stale row has no live rows to
+        // fetch lots from, so both get a blank cell instead.
+        const arrowCell = (g.category === 'packed' && !g.stale)
+            ? `<td class="text-center" style="cursor:pointer; color:var(--text-muted); font-weight:700;" onclick="openStockTakeDetailModal([${i}])" title="${window.t ? (window.t('stockopname_open_detail') || 'Enter lot detail') : 'Enter lot detail'}">›</td>`
+            : `<td></td>`;
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td class="text-center" style="font-family:monospace; font-weight:700;">${g.coffeeCode || '—'}</td>
@@ -3800,6 +3848,7 @@ function renderStockTakeSheet() {
             <td class="text-center">${sysDisplay} ${g.unit}</td>
             <td class="text-center"><input type="number" class="form-control stockopname-actual-input" data-group-index="${i}" ${valueAttr} step="${step}" min="0" placeholder="—" style="width:110px; text-align:center; margin:0 auto;"></td>
             <td class="stockopname-status-cell text-center" data-group-index="${i}">${stockOpnameStatusHtml(g, hasValue ? g.actualQty : null)}</td>
+            ${arrowCell}
         `;
         tbody.appendChild(tr);
     });
@@ -3821,7 +3870,29 @@ function renderStockTakeSheet() {
         });
     });
 
+    // Fase 4 §4.2: "Cetak rincian"/"Input rincian" are always available in
+    // the header, regardless of whether anything currently needs detailing
+    // — idempotent onclick assignment, same convention loadStockOpnameReport
+    // already uses for the Start/Cancel/Finalize buttons.
+    const printStage2Btn = document.getElementById('btn-stockopname-print-stage2');
+    if (printStage2Btn) printStage2Btn.onclick = printStockCountFormStage2;
+    const printStage2BarBtn = document.getElementById('btn-stockopname-print-stage2-bar');
+    if (printStage2BarBtn) printStage2BarBtn.onclick = printStockCountFormStage2;
+    const detailAllHandler = async () => {
+        const needing = stockOpnameGroupsNeedingDetail();
+        if (needing.length === 0) {
+            await showWarningModal(window.t ? (window.t('stockopname_detail_none') || 'No differences to detail yet — enter Stage 1 counts first.') : 'No differences to detail yet — enter Stage 1 counts first.', false);
+            return;
+        }
+        openStockTakeDetailModal(needing.map(x => x.i));
+    };
+    const detailAllBtn = document.getElementById('btn-stockopname-detail-all');
+    if (detailAllBtn) detailAllBtn.onclick = detailAllHandler;
+    const detailAllBarBtn = document.getElementById('btn-stockopname-detail-all-bar');
+    if (detailAllBarBtn) detailAllBarBtn.onclick = detailAllHandler;
+
     updateProgressNote();
+    updateStockTakeDetailBar();
 }
 
 function formatVarianceText(variance, unit) {
@@ -3852,6 +3923,15 @@ function stockOpnameIsMatch(group, actual) {
 // (always the true number — tolerance only decides the label, never hides
 // the figure) when it isn't.
 function stockOpnameStatusHtml(g, actualQty) {
+    // Fase 4: once a group has been broken down lot-by-lot, that lot-level
+    // truth is authoritative over the raw group total (§4.4 "rincian lot
+    // selalu menang") — shown as its own status rather than falling through
+    // to Match/Difference, so the counter can see at a glance which rows
+    // still need a second look and which are already fully resolved.
+    if (g.detailed) {
+        const label = window.t ? (window.t('stockopname_status_detailed') || 'Detailed') : 'Detailed';
+        return `<span style="color:var(--success); font-weight:700;">📋 ${label}</span>`;
+    }
     if (actualQty === null || actualQty === undefined) {
         return `<span style="color:var(--text-muted);">—</span>`;
     }
@@ -3875,6 +3955,12 @@ function updateVarianceCell(input) {
     const cell = tbody ? tbody.querySelector(`.stockopname-status-cell[data-group-index="${idx}"]`) : null;
     if (!g || !cell) return;
     const raw = input.value;
+    // Fase 4: typing a different number by hand overrides whatever lot
+    // detail produced this group's current total — the "Detailed" status
+    // stops being true the moment the number it was based on changes, so
+    // it must clear live, not just on save (saveCountedValue below does the
+    // same for the persisted copy).
+    if (g.detailed && parseFloat(raw) !== g.actualQty) g.detailed = false;
     if (raw === '') { cell.innerHTML = stockOpnameStatusHtml(g, null); return; }
     const actual = parseFloat(raw);
     if (isNaN(actual)) { cell.innerHTML = stockOpnameStatusHtml(g, null); return; }
@@ -3895,6 +3981,19 @@ async function saveCountedValue(input) {
     const isEmpty = raw === '';
     const actual = isEmpty ? null : parseFloat(raw);
     if (!isEmpty && isNaN(actual)) return;
+
+    // Fase 4: updateVarianceCell already cleared g.detailed the instant this
+    // value stopped matching the lot-sum it was based on — if that just
+    // happened, the lot-level rows saved earlier are now stale (they'd
+    // silently resurrect g.detailed on the next resume/refresh otherwise,
+    // per resumeStockTake's parent_item_id reconstruction) and must be
+    // deleted, not just orphaned.
+    if (!g.detailed && g.lotBreakdown && g.lotBreakdown.length > 0) {
+        for (const l of g.lotBreakdown) {
+            if (l.itemId) await deleteData('stock_take_items', l.itemId);
+        }
+        g.lotBreakdown = null;
+    }
 
     g.actualQty = actual;
     g.counted = !isEmpty;
@@ -3940,6 +4039,7 @@ async function cancelStockTake() {
     currentStockTakeGroups = null;
     currentStockTakeId = null;
     stockTakeResumeInfo = null;
+    _stockOpnamePackedLotsCache = null;
     const sheet = document.getElementById('stockopname-sheet');
     const history = document.getElementById('stockopname-history');
     if (sheet) sheet.classList.add('hidden');
@@ -4051,6 +4151,389 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
     }
 }
 
+// Fase 4 cacat #6: writes a detailed group's true per-lot counts directly —
+// no distribution guessing. A lot the counter left blank in the detail
+// modal is skipped entirely here (same "blank = not counted, don't touch
+// it" rule as everywhere else in this feature), so its remaining_pcs stays
+// whatever it already was.
+async function applyStockGroupDetailedLotsAdjustment(group, stockTakeId) {
+    for (const l of group.lotBreakdown) {
+        if (l.actualQty === null || l.actualQty === undefined) continue;
+        const { error } = await window.supabaseClient.rpc('set_packed_lot_remaining', {
+            p_lot_id: l.lotId, p_pcs: l.actualQty,
+            p_operation: 'stocktake', p_ref_table: 'stock_takes', p_ref_id: stockTakeId,
+            p_user: (currentUser && currentUser.name) || null
+        });
+        if (error) console.error('set_packed_lot_remaining RPC failed:', error);
+    }
+}
+
+// Fase 4 §4.3/§4.4/§4.5: groups that currently need a Tahap 2 lot count —
+// a packed group with a typed Aktual that's outside tolerance and not
+// already detailed. Drives the bottom bar, the "Input rincian"/"Cetak
+// rincian" bar buttons, and Stage 2's print sheet — kept as one function so
+// all three can never disagree about which groups qualify.
+function stockOpnameGroupsNeedingDetail() {
+    if (!currentStockTakeGroups) return [];
+    const out = [];
+    currentStockTakeGroups.forEach((g, i) => {
+        if (g.category !== 'packed' || g.stale || g.detailed) return;
+        if (g.actualQty === null || g.actualQty === undefined) return;
+        if (stockOpnameIsMatch(g, g.actualQty)) return;
+        out.push({ g, i });
+    });
+    return out;
+}
+
+// FIFO-sorted remaining-stock lots for one packed group's underlying
+// packed_coffee row(s) — same convention js/packing.js's openStockByLotModal
+// uses for roast date (true production date via production_lot_id, falling
+// back to packed_date for manual/unlinked lots) and "oldest first" ordering.
+// Takes the shared cache's raw tables so callers looping over many groups
+// don't refetch per group.
+function lotsForPackedGroupFromCache(group, cache) {
+    const packedIds = new Set(group.rows.filter(r => r.table === 'packed_coffee').map(r => r.rec.id));
+    const lots = (cache.lots || [])
+        .filter(l => packedIds.has(l.packed_coffee_id) && (parseInt(l.remaining_pcs) || 0) > 0)
+        .map(l => {
+            const pl = l.production_lot_id ? (cache.productionLots || []).find(p => p.id === l.production_lot_id) : null;
+            return {
+                lotId: l.id,
+                lotCode: l.lot_code,
+                stripCode: l.strip_code,
+                roastDate: pl ? pl.production_date : null,
+                packedDate: l.packed_date,
+                systemQty: parseInt(l.remaining_pcs) || 0,
+                actualQty: null
+            };
+        })
+        .sort((a, b) => new Date(a.roastDate || a.packedDate || 0) - new Date(b.roastDate || b.packedDate || 0));
+    lots.forEach((l, idx) => { l.pickFirst = idx === 0; });
+    return lots;
+}
+
+// Updates the "3 grup selisih · 9 lot perlu dihitung rinci" bar under the
+// count table — hidden while nothing needs detailing.
+async function updateStockTakeDetailBar() {
+    const bar = document.getElementById('stockopname-detail-bar');
+    const textEl = document.getElementById('stockopname-detail-bar-text');
+    if (!bar || !textEl) return;
+    const needing = stockOpnameGroupsNeedingDetail();
+    if (needing.length === 0) { bar.classList.add('hidden'); return; }
+    const cache = await getStockOpnamePackedLotsCache();
+    const totalLots = needing.reduce((sum, { g }) => sum + lotsForPackedGroupFromCache(g, cache).length, 0);
+    const template = window.t ? (window.t('stockopname_detail_bar_text') || '{groups} group(s) with a difference · {lots} lot(s) need a detail count') : '{groups} group(s) with a difference · {lots} lot(s) need a detail count';
+    textEl.textContent = template.replace('{groups}', needing.length).replace('{lots}', totalLots);
+    bar.classList.remove('hidden');
+}
+
+// Stage 2 print sheet (§4.3) — one block per group that currently needs
+// detailing, with a blank lot table for the team to fill in by hand.
+async function printStockCountFormStage2() {
+    const needing = stockOpnameGroupsNeedingDetail();
+    if (needing.length === 0) {
+        await showWarningModal(window.t ? (window.t('stockopname_detail_none') || 'No differences to detail yet — enter Stage 1 counts first.') : 'No differences to detail yet — enter Stage 1 counts first.', false);
+        return;
+    }
+    const cache = await getStockOpnamePackedLotsCache();
+    const cs = companySettings;
+    const subtitle = window.t ? (window.t('stockopname_print_stage2_subtitle') || 'Lot Detail Count Form') : 'Lot Detail Count Form';
+    const tStrip = window.t ? (window.t('col_strip_code') || 'Strip') : 'Strip';
+    const tLot = window.t ? (window.t('col_lot_date') || 'Lot / Packed Date') : 'Lot / Packed Date';
+    const tSystem = window.t ? (window.t('col_system_qty') || 'System') : 'System';
+    const tActual = window.t ? (window.t('col_actual_qty') || 'Actual') : 'Actual';
+    const tNotes = window.t ? (window.t('col_notes') || 'Notes') : 'Notes';
+    const tPickFirst = window.t ? (window.t('stockopname_pick_first') || 'PICK FIRST') : 'PICK FIRST';
+    const tDate = window.t ? (window.t('col_date') || 'Date') : 'Date';
+    const tBy = window.t ? (window.t('col_performed_by') || 'Counted By') : 'Counted By';
+
+    let blocks = '';
+    needing.forEach(({ g }) => {
+        const lots = lotsForPackedGroupFromCache(g, cache);
+        const variance = g.actualQty - g.systemQty;
+        const rows = lots.map(l => `<tr>
+            <td>${l.stripCode || '-'}${l.pickFirst ? ` <span class="pick-first">${tPickFirst}</span>` : ''}</td>
+            <td>${l.lotCode || '-'}<br><span class="lot-date">${l.roastDate || l.packedDate || '-'}</span></td>
+            <td class="c">${l.systemQty}</td>
+            <td class="blank"></td>
+            <td class="blank"></td>
+        </tr>`).join('');
+        blocks += `
+        <div class="group-block">
+            <div class="group-header">
+                <span class="group-code">${g.coffeeCode || ''}</span>
+                <span class="group-name">${g.label}</span>
+                <span class="group-stats">${tSystem} ${g.systemQty} · ${tActual} ${g.actualQty} · ${window.t ? (window.t('col_variance') || 'Difference') : 'Difference'} ${variance > 0 ? '+' : ''}${variance}</span>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>${tStrip}</th>
+                        <th>${tLot}</th>
+                        <th style="width:80px;">${tSystem}</th>
+                        <th style="width:100px;">${tActual}</th>
+                        <th style="width:130px;">${tNotes}</th>
+                    </tr>
+                </thead>
+                <tbody>${rows || `<tr><td colspan="5" class="c">-</td></tr>`}</tbody>
+            </table>
+        </div>`;
+    });
+
+    const printContent = `<!DOCTYPE html>
+<html>
+<head>
+    <title>${subtitle}</title>
+    <style>
+        @page { size: A4; margin: 14mm; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; font-size: 12px; }
+        .page { max-width: 210mm; margin: 0 auto; padding: 6px; }
+        .letterhead { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 3px solid #2d5016; margin-bottom: 14px; }
+        .lh-left { display: flex; align-items: center; gap: 12px; }
+        .lh-logo { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; border: 1px solid #e5e5e5; }
+        .lh-name { font-size: 18px; font-weight: 800; color: #2d5016; line-height: 1.2; }
+        .lh-contact { font-size: 10px; color: #777; margin-top: 2px; }
+        .lh-right { text-align: right; }
+        .doc-title { font-size: 17px; font-weight: 800; color: #2d5016; text-transform: uppercase; letter-spacing: 0.5px; }
+        .doc-sub { font-size: 10px; color: #999; margin-top: 2px; }
+        .meta { display: flex; gap: 40px; font-size: 11px; color: #555; margin-bottom: 16px; }
+        .group-block { margin-bottom: 20px; break-inside: avoid; }
+        .group-header { display: flex; align-items: baseline; gap: 10px; background: #f3f4e8; border-left: 4px solid #2d5016; padding: 6px 10px; margin-bottom: 6px; }
+        .group-code { font-family: monospace; font-weight: 800; font-size: 13px; }
+        .group-name { font-weight: 700; font-size: 12px; }
+        .group-stats { margin-left: auto; font-size: 11px; color: #555; }
+        table { width: 100%; border-collapse: collapse; }
+        thead th { background: #2d5016; color: #fff; padding: 7px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; text-align: left; border: 1px solid #2d5016; }
+        tbody td { padding: 6px 10px; border: 1px solid #cfcfcf; font-size: 12px; height: 24px; }
+        tbody td.c { text-align: center; }
+        tbody td.blank { background: #fff; }
+        .lot-date { font-size: 10px; color: #777; }
+        .pick-first { font-size: 9px; font-weight: 800; color: #b45309; background: #fef3c7; padding: 1px 5px; border-radius: 4px; }
+        .signoff { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; margin-top: 24px; }
+        .sig { text-align: center; }
+        .sig-line { border-top: 1px solid #333; margin-bottom: 4px; padding-top: 32px; }
+        .sig-lbl { font-size: 10px; text-transform: uppercase; color: #666; font-weight: 600; }
+        @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="letterhead">
+            <div class="lh-left">
+                ${cs.show_logo_in_print && cs.logo_base64 ? '<img class="lh-logo" src="' + cs.logo_base64 + '" alt="Logo">' : ''}
+                <div>
+                    <div class="lh-name">${cs.company_name || 'Coffee Roastery'}</div>
+                    <div class="lh-contact">${cs.address ? cs.address : ''}</div>
+                </div>
+            </div>
+            <div class="lh-right">
+                <div class="doc-title">${window.t ? (window.t('cat_packed') || 'Packed') : 'Packed'}</div>
+                <div class="doc-sub">${subtitle}</div>
+            </div>
+        </div>
+        <div class="meta">
+            <span>${tDate}: _______________________</span>
+            <span>${tBy}: _______________________</span>
+        </div>
+        ${blocks}
+        <div class="signoff">
+            <div class="sig"><div class="sig-line"></div><div class="sig-lbl">Counted By</div></div>
+            <div class="sig"><div class="sig-line"></div><div class="sig-lbl">Checked By</div></div>
+            <div class="sig"><div class="sig-line"></div><div class="sig-lbl">Approved By</div></div>
+        </div>
+    </div>
+</body>
+</html>`;
+
+    const w = window.open('', '_blank');
+    w.document.write(printContent);
+    w.document.close();
+}
+
+// Fase 4 §4.4/§4.5 — the Tahap 2 input modal. groupIndices can be one index
+// (row-arrow spot-check, may or may not currently be in variance) or many
+// (the "Input rincian" buttons, always fed by stockOpnameGroupsNeedingDetail
+// so they only ever open groups that actually need it).
+async function openStockTakeDetailModal(groupIndices) {
+    if (!currentStockTakeGroups || !groupIndices || groupIndices.length === 0) return;
+    const targets = groupIndices
+        .map(i => ({ i, g: currentStockTakeGroups[i] }))
+        .filter(({ g }) => g && g.category === 'packed' && !g.stale);
+    if (targets.length === 0) return;
+
+    const cache = await getStockOpnamePackedLotsCache();
+    const blocks = targets.map(({ i, g }) => {
+        // Reopening an already-detailed group shows its saved lot figures
+        // for editing rather than a blank re-fetch — the lot list itself
+        // can't have changed mid-take (writes are frozen), only the counts
+        // typed against it can.
+        const lots = (g.detailed && g.lotBreakdown) ? g.lotBreakdown : lotsForPackedGroupFromCache(g, cache);
+        return { i, g, lots };
+    });
+
+    let bodyHtml = '';
+    blocks.forEach(({ i, g, lots }) => {
+        const rows = lots.map((l, li) => `
+            <tr>
+                <td>${l.stripCode || '-'}${l.pickFirst ? ` <span style="font-size:0.65rem; font-weight:800; color:#b45309; background:#fef3c7; padding:1px 5px; border-radius:4px;">${window.t ? (window.t('stockopname_pick_first') || 'PICK FIRST') : 'PICK FIRST'}</span>` : ''}</td>
+                <td>${l.lotCode || '-'}<br><span style="font-size:0.7rem; color:var(--text-muted);">${l.roastDate || l.packedDate || '-'}</span></td>
+                <td class="text-center">${l.systemQty}</td>
+                <td class="text-center"><input type="number" class="form-control sod-lot-input" data-group-index="${i}" data-lot-index="${li}" ${l.actualQty !== null && l.actualQty !== undefined ? `value="${l.actualQty}"` : ''} step="1" min="0" placeholder="—" style="width:90px; text-align:center; margin:0 auto;"></td>
+            </tr>`).join('');
+        bodyHtml += `
+        <div class="sod-group" data-group-index="${i}" style="margin-bottom:18px; border:1px solid var(--border); border-radius:10px; overflow:hidden;">
+            <div style="background:var(--bg-app); padding:10px 14px; display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;">
+                <span style="font-family:monospace; font-weight:800;">${g.coffeeCode || ''}</span>
+                <strong>${g.label}</strong>
+                <span style="margin-left:auto; font-size:0.78rem; color:var(--text-muted);">${window.t ? (window.t('col_system_qty') || 'System') : 'System'} ${g.systemQty} · ${window.t ? (window.t('stockopname_stage1_label') || 'Stage 1') : 'Stage 1'} ${g.actualQty ?? '-'}</span>
+            </div>
+            <div style="overflow-x:auto;">
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:var(--bg-app);">
+                            <th style="text-align:left; padding:6px 10px; font-size:0.72rem;">${window.t ? (window.t('col_strip_code') || 'Strip') : 'Strip'}</th>
+                            <th style="text-align:left; padding:6px 10px; font-size:0.72rem;">${window.t ? (window.t('col_lot_date') || 'Lot / Date') : 'Lot / Date'}</th>
+                            <th style="text-align:center; padding:6px 10px; font-size:0.72rem;">${window.t ? (window.t('col_system_qty') || 'System') : 'System'}</th>
+                            <th style="text-align:center; padding:6px 10px; font-size:0.72rem;">${window.t ? (window.t('col_actual_qty') || 'Actual') : 'Actual'}</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows || `<tr><td colspan="4" style="text-align:center; padding:12px; color:var(--text-muted);">-</td></tr>`}</tbody>
+                </table>
+            </div>
+            <div class="sod-sum" data-group-index="${i}" style="padding:8px 14px; font-size:0.8rem; border-top:1px solid var(--border);"></div>
+        </div>`;
+    });
+
+    const footerId = 'sod-footer-text';
+    const html = `
+        <div style="max-height:65vh; overflow-y:auto; padding-right:4px;">${bodyHtml}</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">
+            <span id="${footerId}" style="font-size:0.8rem; color:var(--text-muted);"></span>
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('btn-close-modal').click()">${window.t ? (window.t('btn_cancel') || 'Cancel') : 'Cancel'}</button>
+                <button type="button" class="btn btn-primary btn-sm" id="btn-sod-save">${window.t ? (window.t('btn_save_detail') || 'Save Detail') : 'Save Detail'}</button>
+            </div>
+        </div>
+    `;
+    openModal(window.t ? (window.t('stockopname_detail_modal_title') || 'Lot Detail') : 'Lot Detail', html, '760px');
+
+    function readGroupInputs(i) {
+        return Array.from(document.querySelectorAll(`.sod-lot-input[data-group-index="${i}"]`))
+            .map(inp => {
+                const raw = inp.value;
+                return raw === '' ? null : parseFloat(raw);
+            });
+    }
+
+    function refreshSumRow(i, g, lots) {
+        const values = readGroupInputs(i);
+        const sumCell = document.querySelector(`.sod-sum[data-group-index="${i}"]`);
+        if (!sumCell) return;
+        const anyFilled = values.some(v => v !== null && !isNaN(v));
+        if (!anyFilled) { sumCell.innerHTML = ''; return; }
+        const total = values.reduce((s, v, idx) => s + ((v === null || isNaN(v)) ? lots[idx].systemQty : v), 0);
+        const stage1 = g.actualQty;
+        if (stage1 !== null && stage1 !== undefined && Math.abs(total - stage1) < 1e-9) {
+            const t = window.t ? (window.t('stockopname_lot_sum_match') || 'Lot count matches the Stage 1 total') : 'Lot count matches the Stage 1 total';
+            sumCell.innerHTML = `<span style="color:var(--success); font-weight:600;">✓ ${t} (${total})</span>`;
+        } else {
+            const t = window.t ? (window.t('stockopname_lot_sum_mismatch') || 'Lot total ({lots}) differs from Stage 1 ({stage1}) — lot detail will be used') : 'Lot total ({lots}) differs from Stage 1 ({stage1}) — lot detail will be used';
+            sumCell.innerHTML = `<span style="color:var(--warning); font-weight:600;">⚠ ${t.replace('{lots}', total).replace('{stage1}', stage1 ?? '-')}</span>`;
+        }
+    }
+
+    function refreshFooter() {
+        const el = document.getElementById(footerId);
+        if (!el) return;
+        const allInputs = document.querySelectorAll('.sod-lot-input');
+        const filled = Array.from(allInputs).filter(inp => inp.value !== '').length;
+        const template = window.t ? (window.t('stockopname_detail_footer') || '{filled} of {total} lots filled') : '{filled} of {total} lots filled';
+        el.textContent = template.replace('{filled}', filled).replace('{total}', allInputs.length);
+    }
+
+    blocks.forEach(({ i, g, lots }) => refreshSumRow(i, g, lots));
+    refreshFooter();
+
+    document.querySelectorAll('.sod-lot-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+            const i = parseInt(inp.getAttribute('data-group-index'));
+            const block = blocks.find(b => b.i === i);
+            if (block) refreshSumRow(block.i, block.g, block.lots);
+            refreshFooter();
+        });
+    });
+
+    const saveBtn = document.getElementById('btn-sod-save');
+    if (saveBtn) {
+        saveBtn.onclick = async () => {
+            saveBtn.disabled = true;
+            for (const { i, g, lots } of blocks) {
+                const values = readGroupInputs(i);
+                const filledLots = lots.map((l, idx) => ({ ...l, actualQty: values[idx] }));
+                await saveStockTakeDetailForGroup(i, g, filledLots);
+            }
+            document.getElementById('btn-close-modal').click();
+            renderStockTakeSheet();
+        };
+    }
+}
+
+// Persists one group's lot breakdown: each counted lot becomes/updates a
+// child stock_take_items row (parent_item_id -> the group's own row,
+// ref_table/ref_id -> the lot), then the parent row is updated to the lot
+// sum — "rincian lot selalu menang" (§4.4). A lot left blank keeps
+// contributing its ORIGINAL system quantity to that sum rather than being
+// treated as 0, since leaving a lot uncounted means "not verified", not
+// "confirmed empty" — the same distinction blank Stage 1 cells already draw
+// (cacat #1), just applied one level down.
+async function saveStockTakeDetailForGroup(groupIndex, g, filledLots) {
+    let sumActual = 0;
+    for (const l of filledLots) {
+        const hasValue = l.actualQty !== null && l.actualQty !== undefined && !isNaN(l.actualQty);
+        sumActual += hasValue ? l.actualQty : l.systemQty;
+        if (!hasValue) continue;
+        const payload = {
+            stock_take_id: currentStockTakeId,
+            category: 'packed',
+            item_name: `${g.label} · ${l.stripCode || l.lotCode || l.lotId}`,
+            unit: 'bags',
+            system_qty: l.systemQty,
+            actual_qty: l.actualQty,
+            variance: l.actualQty - l.systemQty,
+            counted: true,
+            counted_at: new Date().toISOString(),
+            counted_by: (currentUser && currentUser.name) || null,
+            parent_item_id: g.itemId,
+            ref_table: 'packed_coffee_lots',
+            ref_id: l.lotId,
+            strip_code: l.stripCode || null,
+            lot_code: l.lotCode || null
+        };
+        if (l.itemId) payload.id = l.itemId;
+        const { data, error } = await saveData('stock_take_items', payload);
+        if (error) { console.error('Failed to save lot detail for', g.label, l.lotCode, error); continue; }
+        if (data) l.itemId = data.id;
+    }
+
+    g.actualQty = sumActual;
+    g.counted = true;
+    g.detailed = true;
+    g.lotBreakdown = filledLots;
+
+    if (g.itemId) {
+        const { error } = await saveData('stock_take_items', {
+            id: g.itemId,
+            actual_qty: sumActual,
+            variance: sumActual - g.systemQty,
+            counted: true,
+            counted_at: new Date().toISOString(),
+            counted_by: (currentUser && currentUser.name) || null
+        });
+        if (error) console.error('Failed to update parent row after lot detail for', g.label, error);
+    }
+}
+
 async function finalizeStockTake() {
     if (!currentStockTakeGroups || !currentStockTakeId) return;
     const tbody = document.getElementById('stockopname-count-body');
@@ -4061,6 +4544,7 @@ async function finalizeStockTake() {
     // the adjustment list and from being marked counted.
     const lines = [];
     const adjustments = [];
+    const detailedLotGroups = [];
     const itemUpdates = [];
     currentStockTakeGroups.forEach((g, i) => {
         const input = tbody.querySelector(`.stockopname-actual-input[data-group-index="${i}"]`);
@@ -4086,7 +4570,16 @@ async function finalizeStockTake() {
                 counted_at: new Date().toISOString(), counted_by: (currentUser && currentUser.name) || null
             });
         }
-        if (!matched) {
+        // Fase 4 cacat #6: a detailed group's per-lot counts are always the
+        // ones written to stock, regardless of whether the group's TOTAL
+        // happens to match the system total — individual lots can still
+        // have shifted against each other even when their sum nets out even
+        // (a real risk since detailing exists specifically to catch that).
+        // This is checked before the matched/guessed-split branch below so
+        // a detailed-and-matching group never silently skips its lot writes.
+        if (g.detailed && g.category === 'packed' && g.lotBreakdown) {
+            detailedLotGroups.push(g);
+        } else if (!matched) {
             if (g.stale) {
                 // This item's stock_take_items row no longer matches any
                 // current group (its source rows changed or vanished since
@@ -4144,11 +4637,18 @@ async function finalizeStockTake() {
     for (const adj of adjustments) {
         await applyStockGroupAdjustmentToLots(adj.group, adj.actual, currentStockTakeId);
     }
+    // Fase 4 cacat #6: detailed groups bypass the guessed split above
+    // entirely — each lot's counted quantity is written straight to that
+    // lot via set_packed_lot_remaining, no distribution logic involved.
+    for (const g of detailedLotGroups) {
+        await applyStockGroupDetailedLotsAdjustment(g, currentStockTakeId);
+    }
 
     alert(window.t ? (window.t('alert_stockopname_saved') || 'Stock take finalized and stock adjusted.') : 'Stock take finalized and stock adjusted.');
     currentStockTakeGroups = null;
     currentStockTakeId = null;
     stockTakeResumeInfo = null;
+    _stockOpnamePackedLotsCache = null;
     await loadStockOpnameReport('', '');
     if (typeof scheduleDashboardRefresh === 'function') scheduleDashboardRefresh();
 }
