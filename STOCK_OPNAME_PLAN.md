@@ -1,6 +1,6 @@
 # Stock Opname Bulanan — Rencana Pengembangan
 
-**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada), Fase 3 selesai (`3fc3937`, `276c9b8`, diverifikasi live — termasuk temuan bahwa packed di produksi 100% bergantung pada pencocokan-nama untuk kode, dan koreksi toleransi bulk sesuai keputusan user). Menunggu persetujuan lanjut ke Fase 4.
+**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada), Fase 3 selesai (`3fc3937`, `276c9b8`, diverifikasi live — termasuk temuan bahwa packed di produksi 100% bergantung pada pencocokan-nama untuk kode, dan koreksi toleransi bulk sesuai keputusan user), Fase 4 selesai (`f38565d`, `297cada`, diverifikasi live — termasuk satu bug ditemukan+diperbaiki live (bar rincian tidak ter-update), dan satu langkah (posting lewat finalize sungguhan) sengaja tidak diuji untuk melindungi stok produksi — lihat catatan di Fase 4). Menunggu persetujuan lanjut ke Fase 5.
 **Tanggal:** 2026-08-23
 **Tujuan:** Mengubah fitur Stock Opname dari "form penyesuaian stok" menjadi proses penghitungan fisik bulanan yang hasilnya bisa dipercaya, tanpa menambah beban tim di lapangan.
 
@@ -374,19 +374,36 @@ Dipasang `BEFORE INSERT OR UPDATE OR DELETE` pada tiga tabel: `packed_coffee_lot
 
 ---
 
-## Fase 4 — Tahap 2: rincian per lot (packed coffee saja)
+## Fase 4 — Tahap 2: rincian per lot (packed coffee saja) — SELESAI (`f38565d`, `297cada`)
 
-**File:** `js/app.js`, `js/packing.js` (untuk helper lot bila perlu)
+**File:** `js/app.js` (`applyStockGroupDetailedLotsAdjustment`, `stockOpnameGroupsNeedingDetail`, `lotsForPackedGroupFromCache`, `updateStockTakeDetailBar`, `printStockCountFormStage2`, `openStockTakeDetailModal`, `saveStockTakeDetailForGroup`, plus perubahan pada `renderStockTakeSheet`, `stockOpnameStatusHtml`, `updateVarianceCell`, `saveCountedValue`, `resumeStockTake`, `finalizeStockTake`), `index.html`, `js/translations.js`.
 
-- **Lembar cetak Tahap 2** sesuai §4.3 — hanya grup selisih, header grup, tabel lot dengan tanda `ambil dulu` pada lot terdepan FIFO.
-- **Modal input** sesuai §4.4 — semua grup dalam satu modal, jumlah lot dihitung langsung, aturan "rincian lot menang" bila bentrok.
-- **Tiga jalan masuk** sesuai §4.5.
-- Baris lot disimpan sebagai `stock_take_items` dengan `parent_item_id` menunjuk baris grupnya, `ref_table = 'packed_coffee_lots'`, `ref_id = lot.id`, plus salinan `strip_code`/`lot_code`.
+**Lembar cetak Tahap 2 (§4.3) — DONE:** satu blok per grup yang sedang selisih (`stockOpnameGroupsNeedingDetail()`), header `Sistem · Aktual · Difference`, tabel lot **Strip · Lot/Tanggal packing · Sistem · Aktual · Catatan**, lot FIFO terlama ditandai "PICK FIRST". Diverifikasi live: 5 lot BRAZIL ROSA 250g STRONGHOLD S9X tercetak dengan urutan tanggal benar (28 Jul → 23 Agu) dan tanda pick-first tepat di lot tertua.
 
-**Posting menjadi tepat (cacat #6):** untuk grup yang sudah dirinci, penyesuaian ditulis per lot lewat
-`set_packed_lot_remaining(lot_id, hasil_hitung, 'stocktake', 'stock_takes', take_id)` — tidak ada lagi tebakan. Untuk grup yang tidak dirinci, tetap memakai pembagian yang ada sekarang (surplus ke baris pertama, kekurangan FIFO).
+**Modal input Tahap 2 (§4.4) — DONE:** semua grup terpilih dalam satu modal, baris lot dengan input Aktual, baris jumlah membandingkan total lot ke Aktual Tahap 1 secara live — hijau "Lot count matches the Stage 1 total" bila sama, kuning dengan kedua angka bila beda. **Rincian lot selalu menang** — `saveStockTakeDetailForGroup` menimpa `actualQty` grup dengan jumlah lot begitu disimpan, terlepas dari apa yang diketik di Tahap 1.
 
-**Verifikasi:** buat dua lot uji ber-strip-code berbeda untuk kopi yang sama, isi Tahap 1 dengan angka yang selisih, rinci per lot, simpan, posting. Hanya lot yang benar-benar selisih yang berubah, dan `packed_stock_movements` mencatatnya dengan `ref_id` opname yang benar.
+**Tiga jalan masuk (§4.5) — DONE:** panah `›` per baris (hanya kategori packed, non-stale) membuka modal untuk satu grup; tombol header "Enter Lot Detail" (selalu ada) dan bar bawah (`stockopname-detail-bar`, muncul saat ada selisih) sama-sama memanggil `stockOpnameGroupsNeedingDetail()` sehingga tidak bisa berbeda hasil.
+
+**Status "Dirinci" dan pembatalan otomatis:** grup yang sudah dirinci menampilkan status "📋 Detailed", menggantikan Match/Difference. Mengetik ulang angka Tahap 1 secara manual membatalkan status ini SECARA LANGSUNG (live, bukan hanya saat disimpan) dan **menghapus baris `stock_take_items` anak yang jadi usang** — tanpa ini, refresh berikutnya akan salah merekonstruksi status "Dirinci" dari baris anak yang sudah tidak relevan. `resumeStockTake` direkonstruksi untuk memisahkan baris anak (`parent_item_id` terisi) dari baris grup saat mencocokkan by key, dan membangun ulang `g.lotBreakdown`/`g.detailed` dari baris anak yang tersimpan.
+
+**Posting per lot (cacat #6) — DONE:** grup yang dirinci **selalu** menulis lewat `set_packed_lot_remaining(lot_id, hasil_hitung, 'stocktake', 'stock_takes', take_id)` per lot — termasuk saat totalnya kebetulan cocok dengan sistem (lot bisa bergeser satu sama lain meski totalnya sama), bukan hanya saat ada selisih di level grup. Grup yang tidak dirinci tetap memakai pembagian tebakan yang sudah ada (`applyStockGroupAdjustmentToLots`, tidak diubah).
+
+**Verifikasi live (2026-08-26, akun `khaleed`/`admin2` via Claude in Chrome, take id 14):**
+1. `node test.js` — tanpa SyntaxError, di setiap iterasi.
+2. Take sungguhan dibuat (133 grup), grup `BRAZIL ROSA · 250g · STRONGHOLD S9X` (sistem 81, 5 lot nyata) diisi Tahap 1 = 75.
+3. Bar bawah muncul benar: *"1 group(s) with a difference · 5 lot(s) need a detail count"* — sempat DITEMUKAN BUG di sini (bar tidak ter-update saat mengetik, hanya saat render penuh) — diperbaiki live, di-deploy ulang (`297cada`), diverifikasi ulang sebelum lanjut.
+4. Modal dibuka lewat panah baris — 5 lot tampil FIFO benar dengan strip/lot code/tanggal asli, pick-first tepat.
+5. Diisi 2,1,1,4,67 (total 75) → baris jumlah "✓ Lot count matches the Stage 1 total (75)"; diubah salah satu jadi 68 (total 76) → berubah ke peringatan kuning "Lot total (76) differs from Stage 1 (75)"; dikembalikan ke 67, disimpan.
+6. Baris anak diverifikasi LANGSUNG di database: 5 baris `stock_take_items` dengan `parent_item_id`, `ref_table='packed_coffee_lots'`, `ref_id` per lot, `strip_code`/`lot_code` benar, `variance` per lot benar (lot terakhir −6).
+7. Refresh halaman penuh → `resumeStockTake` merekonstruksi `g.detailed=true` dan `g.lotBreakdown` (5 entri) dari database dengan benar — status "Dirinci" tetap tampil setelah reload.
+8. Mengetik ulang Tahap 1 secara manual (75 → 80) → status berubah live jadi "Difference -1", dan **kelima baris anak terbukti terhapus dari database** (dicek langsung, hasil kosong).
+9. `printStockCountFormStage2()` dipanggil sungguhan (tab baru terbuka) — header grup, tabel lot, dan tanda PICK FIRST tercetak persis sesuai §4.3.
+10. `applyStockGroupDetailedLotsAdjustment` dipanggil langsung terhadap satu lot nyata — **diblokir oleh trigger pembekuan Fase 2** (take masih `counting`) dengan bersih, bukan error kode — ini membuktikan pemanggilan RPC (`set_packed_lot_remaining` dengan parameter `p_operation`/`p_ref_table`/`p_ref_id`/`p_user`) terkirim benar, karena trigger hanya memblokir tulisan yang sah, bukan pemanggilan yang salah bentuk.
+11. Take id 14 dibatalkan bersih lewat `cancelStockTake()` asli — dikonfirmasi status `cancelled` di database dan **kelima `remaining_pcs` lot BRAZIL ROSA tetap di angka asli** (2,1,1,4,73) — tidak ada stok nyata yang berubah selama seluruh pengujian.
+
+**Yang BELUM diverifikasi lewat finalize sungguhan:** langkah terakhir posting (`set_packed_lot_remaining` benar-benar menuliskan `remaining_pcs` baru saat take berstatus `posted`, di luar pembekuan) sengaja **tidak** diuji dengan finalize nyata — itu akan menyesuaikan stok packed produksi sungguhan tanpa izin eksplisit, melanggar aturan "jangan sentuh stok/pesanan nyata tanpa izin eksplisit" yang dipegang sepanjang sesi ini. Keyakinan tetap tinggi karena: (a) RPC yang sama sudah dipakai bertahun-tahun oleh alur edit lot packed biasa di `js/packing.js`, tidak diubah; (b) data yang dikirim (`lotBreakdown`) sudah terbukti benar sampai ke database; (c) panggilan RPC terbukti sampai ke server dengan parameter benar (temuan #10 di atas); (d) posisi pemanggilannya persis meniru `applyStockGroupAdjustmentToLots` yang sudah teruji sejak Fase 1–3 pada urutan status yang sama (status diubah ke `posted` dahulu, baru penyesuaian ditulis). **Jika user ingin verifikasi penuh dengan finalize sungguhan pada data uji, itu perlu dilakukan secara sadar dengan koordinasi (idealnya pada kopi yang stoknya tidak kritis) — belum dilakukan di sesi ini.**
+
+**Catatan teknis dari sesi ini:** `dispatchEvent(new Event('input'/'change'))` terbukti TIDAK ANDAL di lingkungan Claude in Chrome pada sesi panjang ini (kadang bekerja, kadang diam-diam tidak memicu listener tanpa error) — pengujian yang andal beralih ke pemanggilan fungsi aplikasi secara langsung (`updateVarianceCell`, `saveCountedValue`, `.click()` asli pada tombol) yang terbukti konsisten. Satu tab Chrome juga sempat rusak total (setiap panggilan Supabase gagal dengan error `Headers.forEach` dari sisi ekstensi, bukan kode aplikasi) setelah pemakaian berat/lama — diselesaikan dengan membuka tab baru, bukan debugging lebih lanjut, karena jelas bukan bug di aplikasi.
 
 ---
 
