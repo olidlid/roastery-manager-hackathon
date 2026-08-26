@@ -1,6 +1,6 @@
 # Stock Opname Bulanan — Rencana Pengembangan
 
-**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`, diverifikasi live lewat UI produksi sungguhan). Menunggu persetujuan lanjut ke Fase 2.
+**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada). Menunggu persetujuan lanjut ke Fase 3.
 **Tanggal:** 2026-08-23
 **Tujuan:** Mengubah fitur Stock Opname dari "form penyesuaian stok" menjadi proses penghitungan fisik bulanan yang hasilnya bisa dipercaya, tanpa menambah beban tim di lapangan.
 
