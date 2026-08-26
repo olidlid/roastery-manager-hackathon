@@ -4009,6 +4009,7 @@ async function saveCountedValue(input) {
     if (error) console.error('Failed to save counted value for', g.label, error);
 
     updateProgressNote();
+    updateStockTakeDetailBar();
 }
 
 function updateProgressNote() {
