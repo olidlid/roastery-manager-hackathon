@@ -123,6 +123,53 @@ Hanya memuat grup yang selisih. Untuk tiap grup:
 
 Saat opname berstatus `counting`, halaman lain yang mengubah stok menampilkan spanduk merah: judul, penjelasan singkat, siapa yang membuka dan pukul berapa. Tombol aksi terkait dinonaktifkan.
 
+**Spanduk harus memuat tautan ke halaman Stock Opname.** Ini bukan hiasan: orang yang terkunci perlu jalan langsung menuju tempat membukanya, bukan disuruh mencari sendiri.
+
+---
+
+## 5. Mengakhiri opname
+
+Karena opname mengunci pekerjaan semua orang, cara mengakhirinya harus jelas dan selalu bisa dijangkau.
+
+### 5.1 Dua jalan keluar normal
+
+| Aksi | Status akhir | Stok | Kunci |
+|---|---|---|---|
+| **Posting** | `posted` | Disesuaikan sesuai hitungan | Terbuka |
+| **Batalkan** | `cancelled` | Tidak disentuh sama sekali | Terbuka |
+
+Keduanya tersedia di halaman Stock Opname selama opname berjalan. Baris `cancelled` **tidak dihapus** — percobaan yang dibatalkan tetap terlihat di riwayat berikut siapa yang membuka dan membatalkannya.
+
+### 5.2 Bila posting gagal di tengah jalan
+
+Ini kasus yang paling berbahaya dan harus ditangani secara eksplisit.
+
+**Aturan: status aman adalah status terkunci.** Bila ada penyesuaian gagal saat posting, status dikembalikan ke **`counting`**, bukan dibiarkan tersangkut di `posting`.
+
+Alasannya: penjaga pembekuan hanya memblokir `counting`. Kalau status dibiarkan tersangkut di `posting`, kunci justru terbuka sementara opname baru setengah diterapkan — orang mulai bertransaksi di atas stok yang belum selesai disesuaikan. Sekaligus indeks unik satu-opname-aktif memblokir pembuatan opname baru, jadi keadaan itu tidak bisa ditinggalkan begitu saja.
+
+**Posting harus bisa diulang dengan aman.** Setiap `stock_take_items` yang penyesuaiannya sudah berhasil ditulis diberi `posted_at`. Saat posting diulang, baris yang sudah punya `posted_at` dilewati. Tanpa ini, mengulang posting akan menulis penyesuaian dua kali dan merusak stok — persis jenis kerusakan yang seluruh `STOCK_LEDGER_PLAN.md` dibangun untuk mencegahnya.
+
+Layar harus menampilkan keadaan ini terang-terangan: *"Posting terhenti — 12 dari 19 penyesuaian sudah tersimpan. Stok masih terkunci. Coba posting lagi untuk melanjutkan."*
+
+### 5.3 Siapa yang boleh mengakhiri
+
+**Siapa pun yang punya permission `reports_stockopname_perform`** — bukan hanya orang yang membukanya.
+
+Ini disengaja. Kalau yang membuka opname sudah pulang, laptopnya mati, atau akunnya bermasalah, gudang tidak boleh ikut terkunci sampai orang itu kembali. Nama pembuka tetap tercatat di `started_by` dan nama yang mengakhiri tercatat terpisah, jadi jejaknya tidak hilang.
+
+### 5.4 Jalan darurat
+
+Bila aplikasi sendiri tidak bisa diakses (misal bug di halaman opname), kunci tetap bisa dibuka lewat Supabase SQL Editor:
+
+```sql
+UPDATE public.stock_takes
+SET status = 'cancelled'
+WHERE status IN ('counting', 'posting');
+```
+
+Ini membatalkan opname tanpa menyentuh stok sama sekali. Aman dijalankan kapan pun, tapi hitungan yang sudah dimasukkan tidak ikut diposting — perlu diulang. Dokumentasikan perintah ini di tempat yang bisa dijangkau tim, bukan hanya di file ini.
+
 ---
 
 ## Fase 0 — Fondasi skema
@@ -162,6 +209,7 @@ ALTER TABLE public.stock_take_items
     ADD COLUMN IF NOT EXISTS counted       BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS counted_at    TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS counted_by    TEXT,
+    ADD COLUMN IF NOT EXISTS posted_at     TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS is_found_item BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS parent_item_id INTEGER,
     ADD COLUMN IF NOT EXISTS ref_table     TEXT,
@@ -174,6 +222,7 @@ ALTER TABLE public.stock_take_items
 ```
 
 - **`counted`** adalah inti perbaikan cacat #1: membedakan *"dihitung, hasilnya sama"* dari *"belum dihitung"*. Keduanya menghasilkan `variance = 0` tetapi artinya jauh berbeda.
+- **`posted_at`** membuat posting bisa diulang dengan aman (§5.2). Baris yang sudah punya `posted_at` dilewati saat posting diulang, sehingga penyesuaian tidak pernah ditulis dua kali.
 - **`parent_item_id`** menunjuk ke baris grup Tahap 1 dari sebuah baris lot Tahap 2. Baris grup punya `parent_item_id IS NULL`. Tidak diberi foreign key ke tabel sendiri agar penghapusan tidak berantai — pola yang sama dipakai `packed_stock_movements`.
 - **`ref_table` + `ref_id`** menunjuk sumber baris: `packed_coffee_lots` (baris lot), `green_coffee`, atau `bulk_roasted_coffee`.
 - **`coffee_code` / `strip_code` / `lot_code` / `machine_name` / `bag_size_g`** adalah salinan, supaya lembar opname lama tetap terbaca meski lotnya sudah habis dan terhapus.
@@ -193,7 +242,7 @@ Sekarang `startStockTake()` hanya menyiapkan array di memori. Diubah menjadi:
 1. `startStockTake()` membuat baris `stock_takes` berstatus `counting` **lebih dulu**, lalu menulis seluruh baris `stock_take_items` dengan `counted = false` dan `actual_qty = NULL`.
 2. Setiap kali satu angka diisi, baris itu langsung disimpan (`counted = true`, `counted_at`, `counted_by`).
 3. Membuka halaman saat ada opname `counting` memuat ulang lembar itu, bukan memulai yang baru.
-4. `cancelStockTake()` mengubah status ke `cancelled` (tidak menghapus), sehingga percobaan yang dibatalkan tetap terlihat di riwayat.
+4. `cancelStockTake()` mengubah status ke `cancelled` (tidak menghapus), sehingga percobaan yang dibatalkan tetap terlihat di riwayat. **Boleh dilakukan siapa pun yang punya `reports_stockopname_perform`**, bukan hanya yang membuka — lihat §5.3.
 5. `finalizeStockTake()` **berhenti** memperlakukan kolom kosong sebagai "cocok". Baris `counted = false` dilewati sepenuhnya saat posting dan tidak menyesuaikan stok.
 
 **Verifikasi:** buka opname, isi beberapa angka, refresh browser — yang sudah diisi harus tetap ada, sisanya masih kosong. Posting dengan sebagian belum diisi — item itu harus tidak berubah stoknya **dan** tercatat `counted = false`, bukan `variance = 0`.
@@ -229,7 +278,7 @@ Dipasang `BEFORE INSERT OR UPDATE OR DELETE` pada tiga tabel: `packed_coffee_lot
 
 **Sisi aplikasi (lapisan lunak, bukan pengaman utama):**
 
-- Saat memuat bagian mana pun yang mengubah stok, cek apakah ada opname `counting`; bila ada tampilkan spanduk (§4.6) dan nonaktifkan tombol terkait.
+- Saat memuat bagian mana pun yang mengubah stok, cek apakah ada opname `counting`; bila ada tampilkan spanduk (§4.6) dan nonaktifkan tombol terkait. **Spanduk harus memuat tautan ke halaman Stock Opname** supaya orang yang terkunci punya jalan langsung untuk membukanya.
 - Penanganan error terpusat: bila pesan error mengandung teks penjaga, tampilkan modal berbahasa manusia, bukan pesan Postgres mentah.
 
 **Permission baru:** tambahkan `reports_stockopname_perform` di `MOCK_DB.custom_roles` (`js/app.js`) dan daftar permission Settings (`js/settings.js:392`). Memulai opname membekukan pekerjaan semua orang — itu tidak boleh bisa dilakukan siapa saja yang kebetulan bisa melihat tab ini. Berikan ke Developer, Admin, dan Production Leader.
@@ -307,9 +356,13 @@ Sebelum tombol final, tampilkan layar tinjauan:
 
 Ini bukan gerbang persetujuan (sesuai keputusan) — hanya memastikan yang menekan tombol melihat dampaknya. `confirm()` bawaan browser di `js/app.js:3697` diganti modal aplikasi.
 
-Urutan posting: `counting` → `posting` → tulis semua penyesuaian → `posted` + `posted_at`. Bila ada penyesuaian gagal di tengah, status **tetap** `posting` dan ditampilkan sebagai perlu perhatian — jangan diam-diam ditandai selesai.
+Urutan posting: `counting` → `posting` → tulis penyesuaian satu per satu (tandai `posted_at` di tiap baris yang berhasil) → `posted` + `stock_takes.posted_at`.
 
-**Verifikasi:** opname dengan campuran item cocok, selisih, dirinci, dan belum dihitung. Hanya yang `counted = true` **dan** selisih yang boleh mengubah stok.
+**Bila ada penyesuaian gagal di tengah:** kembalikan status ke **`counting`** — bukan dibiarkan di `posting`. Status aman adalah status terkunci. Baris yang sudah berhasil tetap memegang `posted_at`-nya, sehingga posting ulang melanjutkan dari titik terhenti tanpa menulis dua kali. Alasan lengkapnya di §5.2.
+
+**Verifikasi:**
+1. Opname dengan campuran item cocok, selisih, dirinci, dan belum dihitung. Hanya yang `counted = true` **dan** selisih yang boleh mengubah stok.
+2. **Uji posting gagal**: paksa satu penyesuaian gagal di tengah (misal dengan lot id yang tidak ada), pastikan status kembali `counting`, stok tetap terkunci, dan posting ulang tidak menggandakan penyesuaian yang sudah tersimpan. Jalankan kueri invarian ledger sesudahnya.
 
 ---
 
