@@ -487,8 +487,33 @@ CREATE TABLE IF NOT EXISTS public.stock_takes (
     notes TEXT,
     total_items INTEGER DEFAULT 0,            -- number of counted line items
     variance_items INTEGER DEFAULT 0,         -- how many of those had a non-zero variance
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Stock Opname Phase 0 (STOCK_OPNAME_PLAN.md, applied to production
+    -- 2026-08-23): lifecycle columns. DEFAULT 'posted' is deliberate — every
+    -- pre-migration row already finished via the old direct-adjust path, so
+    -- it must never look like an in-progress take once Phase 2's freeze
+    -- trigger reads this column. Valid values: 'counting' | 'posting' |
+    -- 'posted' | 'cancelled' (validated app-side, not a CHECK constraint,
+    -- so new values don't need another migration).
+    status TEXT NOT NULL DEFAULT 'posted',
+    started_at    TIMESTAMPTZ,
+    started_by    TEXT,
+    posted_at     TIMESTAMPTZ,
+    counted_items INTEGER DEFAULT 0,
+    skipped_items INTEGER DEFAULT 0
 );
+
+-- At most one active (status IN ('counting','posting')) stock take at a
+-- time — a unique index on the constant (1) with a partial predicate is the
+-- standard way to enforce "at most one row matches this condition" in
+-- Postgres. Without it, two people could open a stock take simultaneously
+-- and clobber each other (STOCK_OPNAME_PLAN.md Phase 0). Verified live
+-- 2026-08-23: a second 'counting' row is rejected with
+-- "duplicate key value violates unique constraint", and a fresh row can be
+-- created again immediately after the first is cancelled.
+CREATE UNIQUE INDEX IF NOT EXISTS stock_takes_one_active_uniq
+ON public.stock_takes ((1))
+WHERE status IN ('counting', 'posting');
 
 -- 22. Stock take line items — one row per counted unit (audit snapshot) — added 2026-07-06
 --     system_qty is what the app believed at count time; actual_qty is the physical
@@ -504,8 +529,43 @@ CREATE TABLE IF NOT EXISTS public.stock_take_items (
     system_qty NUMERIC DEFAULT 0,
     actual_qty NUMERIC DEFAULT 0,
     variance NUMERIC DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Stock Opname Phase 0 (applied to production 2026-08-23): staged-save
+    -- + lot traceability for the paper-count workflow.
+    -- counted distinguishes "counted, matched system" from "never touched" —
+    -- both used to collapse into variance = 0 when finalize rewrote a blank
+    -- input as system_qty (js/app.js:3681, STOCK_OPNAME_PLAN.md cacat #1).
+    counted       BOOLEAN NOT NULL DEFAULT FALSE,
+    counted_at    TIMESTAMPTZ,
+    counted_by    TEXT,
+    -- posted_at makes posting safely retryable: a row whose adjustment
+    -- already landed is skipped if posting is retried after a mid-way
+    -- failure (STOCK_OPNAME_PLAN.md §5.2) — without this, a retry would
+    -- double-write the adjustment.
+    posted_at     TIMESTAMPTZ,
+    is_found_item BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Points from a Stage 2 (packed coffee) per-lot row back to its Stage 1
+    -- group row; group rows themselves have parent_item_id IS NULL.
+    -- Deliberately NOT a self-referencing foreign key (same reasoning as
+    -- packed_stock_movements.packed_coffee_lot_id) so deleting a row never
+    -- cascades.
+    parent_item_id INTEGER,
+    -- ref_table + ref_id point at the source row: 'packed_coffee_lots' for
+    -- a Stage 2 lot row, 'green_coffee', or 'bulk_roasted_coffee'.
+    ref_table     TEXT,
+    ref_id        INTEGER,
+    -- Snapshots, not lookups — an old count sheet must stay readable even
+    -- after the source lot/code is long gone, same pattern
+    -- packed_stock_movements uses for coffee_name/lot_code/etc.
+    coffee_code   TEXT,
+    strip_code    TEXT,
+    lot_code      TEXT,
+    machine_name  TEXT,
+    bag_size_g    NUMERIC
 );
+
+CREATE INDEX IF NOT EXISTS stock_take_items_parent_idx
+ON public.stock_take_items (parent_item_id);
 
 -- 23. Green bean lots (shadow schema for V2 lot tracking)
 CREATE TABLE IF NOT EXISTS public.green_coffee_lots (
