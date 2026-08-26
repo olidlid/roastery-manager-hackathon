@@ -1,6 +1,6 @@
 # Stock Opname Bulanan — Rencana Pengembangan
 
-**Status:** Rancangan disetujui, belum dikerjakan
+**Status:** Fase 0 selesai (`b0d2316`, diverifikasi live dengan baris uji — lihat catatan di bawah Fase 0). Menunggu persetujuan lanjut ke Fase 1.
 **Tanggal:** 2026-08-23
 **Tujuan:** Mengubah fitur Stock Opname dari "form penyesuaian stok" menjadi proses penghitungan fisik bulanan yang hasilnya bisa dipercaya, tanpa menambah beban tim di lapangan.
 
@@ -172,7 +172,7 @@ Ini membatalkan opname tanpa menyentuh stok sama sekali. Aman dijalankan kapan p
 
 ---
 
-## Fase 0 — Fondasi skema
+## Fase 0 — Fondasi skema — SELESAI (`b0d2316`)
 
 **File baru:** `database/v2_stock_opname_migration.sql`
 
@@ -230,6 +230,15 @@ ALTER TABLE public.stock_take_items
 **Baris lama:** `counted` akan bernilai `FALSE` untuk semua data historis, padahal dulu tersimpan sebagai sudah-dihitung. Ini **tidak** di-backfill — data lama memang tidak bisa dibedakan mana yang benar-benar dihitung dan mana yang kolom kosong. Laporan harus memperlakukan opname sebelum tanggal migrasi sebagai granularitas lama.
 
 **Verifikasi:** jalankan migrasi; `SELECT status, COUNT(*) FROM stock_takes GROUP BY status` harus menunjukkan semua baris lama `posted`; mencoba membuat dua baris `counting` harus gagal.
+
+**Diverifikasi live 2026-08-23** (Supabase MCP tersambung, migrasi diterapkan lewat `mcp__supabase__apply_migration`, data uji berawalan "ZZ TEST"):
+- Sebelum migrasi: 1 baris `stock_takes` lama, tanpa kolom `status`.
+- Sesudah migrasi: baris itu terbaca `status = 'posted'` — sesuai harapan `DEFAULT 'posted'`.
+- Insert baris `counting` pertama berhasil. Insert baris `counting` kedua **ditolak**: `duplicate key value violates unique constraint "stock_takes_one_active_uniq"`. Insert baris `posting` kedua saat yang pertama masih `counting` **juga ditolak** — predikat index memang mencakup keduanya.
+- Setelah baris pertama diubah ke `cancelled`, baris `counting` baru berhasil dibuat — membuktikan index hanya mengunci selama ada baris aktif, bukan permanen.
+- Kolom baru `stock_take_items` (`counted`, `coffee_code`, `strip_code`, `parent_item_id`) ditulis dan dibaca benar; baris "lot" dengan `parent_item_id` menunjuk baris "grup" tersimpan dan terbaca sesuai desain §Fase 0's `stock_take_items`.
+- Seluruh data uji dibersihkan; dibuktikan ulang: `SELECT id, status FROM stock_takes WHERE status IN ('counting','posting')` kosong, dan tidak ada sisa baris `ZZ TEST` di kedua tabel.
+- `node test.js` lulus tanpa error sintaks (tidak ada JS yang diubah di fase ini — migrasi murni additive).
 
 ---
 
