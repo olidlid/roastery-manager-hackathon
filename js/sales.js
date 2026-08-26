@@ -100,8 +100,8 @@ async function openCustomerModal(editId = null) {
                 <div class="form-group flex-1" >
                     <label class="form-label">Type</label>
                     <select id="m-cust-type" class="form-control" ${editId ? 'disabled' : ''} required>
-                        <option value="Wholesale" ${existing?.type === 'Wholesale' ? 'selected' : ''}>🏭 Wholesale</option>
-                        <option value="Retail" ${existing?.type === 'Retail' || !existing ? 'selected' : ''}>☕ Retail</option>
+                        <option value="Wholesale" ${existing?.type === 'Wholesale' || !existing ? 'selected' : ''}>🏭 Wholesale</option>
+                        <option value="Retail" ${existing?.type === 'Retail' ? 'selected' : ''}>☕ Retail</option>
                     </select>
                 </div>
             </div>
