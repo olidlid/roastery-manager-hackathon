@@ -282,7 +282,7 @@ Permission `reports_stockopname_perform` belum ada (scope Fase 2) — start/canc
 
 ---
 
-## Fase 2 — Pembekuan transaksi (dipaksa database)
+## Fase 2 — Pembekuan transaksi (dipaksa database) — SELESAI (`d516ecb`)
 
 **File baru:** `database/v2_stock_opname_freeze_migration.sql`
 
@@ -321,6 +321,22 @@ Dipasang `BEFORE INSERT OR UPDATE OR DELETE` pada tiga tabel: `packed_coffee_lot
 2. Posting opname → operasi yang sama harus berhasil lagi.
 3. Batalkan opname → juga harus membuka kunci.
 4. Jalankan kueri invarian ledger (`STOCK_LEDGER_PLAN.md` Lampiran): 0 ketidakcocokan.
+
+**Diverifikasi live 2026-08-26.** Urutan pengujian sengaja dibalik dari daftar di atas: **non-regression dulu**, sebelum sisi positifnya — fase ini bisa mengunci seluruh transaksi stok produksi kalau logic-nya salah, jadi hal pertama yang harus dibuktikan adalah operasi *normal* tidak ikut terkunci begitu trigger dipasang.
+
+- **Urutan trigger dikonfirmasi lebih dulu**, bukan diasumsikan — `information_schema.triggers` dicek sebelum migrasi ditulis: `packed_coffee_lots` dan `bulk_roasted_coffee` masing-masing sudah punya satu trigger `BEFORE` (`trg_log_*`); `green_coffee_lots` belum punya trigger `BEFORE` sama sekali. Nama `trg_aa_stock_take_freeze` menjamin urutan eksekusi yang benar di ketiganya.
+- **Non-regression** (dijalankan pertama, sebelum ada opname aktif): INSERT baris baru + UPDATE lewat RPC asli (`consume_packed_lot`, `consume_green_coffee_lot`, `consume_bulk_lot`) + DELETE — pada ketiga tabel — semua **berhasil normal**. Ini yang paling penting dibuktikan duluan.
+- **Sisi positif**: dibuat satu baris `stock_takes` uji berstatus `counting`, lalu INSERT pada ketiga tabel dicoba — **ketiganya ditolak** dengan pesan persis `"Stock opname sedang berjalan — perubahan stok dikunci sampai opname diposting atau dibatalkan."`
+- **Kunci terbuka lagi**: opname uji diubah ke `cancelled`, INSERT yang sama diulang → **berhasil**. Semua data uji (baris `stock_takes`, baris lot uji, parent `packed_coffee` uji) dibersihkan segera setelah setiap sub-pengujian — tidak dibiarkan menumpuk sampai akhir, mengingat risikonya.
+- Kueri invarian ledger packed dijalankan sesudahnya: **0 ketidakcocokan**.
+
+**Spanduk global** — diverifikasi bekerja di halaman **lain** (Dashboard, bukan halaman Stock Opname itu sendiri), membuktikan cakupan globalnya benar, bukan kebetulan tersambung ke satu section: teks berisi tanggal + nama pembuka opname persis sesuai templat, dan tautan **"Open Stock Opname"** terbukti menavigasi ke section Reports **dan** langsung mengaktifkan tab Stock Opname dalam satu klik — yang kemudian otomatis me-resume opname yang sedang berjalan (memakai ulang `resumeStockTake()` dari Fase 1).
+
+**Penanganan error terpusat** — dibuktikan dengan memanggil `window.saveData('green_coffee_lots', {...})` sungguhan (fungsi global aplikasi yang sama dipakai form manapun, bukan SQL mentah) selagi opname `counting` aktif: `error` yang dikembalikan tetap objek Postgres asli (return value `saveData` **tidak berubah** — kompatibel dengan semua pemanggil lama), **dan** sebuah modal `showWarningModal` muncul otomatis berisi pesan manusiawi yang sama persis, bukan kode error Postgres mentah. Tidak ada baris yang tersimpan (trigger `BEFORE` menolak sebelum `INSERT` benar-benar terjadi) — dikonfirmasi lewat query, 0 baris nyasar.
+
+> **Temuan penting yang mengubah cara Fase 2 diselesaikan.** Setelah kode gating tombol di-deploy, tombol Cancel/Finalize/New ternyata **disabled untuk semua orang**, termasuk role Developer — bukan bug logic, tapi kesalahpahaman scope: `MOCK_DB.custom_roles` di `js/app.js` **hanya dipakai sebagai seed saat tabel `custom_roles` Supabase masih kosong** (`initMockDatabases()`/first-sync). Menambahkan key permission baru ke objek JS itu **tidak** menyuntikkannya ke baris `custom_roles` yang sudah ada di database produksi — role Developer/Admin/Production Leader produksi masih memegang permission set lama sampai ada yang benar-benar meng-`UPDATE` baris JSONB-nya. Diperbaiki dengan `UPDATE custom_roles SET permissions = permissions || '{"reports_stockopname_perform": true}' WHERE name IN (...)` pada ketiga role itu — **hanya ketiga nama yang eksplisit disebut plan**, bukan role kustom lain yang sudah dibuat user sendiri lewat Settings (mis. `admin2`, `Sales Manager`, `Sale 101`) — pemberian akses ke role kustom itu keputusan pengguna, bukan tebakan yang pantas diambil sepihak. Gating tombol lalu diverifikasi ulang di **kedua arah**: disabled saat permission `false` (kondisi awal), enabled saat `true` (dibuktikan dengan override sementara *hanya* di `localStorage` cache milik sesi uji sendiri — bukan mengubah role produksi manapun — lalu dikembalikan setelah terbukti).
+
+**Belum diverifikasi:** jendela `posting` yang disebut sebagai "kompromi yang disadari" di atas — baru relevan setelah Fase 6 (di mana `finalizeStockTake()` benar-benar transit lewat status `posting`) diimplementasikan penuh; saat ini `finalizeStockTake()` langsung ke `posted` tanpa transit `posting` (lihat catatan Fase 1), jadi jendela ini belum pernah benar-benar terbuka di kode yang berjalan sekarang.
 
 ---
 
