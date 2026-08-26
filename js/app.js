@@ -3829,20 +3829,20 @@ function formatVarianceText(variance, unit) {
     return variance > 0 ? `+${vDisplay}` : `${vDisplay}`;
 }
 
-// Stock Opname Fase 3: packed coffee is counted in whole bags, so an exact
-// match is the only thing that counts as "no variance". Green bean AND
-// bulk roasted coffee are both counted in kg — bulk_available is a decimal
-// column exactly like green_coffee.stock_kg, not a whole-unit count — so a
-// hand-weighed physical count will essentially never land on the system
-// figure to the last decimal. Both therefore get the same tolerance, for
-// the same reason. Values confirmed with user 2026-08-26 — see
-// STOCK_OPNAME_PLAN.md Fase 3.
+// Stock Opname Fase 3: green bean is counted in kg by hand-weighing, so it
+// will essentially never land on the system figure to the last decimal —
+// it gets a tolerance. Packed (whole bags) and bulk roasted coffee both
+// require an exact match: packed because it's a whole-unit count, and bulk
+// by the user's explicit choice (2026-08-26) — bulk_available IS also a
+// decimal kg column technically, same shape as green bean, but the user
+// wants bulk held to exact-match anyway rather than extending the
+// tolerance there. See STOCK_OPNAME_PLAN.md Fase 3 for this decision.
 const STOCKOPNAME_KG_TOLERANCE_PCT = 0.01;
 const STOCKOPNAME_KG_TOLERANCE_MIN_KG = 0.1;
 
 function stockOpnameIsMatch(group, actual) {
     const variance = actual - group.systemQty;
-    if (group.unit !== 'kg') return Math.abs(variance) < 1e-9;
+    if (group.category !== 'greenbean') return Math.abs(variance) < 1e-9;
     const tolerance = Math.max(STOCKOPNAME_KG_TOLERANCE_MIN_KG, group.systemQty * STOCKOPNAME_KG_TOLERANCE_PCT);
     return Math.abs(variance) <= tolerance;
 }
@@ -3860,7 +3860,7 @@ function stockOpnameStatusHtml(g, actualQty) {
         return `<span style="color:var(--success); font-weight:700;">✓ ${label}</span>`;
     }
     const variance = actualQty - g.systemQty;
-    const label = window.t ? (window.t('col_variance') || 'Variance') : 'Variance';
+    const label = window.t ? (window.t('col_variance') || 'Difference') : 'Difference';
     const vDisplay = formatVarianceText(variance, g.unit);
     const color = variance > 0 ? 'var(--success)' : 'var(--danger)';
     return `<span style="color:${color}; font-weight:700;">${label} ${vDisplay}</span>`;
@@ -4105,7 +4105,7 @@ async function finalizeStockTake() {
     const varianceCount = lines.filter(l => !l.matched).length;
 
     const confirmMsg = (window.t ? (window.t('confirm_stockopname_finalize') || 'Finalize this stock take? System stock will be adjusted to match your counts.') : 'Finalize this stock take? System stock will be adjusted to match your counts.')
-        + `\n\nCounted: ${countedCount}  |  Not counted: ${skippedCount}  |  Variances: ${varianceCount}`;
+        + `\n\nCounted: ${countedCount}  |  Not counted: ${skippedCount}  |  Differences: ${varianceCount}`;
     if (!confirm(confirmMsg)) return;
 
     // The stock_takes row already exists (created 'counting' by
@@ -4210,7 +4210,7 @@ async function viewStockTake(takeId) {
                         <th style="text-align:left; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_item') || 'Item') : 'Item'}</th>
                         <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_system_qty') || 'System') : 'System'}</th>
                         <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_actual_qty') || 'Actual') : 'Actual'}</th>
-                        <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_variance') || 'Variance') : 'Variance'}</th>
+                        <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_variance') || 'Difference') : 'Difference'}</th>
                     </tr>
                 </thead>
                 <tbody>${rowsHtml || `<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--text-muted);">No line items.</td></tr>`}</tbody>
