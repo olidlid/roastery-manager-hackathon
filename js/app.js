@@ -3353,8 +3353,18 @@ async function loadCustomerReport(startDate, endDate) {
 // ============================================================
 
 // Holds the groups being counted during an in-progress stock take so
-// finalizeStockTake() can adjust the underlying source rows.
+// finalizeStockTake() can adjust the underlying source rows. Each group
+// carries an added .itemId (its stock_take_items row), .actualQty and
+// .counted once a stock take is active (Stock Opname Phase 1) — these are
+// NOT present on the plain objects buildStockTakeGroups() returns.
 let currentStockTakeGroups = null;
+// The stock_takes.id currently in 'counting' status, or null. Set by
+// startStockTake()/resumeStockTake(), cleared by cancel/finalize.
+let currentStockTakeId = null;
+// { date, by } when the current sheet was resumed from an already-open
+// take (rather than freshly started this session) — shown in the progress
+// note so a returning counter knows they're picking up someone else's work.
+let stockTakeResumeInfo = null;
 
 function resolvePackedCoffeeName(item, batches, greenbeans, recipes) {
     let name = item.custom_coffee_name || 'Roasted Coffee';
@@ -3470,6 +3480,19 @@ async function loadStockOpnameReport(startDate, endDate) {
     const printBtn = document.getElementById('btn-stockopname-print');
     if (printBtn) printBtn.onclick = printStockCountForm;
 
+    // Stock Opname Phase 1: an opname already 'counting' (or stuck
+    // 'posting' — Phase 6 will handle that transition; for now it's
+    // treated the same as counting so the sheet is never silently
+    // abandoned) takes over this view instead of showing history. This is
+    // what makes the count sheet resumable after a refresh (cacat #4) —
+    // the sheet lives in stock_take_items now, not only in a JS variable.
+    const { data: openCheck } = await fetchData('stock_takes');
+    const openTake = (openCheck || []).find(t => t.status === 'counting' || t.status === 'posting');
+    if (openTake) {
+        await resumeStockTake(openTake);
+        return;
+    }
+
     // Default to history view.
     const sheet = document.getElementById('stockopname-sheet');
     const history = document.getElementById('stockopname-history');
@@ -3506,11 +3529,68 @@ async function loadStockOpnameReport(startDate, endDate) {
     });
 }
 
+// Starts a brand new stock take, OR — if one is already open — resumes it
+// instead. Two people clicking "New Stock Take" close together must not
+// both succeed: stock_takes_one_active_uniq (Phase 0) rejects a second
+// 'counting'/'posting' row, and the check below avoids even attempting
+// that in the common case.
 async function startStockTake() {
     const tbody = document.getElementById('stockopname-count-body');
     if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">Loading…</td></tr>`;
 
+    const { data: existingTakes } = await fetchData('stock_takes');
+    const openTake = (existingTakes || []).find(t => t.status === 'counting' || t.status === 'posting');
+    if (openTake) {
+        await resumeStockTake(openTake);
+        return;
+    }
+
     const groups = await buildStockTakeGroups();
+
+    const { data: newTake, error: startErr } = await saveData('stock_takes', {
+        take_date: new Date().toISOString().split('T')[0],
+        status: 'counting',
+        started_at: new Date().toISOString(),
+        started_by: (currentUser && currentUser.name) || null,
+        performed_by: (currentUser && currentUser.name) || null
+    });
+    if (startErr || !newTake || !newTake.id) {
+        // Someone else may have started one in the instant between the
+        // check above and this insert — the unique index would reject
+        // this insert with exactly that race. Recover by loading whatever
+        // is now open instead of leaving the user stuck on an error.
+        const { data: refetched } = await fetchData('stock_takes');
+        const stillOpen = (refetched || []).find(t => t.status === 'counting' || t.status === 'posting');
+        if (stillOpen) { await resumeStockTake(stillOpen); return; }
+        alert('Failed to start stock take: ' + (startErr ? startErr.message : 'no id returned'));
+        if (tbody) tbody.innerHTML = '';
+        return;
+    }
+
+    currentStockTakeId = newTake.id;
+    stockTakeResumeInfo = null;
+
+    // One stock_take_items row per group, up front, uncounted. This is
+    // what makes the sheet resumable after a refresh (cacat #4) — the
+    // count now lives in the database from the moment the take opens, not
+    // only in this JS variable.
+    for (const g of groups) {
+        const { data: itemRow, error: itemErr } = await saveData('stock_take_items', {
+            stock_take_id: newTake.id,
+            category: g.category,
+            item_name: g.label,
+            unit: g.unit,
+            system_qty: g.systemQty,
+            actual_qty: null,
+            variance: null,
+            counted: false
+        });
+        if (itemErr) { console.error('Failed to create stock_take_items row for', g.label, itemErr); continue; }
+        g.itemId = itemRow ? itemRow.id : null;
+        g.actualQty = null;
+        g.counted = false;
+    }
+
     currentStockTakeGroups = groups;
 
     const sheet = document.getElementById('stockopname-sheet');
@@ -3521,46 +3601,194 @@ async function startStockTake() {
     const notesInput = document.getElementById('stockopname-notes');
     if (notesInput) notesInput.value = '';
 
-    if (tbody) {
-        tbody.innerHTML = '';
-        groups.forEach((g, i) => {
-            const sysDisplay = g.unit === 'kg' ? g.systemQty.toFixed(1) : g.systemQty;
-            const step = g.unit === 'kg' ? '0.1' : '1';
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td><span style="font-size:0.72rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:2px 7px; border-radius:6px;">${stockCategoryLabel(g.category)}</span></td>
-                <td><strong>${g.label}</strong></td>
-                <td class="text-center">${sysDisplay} ${g.unit}</td>
-                <td class="text-center"><input type="number" class="form-control stockopname-actual-input" data-group-index="${i}" value="${g.systemQty}" step="${step}" min="0" style="width:110px; text-align:center; margin:0 auto;"></td>
-                <td  class="stockopname-variance-cell text-center" data-group-index="${i}">0</td>
-            `;
-            tbody.appendChild(tr);
-        });
-
-        tbody.querySelectorAll('.stockopname-actual-input').forEach(input => {
-            input.addEventListener('input', () => {
-                const idx = parseInt(input.getAttribute('data-group-index'));
-                const g = currentStockTakeGroups[idx];
-                const actual = parseFloat(input.value);
-                const cell = tbody.querySelector(`.stockopname-variance-cell[data-group-index="${idx}"]`);
-                if (!cell) return;
-                if (isNaN(actual)) { cell.textContent = '-'; cell.style.color = 'var(--text-muted)'; return; }
-                const variance = actual - g.systemQty;
-                const vDisplay = g.unit === 'kg' ? variance.toFixed(1) : variance;
-                cell.textContent = variance > 0 ? `+${vDisplay}` : `${vDisplay}`;
-                cell.style.color = variance === 0 ? 'var(--text-muted)' : (variance > 0 ? 'var(--success)' : 'var(--danger)');
-                cell.style.fontWeight = variance === 0 ? '400' : '700';
-            });
-        });
-    }
+    renderStockTakeSheet();
 }
 
-function cancelStockTake() {
+// Loads an already-open stock take (status 'counting'/'posting') from
+// stock_take_items instead of starting a new one — called both when the
+// Stock Opname tab is opened while one is running, and when
+// startStockTake() finds one already open.
+async function resumeStockTake(take) {
+    currentStockTakeId = take.id;
+
+    const [{ data: items }, groups] = await Promise.all([
+        fetchData('stock_take_items'),
+        buildStockTakeGroups()
+    ]);
+    const myItems = (items || []).filter(it => it.stock_take_id === take.id);
+
+    // Match each saved item row back to a freshly-built group by
+    // (category, item_name) — the same identity printStockCountForm and
+    // the pre-Phase-1 finalize already treated a group as having. Live
+    // data can drift between when the take was opened and now (Phase 2's
+    // freeze isn't wired up until the next phase), so a saved row that no
+    // longer matches any current group is kept as a read-only "stale" row
+    // rather than silently dropped — it still needs to show up so the
+    // sheet's total isn't missing rows, but finalize can't post an
+    // adjustment for it since its source rows are gone (see
+    // finalizeStockTake's stale-row handling below).
+    const byKey = new Map(groups.map(g => [`${g.category}|${g.label}`, g]));
+    const resumedGroups = [];
+    myItems.forEach(item => {
+        const key = `${item.category}|${item.item_name}`;
+        const g = byKey.get(key);
+        const actualQty = (item.actual_qty === null || item.actual_qty === undefined) ? null : parseFloat(item.actual_qty);
+        if (g) {
+            g.itemId = item.id;
+            g.actualQty = actualQty;
+            g.counted = !!item.counted;
+            resumedGroups.push(g);
+        } else {
+            resumedGroups.push({
+                category: item.category,
+                label: item.item_name,
+                unit: item.unit,
+                systemQty: parseFloat(item.system_qty) || 0,
+                rows: [],
+                stale: true,
+                itemId: item.id,
+                actualQty,
+                counted: !!item.counted
+            });
+        }
+    });
+
+    currentStockTakeGroups = resumedGroups;
+    stockTakeResumeInfo = { date: (take.started_at ? take.started_at.split('T')[0] : (take.take_date || '')), by: take.started_by || take.performed_by || '-' };
+
+    const sheet = document.getElementById('stockopname-sheet');
+    const history = document.getElementById('stockopname-history');
+    if (sheet) sheet.classList.remove('hidden');
+    if (history) history.classList.add('hidden');
+
+    const notesInput = document.getElementById('stockopname-notes');
+    if (notesInput) notesInput.value = take.notes || '';
+
+    renderStockTakeSheet();
+}
+
+// Renders (or re-renders) the count sheet body from currentStockTakeGroups
+// — used by both a fresh start and a resume, so the two paths can't drift
+// apart in how a row looks.
+function renderStockTakeSheet() {
+    const tbody = document.getElementById('stockopname-count-body');
+    if (!tbody || !currentStockTakeGroups) return;
+
+    tbody.innerHTML = '';
+    currentStockTakeGroups.forEach((g, i) => {
+        const sysDisplay = g.unit === 'kg' ? g.systemQty.toFixed(1) : g.systemQty;
+        const step = g.unit === 'kg' ? '0.1' : '1';
+        const hasValue = g.actualQty !== null && g.actualQty !== undefined;
+        const valueAttr = hasValue ? `value="${g.actualQty}"` : '';
+        const varianceDisplay = hasValue ? formatVarianceText(g.actualQty - g.systemQty, g.unit) : '—';
+        const varianceColor = !hasValue ? 'var(--text-muted)' : ((g.actualQty - g.systemQty) === 0 ? 'var(--text-muted)' : ((g.actualQty - g.systemQty) > 0 ? 'var(--success)' : 'var(--danger)'));
+        const staleTag = g.stale ? ` <span style="font-size:0.65rem; color:var(--warning);" title="${window.t ? (window.t('stockopname_stale_row') || 'not found — item changed since this take started') : 'not found — item changed since this take started'}">⚠</span>` : '';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><span style="font-size:0.72rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:2px 7px; border-radius:6px;">${stockCategoryLabel(g.category)}</span></td>
+            <td><strong>${g.label}</strong>${staleTag}</td>
+            <td class="text-center">${sysDisplay} ${g.unit}</td>
+            <td class="text-center"><input type="number" class="form-control stockopname-actual-input" data-group-index="${i}" ${valueAttr} step="${step}" min="0" placeholder="—" style="width:110px; text-align:center; margin:0 auto;"></td>
+            <td class="stockopname-variance-cell text-center" data-group-index="${i}" style="color:${varianceColor}; font-weight:${hasValue && (g.actualQty - g.systemQty) !== 0 ? '700' : '400'};">${varianceDisplay}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    tbody.querySelectorAll('.stockopname-actual-input').forEach(input => {
+        input.addEventListener('input', () => updateVarianceCell(input));
+        input.addEventListener('change', () => saveCountedValue(input));
+    });
+
+    updateProgressNote();
+}
+
+function formatVarianceText(variance, unit) {
+    const vDisplay = unit === 'kg' ? variance.toFixed(1) : variance;
+    return variance > 0 ? `+${vDisplay}` : `${vDisplay}`;
+}
+
+// Live UI feedback as the user types — does NOT save. Persistence happens
+// on 'change' (blur/Enter), see saveCountedValue.
+function updateVarianceCell(input) {
+    const idx = parseInt(input.getAttribute('data-group-index'));
+    const g = currentStockTakeGroups[idx];
+    const tbody = document.getElementById('stockopname-count-body');
+    const cell = tbody ? tbody.querySelector(`.stockopname-variance-cell[data-group-index="${idx}"]`) : null;
+    if (!g || !cell) return;
+    const raw = input.value;
+    if (raw === '') { cell.textContent = '—'; cell.style.color = 'var(--text-muted)'; cell.style.fontWeight = '400'; return; }
+    const actual = parseFloat(raw);
+    if (isNaN(actual)) { cell.textContent = '—'; cell.style.color = 'var(--text-muted)'; cell.style.fontWeight = '400'; return; }
+    const variance = actual - g.systemQty;
+    cell.textContent = formatVarianceText(variance, g.unit);
+    cell.style.color = variance === 0 ? 'var(--text-muted)' : (variance > 0 ? 'var(--success)' : 'var(--danger)');
+    cell.style.fontWeight = variance === 0 ? '400' : '700';
+}
+
+// Stock Opname Phase 1 (cacat #1 + #4): every filled-in count is saved to
+// its stock_take_items row immediately, not just held in the DOM — this is
+// the staged save that survives a refresh, and blank stays counted=false
+// rather than being coerced into "matches system" the way the old
+// finalize-time fallback did.
+async function saveCountedValue(input) {
+    const idx = parseInt(input.getAttribute('data-group-index'));
+    const g = currentStockTakeGroups ? currentStockTakeGroups[idx] : null;
+    if (!g || !g.itemId) return;
+
+    const raw = input.value;
+    const isEmpty = raw === '';
+    const actual = isEmpty ? null : parseFloat(raw);
+    if (!isEmpty && isNaN(actual)) return;
+
+    g.actualQty = actual;
+    g.counted = !isEmpty;
+
+    const { error } = await saveData('stock_take_items', {
+        id: g.itemId,
+        actual_qty: actual,
+        variance: isEmpty ? null : (actual - g.systemQty),
+        counted: !isEmpty,
+        counted_at: isEmpty ? null : new Date().toISOString(),
+        counted_by: isEmpty ? null : ((currentUser && currentUser.name) || null)
+    });
+    if (error) console.error('Failed to save counted value for', g.label, error);
+
+    updateProgressNote();
+}
+
+function updateProgressNote() {
+    const el = document.getElementById('stockopname-progress-note');
+    if (!el || !currentStockTakeGroups) return;
+    const counted = currentStockTakeGroups.filter(g => g.counted).length;
+    const total = currentStockTakeGroups.length;
+    el.classList.remove('hidden');
+    const countTemplate = window.t ? (window.t('stockopname_progress') || '{counted} of {total} items counted') : '{counted} of {total} items counted';
+    let text = countTemplate.replace('{counted}', counted).replace('{total}', total);
+    if (stockTakeResumeInfo) {
+        const resumeTemplate = window.t ? (window.t('stockopname_resuming') || 'Resuming stock take started {date} by {user}.') : 'Resuming stock take started {date} by {user}.';
+        text = resumeTemplate.replace('{date}', stockTakeResumeInfo.date).replace('{user}', stockTakeResumeInfo.by) + ' ' + text;
+    }
+    el.textContent = text;
+}
+
+// Cancelling marks the row 'cancelled' (STOCK_OPNAME_PLAN.md §5.1) — it is
+// never deleted, so an abandoned attempt stays visible in history with who
+// opened it. Async because it now has to persist the status change; the
+// onclick assignment in loadStockOpnameReport works the same way
+// finalizeStockTake's already did.
+async function cancelStockTake() {
+    if (currentStockTakeId) {
+        const { error } = await saveData('stock_takes', { id: currentStockTakeId, status: 'cancelled' });
+        if (error) { console.error('Failed to cancel stock take:', error); alert('Failed to cancel: ' + error.message); return; }
+    }
     currentStockTakeGroups = null;
+    currentStockTakeId = null;
+    stockTakeResumeInfo = null;
     const sheet = document.getElementById('stockopname-sheet');
     const history = document.getElementById('stockopname-history');
     if (sheet) sheet.classList.add('hidden');
     if (history) history.classList.remove('hidden');
+    await loadStockOpnameReport('', '');
 }
 
 // Applies a stock-take count delta to each category's real source of truth
@@ -3668,63 +3896,94 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
 }
 
 async function finalizeStockTake() {
-    if (!currentStockTakeGroups) return;
+    if (!currentStockTakeGroups || !currentStockTakeId) return;
     const tbody = document.getElementById('stockopname-count-body');
     if (!tbody) return;
 
-    // Read actual counts.
+    // Stock Opname Phase 1 cacat #1 fix: a blank input is no longer
+    // coerced into "matches system" — it is skipped entirely, both from
+    // the adjustment list and from being marked counted.
     const lines = [];
     const adjustments = [];
+    const itemUpdates = [];
     currentStockTakeGroups.forEach((g, i) => {
         const input = tbody.querySelector(`.stockopname-actual-input[data-group-index="${i}"]`);
-        let actual = input ? parseFloat(input.value) : NaN;
-        if (isNaN(actual)) actual = g.systemQty; // blank = unchanged
+        const raw = input ? input.value : '';
+        if (raw === '') return;
+        const actual = parseFloat(raw);
+        if (isNaN(actual)) return;
+
         const variance = actual - g.systemQty;
-        lines.push({
-            category: g.category,
-            item_name: g.label,
-            unit: g.unit,
-            system_qty: g.systemQty,
-            actual_qty: actual,
-            variance: variance
-        });
-        if (Math.abs(variance) > 1e-9) adjustments.push({ group: g, actual });
+        lines.push({ category: g.category, item_name: g.label, variance });
+        if (g.itemId) {
+            itemUpdates.push({
+                id: g.itemId, actual_qty: actual, variance, counted: true,
+                counted_at: new Date().toISOString(), counted_by: (currentUser && currentUser.name) || null
+            });
+        }
+        if (Math.abs(variance) > 1e-9) {
+            if (g.stale) {
+                // This item's stock_take_items row no longer matches any
+                // current group (its source rows changed or vanished since
+                // the take was opened — resumeStockTake's stale-row path).
+                // The count itself is still saved above so it isn't lost,
+                // but there is nothing safe to adjust it against.
+                console.warn(`Stock opname: skipping stock adjustment for stale item "${g.label}" — its source rows no longer match. Only the count was recorded.`);
+            } else {
+                adjustments.push({ group: g, actual });
+            }
+        }
     });
 
+    const countedCount = lines.length;
+    const skippedCount = currentStockTakeGroups.length - countedCount;
     const varianceCount = lines.filter(l => Math.abs(l.variance) > 1e-9).length;
+
     const confirmMsg = (window.t ? (window.t('confirm_stockopname_finalize') || 'Finalize this stock take? System stock will be adjusted to match your counts.') : 'Finalize this stock take? System stock will be adjusted to match your counts.')
-        + `\n\nItems: ${lines.length}  |  Variances: ${varianceCount}`;
+        + `\n\nCounted: ${countedCount}  |  Not counted: ${skippedCount}  |  Variances: ${varianceCount}`;
     if (!confirm(confirmMsg)) return;
 
-    // Save the parent record FIRST. If the stock_takes table is missing, bail out
-    // before touching any live stock so nothing gets adjusted half-way.
-    const { data: parent, error: parentErr } = await saveData('stock_takes', {
-        take_date: new Date().toISOString().split('T')[0],
-        performed_by: (currentUser && currentUser.name) ? currentUser.name : 'Unknown',
-        notes: (document.getElementById('stockopname-notes') || {}).value || '',
-        total_items: lines.length,
-        variance_items: varianceCount
+    // The stock_takes row already exists (created 'counting' by
+    // startStockTake) — update it in place rather than inserting a new
+    // one, which is what the pre-Phase-1 code did every single finalize.
+    const { error: parentErr } = await saveData('stock_takes', {
+        id: currentStockTakeId,
+        status: 'posted',
+        posted_at: new Date().toISOString(),
+        total_items: currentStockTakeGroups.length,
+        variance_items: varianceCount,
+        counted_items: countedCount,
+        skipped_items: skippedCount,
+        notes: (document.getElementById('stockopname-notes') || {}).value || ''
     });
-    if (parentErr || !parent || !parent.id) {
-        alert('Failed to save stock take (has the stock_takes table been created in Supabase?): ' + (parentErr ? parentErr.message : 'no id returned'));
+    if (parentErr) {
+        alert('Failed to finalize stock take: ' + parentErr.message);
         return;
+    }
+
+    // Re-affirm the counted values idempotently — the staged 'change'
+    // saves already wrote most of these, this just guarantees the final
+    // state matches what was reviewed in the confirm dialog above (e.g. a
+    // value edited then submitted via Enter without a separate blur).
+    for (const upd of itemUpdates) {
+        await saveData('stock_take_items', upd);
     }
 
     // Adjust the live source rows. All three categories now go through
     // applyStockGroupAdjustmentToLots — bulk_roasted_coffee got its own
     // atomic RPCs + movement ledger in STOCK_LEDGER_PLAN.md Phase 6, so the
-    // plain applyStockGroupAdjustment/saveData path is retired.
+    // plain applyStockGroupAdjustment/saveData path is retired. Uncounted
+    // (blank) items were never added to `adjustments` above, so they are
+    // never touched — this is the actual fix for cacat #1, not just the
+    // bookkeeping around it.
     for (const adj of adjustments) {
-        await applyStockGroupAdjustmentToLots(adj.group, adj.actual, parent.id);
-    }
-
-    // Save the audit line items.
-    for (const line of lines) {
-        await saveData('stock_take_items', { stock_take_id: parent.id, ...line });
+        await applyStockGroupAdjustmentToLots(adj.group, adj.actual, currentStockTakeId);
     }
 
     alert(window.t ? (window.t('alert_stockopname_saved') || 'Stock take finalized and stock adjusted.') : 'Stock take finalized and stock adjusted.');
     currentStockTakeGroups = null;
+    currentStockTakeId = null;
+    stockTakeResumeInfo = null;
     await loadStockOpnameReport('', '');
     if (typeof scheduleDashboardRefresh === 'function') scheduleDashboardRefresh();
 }
@@ -3743,6 +4002,22 @@ async function viewStockTake(takeId) {
     let rowsHtml = '';
     lines.forEach(l => {
         const sys = l.unit === 'kg' ? parseFloat(l.system_qty).toFixed(1) : l.system_qty;
+        // Stock Opname Phase 1: rows saved before this migration have no
+        // `counted` value to trust (it defaults false for all historical
+        // data — see the migration's own note), so they fall back to the
+        // old always-"counted" display. Only take.id's created after the
+        // migration carry a meaningful `counted` flag.
+        const wasCounted = l.counted === true || l.actual_qty !== null;
+        if (!wasCounted) {
+            rowsHtml += `
+            <tr>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border);"><span style="font-size:0.7rem; color:#0891b2; background:rgba(6,182,212,0.1); padding:2px 6px; border-radius:5px;">${stockCategoryLabel(l.category)}</span></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${l.item_name}</td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center;">${sys} ${l.unit}</td>
+                <td colspan="2" style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center; color:var(--text-muted); font-style:italic;">${window.t ? (window.t('stockopname_not_counted') || 'Not counted') : 'Not counted'}</td>
+            </tr>`;
+            return;
+        }
         const act = l.unit === 'kg' ? parseFloat(l.actual_qty).toFixed(1) : l.actual_qty;
         const varN = parseFloat(l.variance) || 0;
         const varDisplay = l.unit === 'kg' ? varN.toFixed(1) : varN;

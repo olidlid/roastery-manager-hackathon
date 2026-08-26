@@ -1870,7 +1870,8 @@
                                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:16px;">
                                     <div>
                                         <h3 class="card-title" style="margin-bottom:4px;" data-i18n="stockopname_sheet_title">New Stock Count</h3>
-                                        <p style="margin:0; font-size:0.8rem; color:var(--text-muted);" data-i18n="stockopname_sheet_hint">Enter the physically counted quantity for each item. Unchanged rows keep the system value.</p>
+                                        <p style="margin:0; font-size:0.8rem; color:var(--text-muted);" data-i18n="stockopname_sheet_hint">Enter the physically counted quantity for each item. Rows left blank are skipped entirely — they will not be adjusted.</p>
+                                        <p id="stockopname-progress-note" class="hidden" style="margin:6px 0 0; font-size:0.78rem; color:var(--text-secondary);"></p>
                                     </div>
                                     <div style="display:flex; gap:8px;">
                                         <button type="button" id="btn-stockopname-cancel" class="btn btn-secondary btn-sm" data-i18n="btn_cancel">Cancel</button>
@@ -2657,7 +2658,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=40"></script>
+    <script src="js/translations.js?v=41"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
@@ -2669,6 +2670,6 @@
     <script src="js/sales.js?v=27"></script>
     <script src="js/settings.js?v=22"></script>
     <script src="js/tracking.js?v=8"></script>
-    <script src="js/app.js?v=85"></script>
+    <script src="js/app.js?v=86"></script>
 </body>
 </html>
