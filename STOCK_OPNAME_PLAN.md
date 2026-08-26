@@ -1,6 +1,6 @@
 # Stock Opname Bulanan — Rencana Pengembangan
 
-**Status:** Fase 0 selesai (`b0d2316`, diverifikasi live dengan baris uji — lihat catatan di bawah Fase 0). Menunggu persetujuan lanjut ke Fase 1.
+**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`, diverifikasi live lewat UI produksi sungguhan). Menunggu persetujuan lanjut ke Fase 2.
 **Tanggal:** 2026-08-23
 **Tujuan:** Mengubah fitur Stock Opname dari "form penyesuaian stok" menjadi proses penghitungan fisik bulanan yang hasilnya bisa dipercaya, tanpa menambah beban tim di lapangan.
 
@@ -242,7 +242,7 @@ ALTER TABLE public.stock_take_items
 
 ---
 
-## Fase 1 — Siklus hidup & penyimpanan bertahap
+## Fase 1 — Siklus hidup & penyimpanan bertahap — SELESAI (`0de5d96`)
 
 **File:** `js/app.js`
 
@@ -255,6 +255,22 @@ Sekarang `startStockTake()` hanya menyiapkan array di memori. Diubah menjadi:
 5. `finalizeStockTake()` **berhenti** memperlakukan kolom kosong sebagai "cocok". Baris `counted = false` dilewati sepenuhnya saat posting dan tidak menyesuaikan stok.
 
 **Verifikasi:** buka opname, isi beberapa angka, refresh browser — yang sudah diisi harus tetap ada, sisanya masih kosong. Posting dengan sebagian belum diisi — item itu harus tidak berubah stoknya **dan** tercatat `counted = false`, bukan `variance = 0`.
+
+**Diverifikasi live 2026-08-26**, lewat UI produksi sungguhan (klik, ketik, Tab — bukan simulasi backend), dengan strategi aman: isi baris hanya dengan nilai = angka sistem (variance 0, tidak pernah memicu penyesuaian) atau selalu batalkan alih-alih memposting nilai yang berbeda, sehingga stok asli tidak pernah tersentuh selama pengujian:
+
+- **Input kosong secara visual** — placeholder `—`, bukan lagi pre-filled dengan angka sistem (`js/app.js:3534` lama). Ini perubahan kecil di luar teks plan yang perlu, dan disengaja: pre-fill lama membuat "belum dihitung" tidak bisa dibedakan dari "tidak diubah", yang justru bagian dari cacat #1.
+- **Staged-save**: mengisi SUMATRA dengan `156.6` (sama dengan sistem) langsung tersimpan ke `stock_take_items` — dibuktikan lewat query DB, bukan asumsi: `counted=true, actual_qty=156.6, variance=0, counted_by='khaleed', counted_at` terisi.
+- **Bertahan setelah refresh**: full page reload (bukan SPA re-render), lalu navigasi ulang ke tab — baris SUMATRA tetap `156.6`/variance `0.0`, baris lain tetap kosong. Dicek langsung dari DOM, 120 baris utuh.
+- **Resume otomatis**: membuka tab Stock Opname saat ada opname `counting` menampilkan pesan *"Resuming stock take started 2026-08-26 by khaleed. N of 120 items counted"* — bukan riwayat kosong.
+- **Cancel**: dicatat `stock_kg` SUMATRA sebagai baseline (`156.6`) sebelum klik Cancel, dan sesudahnya **identik** — status berubah jadi `cancelled`, baris tetap ada di riwayat (Items: 0 — kolom ringkasan memang tidak diisi cancel, hanya finalize).
+- **Finalize dengan campuran counted/uncounted**: opname baru, isi 2 dari 120 baris (variance 0 keduanya), sisanya kosong. Dialog konfirmasi menampilkan persis *"Counted: 2 | Not counted: 118 | Variances: 0"*. Sesudah finalize: `stock_takes` **di-UPDATE di tempat** (row id yang sama, bukan insert baru seperti kode lama) — `status='posted', total_items=120, counted_items=2, skipped_items=118, variance_items=0, posted_at` terisi. Ketiga item yang diperiksa (2 terisi + 1 kosong/PEACH) — `stock_kg` di `green_coffee` **identik** dengan sebelum finalize. `PEACH` tetap `counted=false, actual_qty=null` di `stock_take_items`.
+- Query wajib dari peringatan handoff, dijalankan sesudahnya: `SELECT id, status FROM stock_takes WHERE status IN ('counting','posting')` → kosong.
+- Kueri invarian ledger packed (`STOCK_LEDGER_PLAN.md` Lampiran): 0 ketidakcocokan.
+- Semua baris uji (`stock_takes` id 8 dan 9, beserta `stock_take_items` turunannya lewat `ON DELETE CASCADE`) dihapus setelah pengujian — baris-baris ini murni artefak testing (notes kosong, bukan opname fisik nyata), berbeda dari data "ZZ TEST" pada tabel stok karena `stock_takes` adalah metadata riwayat, bukan stok — dihapus supaya Stock Opname History tidak berisi entri palsu yang membingungkan.
+
+**Temuan performa (bukan bug fungsional, tapi nyata dan layak dicatat):** `startStockTake()` menyisipkan satu baris `stock_take_items` per grup secara **berurutan** (`for...await`, bukan batch insert). Untuk 120 grup, ini memakan waktu **~20–30 detik** sebelum lembar hitung muncul — selama itu tombol terlihat seperti tidak merespons. Ini persis terjadi saat pengujian: klik pertama "tampak gagal" (sheet masih kosong setelah 1,5 detik), lalu tombol diklik/dipanggil lagi. Sistem menangani situasi ini **dengan aman** (panggilan kedua mendeteksi opname yang sudah `counting` dan me-resume, bukan membuat duplikat — dibuktikan lewat query: 120 baris, 0 grup terduplikasi), tapi pengalaman penggunanya buruk dan mengundang klik berulang. Di luar scope literal Fase 1 (yang soal siklus hidup, bukan performa) — dicatat sebagai kandidat perbaikan (mis. `saveData` batch/`insert` array sekaligus alih-alih loop), bukan diperbaiki tanpa diminta.
+
+**Belum diverifikasi:** perilaku "stale row" di `resumeStockTake()` (baris `stock_take_items` yang sumbernya berubah/hilang sejak opname dibuka) — kasus ini butuh mengubah data produksi *di antara* start dan resume untuk direproduksi, yang berarti menyentuh stok asli demi pengujian; sengaja tidak dilakukan. Jalur kodenya ada (badge peringatan + dilewati saat posting, lihat komentar `resumeStockTake`/`finalizeStockTake`), tapi belum terbukti live. Permission `reports_stockopname_perform` belum ada (scope Fase 2) — start/cancel/finalize saat ini masih hanya digerbangi `reports_stockopname_view` yang sudah ada sebelumnya, sama seperti perilaku lama.
 
 ---
 
