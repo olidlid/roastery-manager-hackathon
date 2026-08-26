@@ -3397,21 +3397,66 @@ let currentStockTakeId = null;
 // note so a returning counter knows they're picking up someone else's work.
 let stockTakeResumeInfo = null;
 
-function resolvePackedCoffeeName(item, batches, greenbeans, recipes) {
+// Stock Opname Fase 3: same identity resolution as the old
+// resolvePackedCoffeeName (name-resolution logic kept byte-for-byte
+// identical so grouping doesn't silently change), extended to also return
+// the coffee's short `code` (green_coffee.code / blend_recipes.code) for
+// the sheet's Kode column (STOCK_OPNAME_PLAN.md §4.1/§4.2). This is the
+// only caller of the old function, so it's replaced rather than kept
+// alongside it.
+function resolvePackedCoffeeIdentity(item, batches, greenbeans, recipes) {
     let name = item.custom_coffee_name || 'Roasted Coffee';
+    let code = '';
     if (item.roast_batch_id) {
         const b = (batches || []).find(x => x.id === item.roast_batch_id);
         if (b) {
             if (b.coffee_type === 'Single') {
                 const gb = (greenbeans || []).find(g => g.id === b.single_coffee_id);
-                if (gb) name = gb.name;
+                if (gb) { name = gb.name; code = gb.code || ''; }
             } else {
                 const r = (recipes || []).find(rec => rec.id === b.blend_recipe_id);
-                if (r) name = r.name;
+                if (r) { name = r.name; code = r.code || ''; }
             }
         }
+    } else if (item.single_coffee_id) {
+        const gb = (greenbeans || []).find(g => g.id === item.single_coffee_id);
+        if (gb) { name = gb.name; code = gb.code || ''; }
+    } else if (item.blend_recipe_id) {
+        const r = (recipes || []).find(rec => rec.id === item.blend_recipe_id);
+        if (r) { name = r.name; code = r.code || ''; }
     }
-    return name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+    name = name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
+    if (!code) {
+        // Manual/custom packing with no linked identity at all — same
+        // name-matching fallback js/packing.js's own
+        // resolvePackedCoffeeIdentity uses, so a hand-typed entry still
+        // gets a code once its name happens to match a real coffee/recipe.
+        const gbMatch = (greenbeans || []).find(g => g.name === name);
+        if (gbMatch) code = gbMatch.code || '';
+        else {
+            const rMatch = (recipes || []).find(r => r.name === name);
+            if (rMatch) code = rMatch.code || '';
+        }
+    }
+    return { name, code };
+}
+
+// Bulk rows carry single_coffee_id/blend_recipe_id/custom_coffee_code
+// directly (no roast_batch indirection) — see bulk_roasted_coffee schema.
+function resolveBulkCoffeeCode(row, greenbeans, recipes) {
+    if (row.custom_coffee_code) return row.custom_coffee_code;
+    if (row.single_coffee_id) {
+        const gb = (greenbeans || []).find(g => g.id === row.single_coffee_id);
+        if (gb && gb.code) return gb.code;
+    }
+    if (row.blend_recipe_id) {
+        const r = (recipes || []).find(rec => rec.id === row.blend_recipe_id);
+        if (r && r.code) return r.code;
+    }
+    const gbMatch = (greenbeans || []).find(g => g.name === row.coffee_name);
+    if (gbMatch && gbMatch.code) return gbMatch.code;
+    const rMatch = (recipes || []).find(r => r.name === row.coffee_name);
+    return rMatch ? (rMatch.code || '') : '';
 }
 
 // Build the list of countable units. Green bean is one row per coffee; bulk and
@@ -3423,13 +3468,15 @@ async function buildStockTakeGroups() {
         { data: bulk },
         { data: packed },
         { data: batches },
-        { data: recipes }
+        { data: recipes },
+        { data: machines }
     ] = await Promise.all([
         fetchData('green_coffee'),
         fetchData('bulk_roasted_coffee'),
         fetchData('packed_coffee'),
         fetchData('roast_batches'),
-        fetchData('blend_recipes')
+        fetchData('blend_recipes'),
+        fetchData('machines')
     ]);
 
     const groups = [];
@@ -3439,6 +3486,7 @@ async function buildStockTakeGroups() {
         groups.push({
             category: 'greenbean',
             label: g.name || `Green #${g.id}`,
+            coffeeCode: g.code || '',
             unit: 'kg',
             field: 'stock_kg',
             systemQty: parseFloat(g.stock_kg) || 0,
@@ -3446,7 +3494,9 @@ async function buildStockTakeGroups() {
         });
     });
 
-    // Bulk roasted — aggregate by coffee_name across machine rows.
+    // Bulk roasted — aggregate by coffee_name across machine rows (bulk has
+    // no per-machine physical separation the way packed does — it's all
+    // loose beans in one holding area regardless of which machine roasted it).
     const bulkByName = {};
     (bulk || []).forEach(b => {
         const key = b.coffee_name || `Bulk #${b.id}`;
@@ -3460,6 +3510,7 @@ async function buildStockTakeGroups() {
         groups.push({
             category: 'bulk',
             label: name,
+            coffeeCode: resolveBulkCoffeeCode(rows[0], greenbeans, recipes),
             unit: 'kg',
             field: 'bulk_available',
             systemQty,
@@ -3467,22 +3518,30 @@ async function buildStockTakeGroups() {
         });
     });
 
-    // Packed coffee — aggregate by coffee name + bag size across batches/machines.
+    // Packed coffee — aggregate by coffee name + bag size + machine (cacat
+    // #5 fix: a team physically counts one machine's shelf at a time, so a
+    // group spanning several machines couldn't be reconciled against what's
+    // in front of them). machine_id is a direct packed_coffee column, so no
+    // batch indirection is needed for the grouping key itself.
     const packedByKey = {};
     (packed || []).forEach(p => {
-        const name = resolvePackedCoffeeName(p, batches, greenbeans, recipes);
+        const { name, code } = resolvePackedCoffeeIdentity(p, batches, greenbeans, recipes);
         const size = parseInt(p.bag_size_g) || 0;
-        const key = `${name}|${size}`;
-        if (!packedByKey[key]) packedByKey[key] = { name, size, rows: [] };
+        const machineId = p.machine_id || null;
+        const key = `${name}|${size}|${machineId}`;
+        if (!packedByKey[key]) packedByKey[key] = { name, code, size, machineId, rows: [] };
         packedByKey[key].rows.push(p);
     });
     Object.values(packedByKey).forEach(grp => {
         const systemQty = grp.rows.reduce((s, r) => s + (parseInt(r.quantity) || 0), 0);
         if (systemQty <= 0) return;
         const sizeLabel = grp.size >= 1000 ? `${grp.size / 1000}kg` : `${grp.size}g`;
+        const machine = grp.machineId ? (machines || []).find(m => m.id === grp.machineId) : null;
+        const machineName = machine ? machine.name : (window.t ? (window.t('stockopname_unknown_machine') || 'Unknown machine') : 'Unknown machine');
         groups.push({
             category: 'packed',
-            label: `${grp.name} (${sizeLabel})`,
+            label: `${grp.name} · ${sizeLabel} · ${machineName}`,
+            coffeeCode: grp.code,
             unit: 'bags',
             field: 'quantity',
             systemQty,
@@ -3733,23 +3792,33 @@ function renderStockTakeSheet() {
         const step = g.unit === 'kg' ? '0.1' : '1';
         const hasValue = g.actualQty !== null && g.actualQty !== undefined;
         const valueAttr = hasValue ? `value="${g.actualQty}"` : '';
-        const varianceDisplay = hasValue ? formatVarianceText(g.actualQty - g.systemQty, g.unit) : '—';
-        const varianceColor = !hasValue ? 'var(--text-muted)' : ((g.actualQty - g.systemQty) === 0 ? 'var(--text-muted)' : ((g.actualQty - g.systemQty) > 0 ? 'var(--success)' : 'var(--danger)'));
         const staleTag = g.stale ? ` <span style="font-size:0.65rem; color:var(--warning);" title="${window.t ? (window.t('stockopname_stale_row') || 'not found — item changed since this take started') : 'not found — item changed since this take started'}">⚠</span>` : '';
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td><span style="font-size:0.72rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:2px 7px; border-radius:6px;">${stockCategoryLabel(g.category)}</span></td>
+            <td class="text-center" style="font-family:monospace; font-weight:700;">${g.coffeeCode || '—'}</td>
             <td><strong>${g.label}</strong>${staleTag}</td>
             <td class="text-center">${sysDisplay} ${g.unit}</td>
             <td class="text-center"><input type="number" class="form-control stockopname-actual-input" data-group-index="${i}" ${valueAttr} step="${step}" min="0" placeholder="—" style="width:110px; text-align:center; margin:0 auto;"></td>
-            <td class="stockopname-variance-cell text-center" data-group-index="${i}" style="color:${varianceColor}; font-weight:${hasValue && (g.actualQty - g.systemQty) !== 0 ? '700' : '400'};">${varianceDisplay}</td>
+            <td class="stockopname-status-cell text-center" data-group-index="${i}">${stockOpnameStatusHtml(g, hasValue ? g.actualQty : null)}</td>
         `;
         tbody.appendChild(tr);
     });
 
-    tbody.querySelectorAll('.stockopname-actual-input').forEach(input => {
+    // Tab already reaches the next Aktual input via native browser tab
+    // order (each input is the only focusable element in its row); Enter
+    // needs its own handler since a plain <input> doesn't move focus on its
+    // own — typing from the printed sheet has to work without a mouse
+    // (STOCK_OPNAME_PLAN.md §4.2).
+    const inputs = Array.from(tbody.querySelectorAll('.stockopname-actual-input'));
+    inputs.forEach((input, pos) => {
         input.addEventListener('input', () => updateVarianceCell(input));
         input.addEventListener('change', () => saveCountedValue(input));
+        input.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            const next = inputs[pos + 1];
+            if (next) next.focus(); else input.blur();
+        });
     });
 
     updateProgressNote();
@@ -3760,22 +3829,56 @@ function formatVarianceText(variance, unit) {
     return variance > 0 ? `+${vDisplay}` : `${vDisplay}`;
 }
 
+// Stock Opname Fase 3: packed coffee is counted in whole bags, so an exact
+// match is the only thing that counts as "no variance". Green bean AND
+// bulk roasted coffee are both counted in kg — bulk_available is a decimal
+// column exactly like green_coffee.stock_kg, not a whole-unit count — so a
+// hand-weighed physical count will essentially never land on the system
+// figure to the last decimal. Both therefore get the same tolerance, for
+// the same reason. Values confirmed with user 2026-08-26 — see
+// STOCK_OPNAME_PLAN.md Fase 3.
+const STOCKOPNAME_KG_TOLERANCE_PCT = 0.01;
+const STOCKOPNAME_KG_TOLERANCE_MIN_KG = 0.1;
+
+function stockOpnameIsMatch(group, actual) {
+    const variance = actual - group.systemQty;
+    if (group.unit !== 'kg') return Math.abs(variance) < 1e-9;
+    const tolerance = Math.max(STOCKOPNAME_KG_TOLERANCE_MIN_KG, group.systemQty * STOCKOPNAME_KG_TOLERANCE_PCT);
+    return Math.abs(variance) <= tolerance;
+}
+
+// Renders the Status cell's content for one group: "—" when nothing has
+// been typed yet, a match tick when within tolerance, or the raw variance
+// (always the true number — tolerance only decides the label, never hides
+// the figure) when it isn't.
+function stockOpnameStatusHtml(g, actualQty) {
+    if (actualQty === null || actualQty === undefined) {
+        return `<span style="color:var(--text-muted);">—</span>`;
+    }
+    if (stockOpnameIsMatch(g, actualQty)) {
+        const label = window.t ? (window.t('stockopname_status_match') || 'Match') : 'Match';
+        return `<span style="color:var(--success); font-weight:700;">✓ ${label}</span>`;
+    }
+    const variance = actualQty - g.systemQty;
+    const label = window.t ? (window.t('col_variance') || 'Variance') : 'Variance';
+    const vDisplay = formatVarianceText(variance, g.unit);
+    const color = variance > 0 ? 'var(--success)' : 'var(--danger)';
+    return `<span style="color:${color}; font-weight:700;">${label} ${vDisplay}</span>`;
+}
+
 // Live UI feedback as the user types — does NOT save. Persistence happens
 // on 'change' (blur/Enter), see saveCountedValue.
 function updateVarianceCell(input) {
     const idx = parseInt(input.getAttribute('data-group-index'));
     const g = currentStockTakeGroups[idx];
     const tbody = document.getElementById('stockopname-count-body');
-    const cell = tbody ? tbody.querySelector(`.stockopname-variance-cell[data-group-index="${idx}"]`) : null;
+    const cell = tbody ? tbody.querySelector(`.stockopname-status-cell[data-group-index="${idx}"]`) : null;
     if (!g || !cell) return;
     const raw = input.value;
-    if (raw === '') { cell.textContent = '—'; cell.style.color = 'var(--text-muted)'; cell.style.fontWeight = '400'; return; }
+    if (raw === '') { cell.innerHTML = stockOpnameStatusHtml(g, null); return; }
     const actual = parseFloat(raw);
-    if (isNaN(actual)) { cell.textContent = '—'; cell.style.color = 'var(--text-muted)'; cell.style.fontWeight = '400'; return; }
-    const variance = actual - g.systemQty;
-    cell.textContent = formatVarianceText(variance, g.unit);
-    cell.style.color = variance === 0 ? 'var(--text-muted)' : (variance > 0 ? 'var(--success)' : 'var(--danger)');
-    cell.style.fontWeight = variance === 0 ? '400' : '700';
+    if (isNaN(actual)) { cell.innerHTML = stockOpnameStatusHtml(g, null); return; }
+    cell.innerHTML = stockOpnameStatusHtml(g, actual);
 }
 
 // Stock Opname Phase 1 (cacat #1 + #4): every filled-in count is saved to
@@ -3967,14 +4070,23 @@ async function finalizeStockTake() {
         if (isNaN(actual)) return;
 
         const variance = actual - g.systemQty;
-        lines.push({ category: g.category, item_name: g.label, variance });
+        // Fase 3: "no adjustment needed" is now decided by
+        // stockOpnameIsMatch (tolerance-aware for kg categories), not a
+        // bare != 0 check — must stay consistent with what the Status
+        // column showed the counter, or a row marked "Match" on screen
+        // would still silently trigger a stock adjustment here. The raw
+        // variance is still stored on the item row either way — tolerance
+        // only decides whether it drives an adjustment, it never hides the
+        // true count.
+        const matched = stockOpnameIsMatch(g, actual);
+        lines.push({ category: g.category, item_name: g.label, variance, matched });
         if (g.itemId) {
             itemUpdates.push({
                 id: g.itemId, actual_qty: actual, variance, counted: true,
                 counted_at: new Date().toISOString(), counted_by: (currentUser && currentUser.name) || null
             });
         }
-        if (Math.abs(variance) > 1e-9) {
+        if (!matched) {
             if (g.stale) {
                 // This item's stock_take_items row no longer matches any
                 // current group (its source rows changed or vanished since
@@ -3990,7 +4102,7 @@ async function finalizeStockTake() {
 
     const countedCount = lines.length;
     const skippedCount = currentStockTakeGroups.length - countedCount;
-    const varianceCount = lines.filter(l => Math.abs(l.variance) > 1e-9).length;
+    const varianceCount = lines.filter(l => !l.matched).length;
 
     const confirmMsg = (window.t ? (window.t('confirm_stockopname_finalize') || 'Finalize this stock take? System stock will be adjusted to match your counts.') : 'Finalize this stock take? System stock will be adjusted to match your counts.')
         + `\n\nCounted: ${countedCount}  |  Not counted: ${skippedCount}  |  Variances: ${varianceCount}`;
@@ -4123,6 +4235,7 @@ async function printStockCountForm() {
     groups.forEach(g => { if (byCat[g.category]) byCat[g.category].push(g); });
 
     const subtitle = window.t ? (window.t('form_stockcount_subtitle') || 'Stock Count Form') : 'Stock Count Form';
+    const tHeaderCode = window.t ? (window.t('col_stockopname_code') || 'Code') : 'Code';
     const tHeaderItem = window.t ? (window.t('col_item') || 'Item') : 'Item';
     const tHeaderSystem = window.t ? (window.t('col_system_qty') || 'System') : 'System';
     const tHeaderActual = window.t ? (window.t('col_actual_qty') || 'Actual') : 'Actual';
@@ -4133,11 +4246,10 @@ async function printStockCountForm() {
     function renderPage(catKey, isLast) {
         const list = byCat[catKey] || [];
         let rows = '';
-        let idx = 1;
         list.forEach(g => {
             const sys = g.unit === 'kg' ? g.systemQty.toFixed(1) : g.systemQty;
             rows += `<tr>
-                <td class="c">${idx++}</td>
+                <td class="c" style="font-weight:700;">${g.coffeeCode || ''}</td>
                 <td>${g.label}</td>
                 <td class="c">${sys} ${g.unit}</td>
                 <td class="blank"></td>
@@ -4147,7 +4259,7 @@ async function printStockCountForm() {
         const emptyCount = Math.max(TARGET_ROWS_PER_PAGE - list.length, MIN_EMPTY_ROWS);
         for (let i = 0; i < emptyCount; i++) {
             rows += `<tr>
-                <td class="c">${idx++}</td>
+                <td class="blank"></td>
                 <td class="blank"></td>
                 <td class="blank"></td>
                 <td class="blank"></td>
@@ -4176,7 +4288,7 @@ async function printStockCountForm() {
             <table>
                 <thead>
                     <tr>
-                        <th style="width:34px;">#</th>
+                        <th style="width:60px;">${tHeaderCode}</th>
                         <th>${tHeaderItem}</th>
                         <th style="width:100px;">${tHeaderSystem}</th>
                         <th style="width:120px;">${tHeaderActual}</th>
