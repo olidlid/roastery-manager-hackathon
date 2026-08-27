@@ -1,6 +1,6 @@
 # Stock Opname Bulanan — Rencana Pengembangan
 
-**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada), Fase 3 selesai (`3fc3937`, `276c9b8`, diverifikasi live — termasuk temuan bahwa packed di produksi 100% bergantung pada pencocokan-nama untuk kode, dan koreksi toleransi bulk sesuai keputusan user), Fase 4 selesai (`f38565d`, `297cada`, diverifikasi live — termasuk satu bug ditemukan+diperbaiki live (bar rincian tidak ter-update), dan satu langkah (posting lewat finalize sungguhan) sengaja tidak diuji untuk melindungi stok produksi — lihat catatan di Fase 4), Fase 5 selesai (`68ce9dd`, `c1bcf16`, diverifikasi live termasuk **finalize sungguhan** dengan izin eksplisit user pada data uji yang sepenuhnya terisolasi, lalu dibersihkan total — juga menyelesaikan utang verifikasi Fase 4 karena jalur posting yang sama kini terbukti bekerja), Fase 6 selesai (`4980ca7`, diverifikasi live termasuk **uji kegagalan posting di tengah yang sungguhan** — status kembali terkunci, posting ulang terbukti tidak menggandakan — sekaligus menemukan+memperbaiki celah nyata di beberapa RPC lama yang gagal secara diam-diam tanpa error). Menunggu persetujuan lanjut ke Fase 7.
+**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada), Fase 3 selesai (`3fc3937`, `276c9b8`, diverifikasi live — termasuk temuan bahwa packed di produksi 100% bergantung pada pencocokan-nama untuk kode, dan koreksi toleransi bulk sesuai keputusan user), Fase 4 selesai (`f38565d`, `297cada`, diverifikasi live — termasuk satu bug ditemukan+diperbaiki live (bar rincian tidak ter-update), dan satu langkah (posting lewat finalize sungguhan) sengaja tidak diuji untuk melindungi stok produksi — lihat catatan di Fase 4), Fase 5 selesai (`68ce9dd`, `c1bcf16`, diverifikasi live termasuk **finalize sungguhan** dengan izin eksplisit user pada data uji yang sepenuhnya terisolasi, lalu dibersihkan total — juga menyelesaikan utang verifikasi Fase 4 karena jalur posting yang sama kini terbukti bekerja), Fase 6 selesai (`4980ca7`, diverifikasi live termasuk **uji kegagalan posting di tengah yang sungguhan** — status kembali terkunci, posting ulang terbukti tidak menggandakan — sekaligus menemukan+memperbaiki celah nyata di beberapa RPC lama yang gagal secara diam-diam tanpa error), Fase 7 selesai (`86dc72e`, `82cc97f`, diverifikasi live — termasuk menemukan+memperbaiki bug lama: kolom Kode di database selalu null sejak Fase 3 karena `startStockTake()` tidak pernah menyimpannya, baru ketahuan saat riwayat/detail Fase 7 membaca langsung dari database). **Seluruh rencana (Fase 0-7) selesai dan terverifikasi live di produksi.**
 **Tanggal:** 2026-08-23
 **Tujuan:** Mengubah fitur Stock Opname dari "form penyesuaian stok" menjadi proses penghitungan fisik bulanan yang hasilnya bisa dipercaya, tanpa menambah beban tim di lapangan.
 
@@ -462,16 +462,29 @@ Baris temuan bertahan lewat refresh: `resumeStockTake` mendeteksinya lewat `is_f
 
 ---
 
-## Fase 7 — Laporan & akurasi
+## Fase 7 — Laporan & akurasi — SELESAI (`86dc72e`, `82cc97f`)
 
-**File:** `js/app.js` (`loadStockOpnameReport`, `viewStockTake`)
+**File:** `js/app.js` (`loadStockOpnameReport`, `viewStockTake`, `computeStockTakeAccuracy`, `renderStockopnameAccuracyTrend`, `stockOpnameVarianceIsMatch` baru — hasil pemecahan `stockOpnameIsMatch`).
 
-- Riwayat menampilkan status, jumlah dihitung vs dilewati.
-- **Akurasi** per opname: `baris cocok ÷ baris dihitung × 100%`. Hanya `counted = true` yang dihitung — inilah gunanya kolom itu.
-- Tren akurasi antar bulan.
-- Detail opname menampilkan strip code untuk baris lot, menandai baris temuan, dan membedakan grup yang dirinci dari yang tidak.
+**Riwayat status + dihitung/dilewati — DONE:** kolom Status (Posted/Cancelled) dan jumlah item ditambah keterangan "(N not counted)".
 
-**Verifikasi:** bandingkan angka akurasi dengan hitungan manual dari `stock_take_items` pada satu opname.
+**Akurasi per opname — DONE, dengan dua pengecualian yang disengaja:** `baris cocok ÷ baris dihitung × 100%`, dihitung hanya dari baris **top-level** yang `counted = true`. Dua jenis baris sengaja **dikecualikan** dari perhitungan (bukan asumsi sembarang — dipertimbangkan karena keduanya akan mendistorsi angka jika ikut dihitung):
+- **Baris anak rincian lot** (`parent_item_id` terisi) — "apakah lot cocok Tahap 1" adalah pertanyaan berbeda dari "apakah hitungan cocok sistem", dan satu kopi yang berantakan bisa punya belasan baris lot yang mendominasi penyebut.
+- **Barang temuan** (`is_found_item`) — `system_qty` selalu 0, jadi tidak akan pernah "cocok"; itu bukan kesalahan hitung, itu sistem yang memang tidak tahu — menghitungnya akan menghukum opname yang justru menemukan masalah nyata.
+
+**Tren akurasi bulanan — DONE:** grafik garis (Chart.js, pola yang sama dengan grafik laporan lain di file ini) di atas tabel riwayat, rata-rata akurasi per bulan, **hanya opname berstatus `posted`** (yang dibatalkan tidak pernah benar-benar menyesuaikan apa pun). Kartu grafik otomatis tersembunyi kalau belum ada data yang memenuhi syarat.
+
+**Detail opname (`viewStockTake`) — DONE, dirombak total:** baris rincian lot kini tampil **bersarang** di bawah baris induknya (strip code sebagai penanda baris, sesuai §4.3), bukan tercampur rata sebagai baris sejajar seperti sebelumnya — kolom Kode dan Status (Match/Difference/Detailed/Not counted) menggantikan badge Category dan angka Variance mentah, konsisten dengan layar Tahap 1. Baris temuan ditandai 🔍.
+
+**Temuan penting saat verifikasi (bug lama, bukan regresi dari fase ini):** `startStockTake()` **tidak pernah** menyimpan `coffee_code`/`machine_name`/`bag_size_g` ke `stock_take_items` sejak kolom itu ada (Fase 0) dan `buildStockTakeGroups()` mulai menghitung `coffeeCode` (Fase 3) — kolom Kode di database selalu `NULL` untuk SEMUA opname sebelumnya. Tidak pernah ketahuan karena layar Tahap 1 membaca `coffeeCode` dari objek grup di memori, bukan dari baris tersimpan — baru terlihat saat Fase 7 membaca riwayat langsung dari database (tidak ada grup hidup untuk jatuh balik). Diperbaiki di `startStockTake()` + `buildStockTakeGroups()` (kini menyertakan `machineName`/`bagSizeG` eksplisit pada grup packed).
+
+**Verifikasi live (2026-08-27, akun `khaleed`/`admin2` via Claude in Chrome):**
+1. `node test.js` — tanpa SyntaxError.
+2. Riwayat diperiksa langsung dari DOM: kolom Status, jumlah "(N not counted)", dan Akurasi tampil benar untuk opname lama (termasuk satu opname dibatalkan dengan akurasi 0%/2 dari pengetesan Fase 4 sebelumnya).
+3. Grafik tren akurasi diuji dengan data tiruan (tidak menyentuh tabel nyata) — kartu berubah dari tersembunyi menjadi tampil, label bulan dan nilai akurasi dihitung benar (diverifikasi manual: 1/2, 1/1, 1/2 → 50%, 100%, 50%).
+4. Detail opname (take id 14) diperiksa — grup `BRAZIL ROSA · 250g · STRONGHOLD S9X` tampil "📋 Detailed" dengan 5 baris lot bersarang di bawahnya, masing-masing strip code, lot code, sistem, aktual, dan selisih per-lot benar (4 baris "=", 1 baris "-6").
+5. **Ditemukan bug kolom Kode selalu null** (lihat di atas) — diperbaiki live, di-deploy ulang, diverifikasi dengan take baru (id 18): 132 dari 135 baris kini punya `coffee_code` tersimpan (3 sisanya kopi tanpa kode terdefinisi, konsisten dengan temuan Fase 3), `machine_name`/`bag_size_g` juga benar untuk baris packed.
+6. Take uji (id 18) dibatalkan bersih tanpa pernah diisi — tidak ada stok yang tersentuh sepanjang verifikasi fase ini.
 
 ---
 
