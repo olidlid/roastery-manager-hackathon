@@ -1,6 +1,6 @@
 # Stock Opname Bulanan — Rencana Pengembangan
 
-**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada), Fase 3 selesai (`3fc3937`, `276c9b8`, diverifikasi live — termasuk temuan bahwa packed di produksi 100% bergantung pada pencocokan-nama untuk kode, dan koreksi toleransi bulk sesuai keputusan user), Fase 4 selesai (`f38565d`, `297cada`, diverifikasi live — termasuk satu bug ditemukan+diperbaiki live (bar rincian tidak ter-update), dan satu langkah (posting lewat finalize sungguhan) sengaja tidak diuji untuk melindungi stok produksi — lihat catatan di Fase 4), Fase 5 selesai (`68ce9dd`, `c1bcf16`, diverifikasi live termasuk **finalize sungguhan** dengan izin eksplisit user pada data uji yang sepenuhnya terisolasi, lalu dibersihkan total — juga menyelesaikan utang verifikasi Fase 4 karena jalur posting yang sama kini terbukti bekerja). Menunggu persetujuan lanjut ke Fase 6.
+**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada), Fase 3 selesai (`3fc3937`, `276c9b8`, diverifikasi live — termasuk temuan bahwa packed di produksi 100% bergantung pada pencocokan-nama untuk kode, dan koreksi toleransi bulk sesuai keputusan user), Fase 4 selesai (`f38565d`, `297cada`, diverifikasi live — termasuk satu bug ditemukan+diperbaiki live (bar rincian tidak ter-update), dan satu langkah (posting lewat finalize sungguhan) sengaja tidak diuji untuk melindungi stok produksi — lihat catatan di Fase 4), Fase 5 selesai (`68ce9dd`, `c1bcf16`, diverifikasi live termasuk **finalize sungguhan** dengan izin eksplisit user pada data uji yang sepenuhnya terisolasi, lalu dibersihkan total — juga menyelesaikan utang verifikasi Fase 4 karena jalur posting yang sama kini terbukti bekerja), Fase 6 selesai (`4980ca7`, diverifikasi live termasuk **uji kegagalan posting di tengah yang sungguhan** — status kembali terkunci, posting ulang terbukti tidak menggandakan — sekaligus menemukan+memperbaiki celah nyata di beberapa RPC lama yang gagal secara diam-diam tanpa error). Menunggu persetujuan lanjut ke Fase 7.
 **Tanggal:** 2026-08-23
 **Tujuan:** Mengubah fitur Stock Opname dari "form penyesuaian stok" menjadi proses penghitungan fisik bulanan yang hasilnya bisa dipercaya, tanpa menambah beban tim di lapangan.
 
@@ -438,26 +438,27 @@ Baris temuan bertahan lewat refresh: `resumeStockTake` mendeteksinya lewat `is_f
 
 ---
 
-## Fase 6 — Tinjauan selisih & posting
+## Fase 6 — Tinjauan selisih & posting — SELESAI (`4980ca7`)
 
-**File:** `js/app.js` (`finalizeStockTake`)
+**File:** `js/app.js` (`collectStockTakeFinalizeData`, `openStockTakeReviewModal`, `executeStockTakePosting`, menggantikan `finalizeStockTake` lama), `js/packing.js` (`applyPackedCoffeeManualQtyDelta`).
 
-Sebelum tombol final, tampilkan layar tinjauan:
+**Layar tinjauan — DONE.** `confirm()` bawaan diganti modal "Review & Post": tiga kotak ringkasan (dihitung/belum dihitung/selisih), peringatan tegas kalau ada yang belum dihitung, tabel baris selisih (kode, item, sistem, aktual, selisih) — termasuk baris hasil rincian lot per-strip-code untuk grup yang sudah dirinci **bahkan saat totalnya kebetulan cocok dengan sistem** (cacat #6: lot bisa bergeser satu sama lain meski totalnya sama, jadi tetap perlu tulis, dan tinjauan harus menunjukkannya). Bukan gerbang persetujuan — tombol Posting langsung menjalankan `executeStockTakePosting()`.
 
-- Ringkasan: berapa item dihitung, berapa belum, berapa yang selisih.
-- Daftar **hanya baris yang selisih**, dengan angka sistem, hasil hitung, dan selisihnya. Baris hasil rincian lot ditampilkan dengan strip code-nya.
-- Peringatan tegas bila ada yang belum dihitung: *"12 item belum dihitung dan tidak akan disesuaikan."*
-- Baru kemudian tombol **Posting**.
+**Urutan posting — DONE, sesuai spesifikasi:** `counting` → `posting` → tulis penyesuaian satu per satu (setiap baris/lot yang berhasil langsung ditandai `posted_at`) → `posted` + `stock_takes.posted_at`. Dipisah dari layar tinjauan lewat `collectStockTakeFinalizeData()` — fungsi baca-saja yang dipakai baik untuk merender modal maupun (dipanggil ulang segar) untuk benar-benar memposting, supaya keduanya tidak pernah berbeda pendapat soal "apa yang akan terjadi".
 
-Ini bukan gerbang persetujuan (sesuai keputusan) — hanya memastikan yang menekan tombol melihat dampaknya. `confirm()` bawaan browser di `js/app.js:3697` diganti modal aplikasi.
+**Bila gagal di tengah — DONE:** status dikembalikan ke `counting`, bukan tertahan di `posting`. Baris yang sudah berhasil tetap memegang `posted_at`, dicek lewat fetch segar ke `stock_take_items` (bukan state di memori) sehingga aman dipakai bahkan setelah reload di tengah pemulihan. Retry melewati baris yang sudah `posted_at`, tidak menulis ulang.
 
-Urutan posting: `counting` → `posting` → tulis penyesuaian satu per satu (tandai `posted_at` di tiap baris yang berhasil) → `posted` + `stock_takes.posted_at`.
+**Temuan penting saat menyiapkan verifikasi (bukan asumsi — diuji langsung ke database):** beberapa RPC yang sudah lama dipakai (`refund_bulk_lot`, `set_packed_lot_remaining`, `consume_bulk_lot`) mengembalikan `null`/`0` secara diam-diam untuk id yang tidak ada — **bukan error Postgres**. Kode deteksi-kegagalan yang sebelumnya hanya mengecek `{error}` tidak akan pernah menangkap ini. Diperbaiki di `applyStockGroupAdjustmentToLots`, `applyStockGroupDetailedLotsAdjustment`, `applyFoundItemAdjustment` (kini memeriksa nilai balik RPC, bukan hanya error) dan `applyPackedCoffeeManualQtyDelta` (kini mengembalikan `true`/`false` — pemanggil lain yang sudah ada tidak terpengaruh karena tidak pernah memeriksa nilai baliknya).
 
-**Bila ada penyesuaian gagal di tengah:** kembalikan status ke **`counting`** — bukan dibiarkan di `posting`. Status aman adalah status terkunci. Baris yang sudah berhasil tetap memegang `posted_at`-nya, sehingga posting ulang melanjutkan dari titik terhenti tanpa menulis dua kali. Alasan lengkapnya di §5.2.
-
-**Verifikasi:**
-1. Opname dengan campuran item cocok, selisih, dirinci, dan belum dihitung. Hanya yang `counted = true` **dan** selisih yang boleh mengubah stok.
-2. **Uji posting gagal**: paksa satu penyesuaian gagal di tengah (misal dengan lot id yang tidak ada), pastikan status kembali `counting`, stok tetap terkunci, dan posting ulang tidak menggandakan penyesuaian yang sudah tersimpan. Jalankan kueri invarian ledger sesudahnya.
+**Verifikasi live (2026-08-27, akun `khaleed`/`admin2` via Claude in Chrome, take id 17):**
+1. `node test.js` — tanpa SyntaxError.
+2. Take dibuat (136-137 grup), dua "barang temuan" bulk ditambahkan: **YAMAN di STRONGHOLD S9X** (2,2kg, kombinasi baru, akan berhasil) dan **satu grup rusak sengaja** (`foundMeta.coffeeName` diarahkan ke nama kopi yang tidak ada sama sekali di sistem, ditambahkan langsung ke memori untuk memaksa kegagalan resolusi identitas yang terkendali — tidak menyentuh baris/lot nyata mana pun).
+3. Modal Review & Post dibuka — diverifikasi langsung dari DOM: ringkasan "2 dihitung · 135 belum dihitung · 2 selisih", peringatan tampil, kedua baris selisih tercantum benar (+2,2 / +1,5).
+4. Tombol Posting diklik — **gagal di tengah sesuai rencana**: alert "Posting failed partway through..." tampil persis seperti dirancang.
+5. Diverifikasi ke database: `stock_takes.status` kembali `counting`; baris `bulk_roasted_coffee` YAMAN (item pertama) **berhasil dibuat** dengan `bulk_available=2.20`; baris kopi rusak (item kedua) **tidak pernah dibuat**; `stock_take_items` milik YAMAN sudah punya `posted_at`.
+6. Item rusak dihapus dari sheet, Posting diklik ulang — berhasil ("Stock take finalized and stock adjusted.").
+7. **Dibuktikan tidak menggandakan**: `bulk_stock_movements` untuk baris YAMAN hanya punya **satu** baris ledger (dari percobaan pertama, bukan dua), `bulk_available` tetap 2,20 (bukan 4,40). `stock_takes` akhirnya `posted` dengan `total_items=136`, `variance_items=1`, `counted_items=1`, `skipped_items=135` — semuanya konsisten dengan sheet setelah item rusak dihapus.
+8. Dibersihkan: baris bulk YAMAN uji dan ledger-nya dihapus lewat `consume_bulk_lot` + delete langsung; riwayat `stock_takes` id 17 (`posted`) dibiarkan sebagai catatan sesuai §5.
 
 ---
 
