@@ -4649,10 +4649,16 @@ async function openAddFoundItemModal() {
 
     const catSelect = document.getElementById('fi-category');
     const sizeGroup = document.getElementById('fi-size-group');
+    const qtyInput = document.getElementById('fi-qty');
     function syncCategoryFields() {
         const isPacked = catSelect.value === 'packed';
         sizeGroup.style.display = isPacked ? '' : 'none';
         document.getElementById('fi-size').required = isPacked;
+        // Bulk is counted in kg (decimal) same as everywhere else in this
+        // feature — packed stays whole bags. Forgetting this made bulk
+        // quantities silently truncate to an integer (found live: typed
+        // 5.5kg, saved as 5).
+        qtyInput.step = isPacked ? '1' : '0.1';
     }
     catSelect.addEventListener('change', syncCategoryFields);
     syncCategoryFields();
@@ -4664,7 +4670,7 @@ async function openAddFoundItemModal() {
         const coffeeName = displayToName.get(typed) || typed;
         const info = coffeeByName.get(coffeeName);
         const machineId = parseInt(document.getElementById('fi-machine').value);
-        const qty = parseInt(document.getElementById('fi-qty').value);
+        const qty = category === 'packed' ? parseInt(qtyInput.value) : parseFloat(qtyInput.value);
 
         if (!info) {
             alert(window.t ? (window.t('alert_stockopname_found_unknown_coffee') || 'Please pick a coffee from the list — this is for stock the system already knows about, not a brand new coffee.') : 'Please pick a coffee from the list — this is for stock the system already knows about, not a brand new coffee.');
