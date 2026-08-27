@@ -3558,6 +3558,8 @@ async function buildStockTakeGroups() {
             category: 'packed',
             label: `${grp.name} · ${sizeLabel} · ${machineName}`,
             coffeeCode: grp.code,
+            machineName,
+            bagSizeG: grp.size,
             unit: 'bags',
             field: 'quantity',
             systemQty,
@@ -3805,7 +3807,18 @@ async function startStockTake() {
             system_qty: g.systemQty,
             actual_qty: null,
             variance: null,
-            counted: false
+            counted: false,
+            // Fase 7 bugfix: these snapshot columns existed since Fase 0 and
+            // buildStockTakeGroups has computed coffeeCode since Fase 3, but
+            // this insert never actually saved them — the live Tahap 1
+            // sheet never noticed because it reads g.coffeeCode from the
+            // in-memory group, not this row, so every take's Kode column
+            // was silently null in the database until Fase 7's history/
+            // detail view (which HAS to read from the DB, there's no live
+            // group to fall back on) made the gap visible.
+            coffee_code: g.coffeeCode || null,
+            machine_name: g.machineName || null,
+            bag_size_g: g.bagSizeG || null
         });
         if (itemErr) { console.error('Failed to create stock_take_items row for', g.label, itemErr); continue; }
         g.itemId = itemRow ? itemRow.id : null;
