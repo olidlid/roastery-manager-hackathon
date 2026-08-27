@@ -97,10 +97,13 @@ Jadi ini **risiko laten, bukan bug aktif**. Yang perlu dipastikan: apakah `machi
 
 Urutannya sengaja: yang paling murah dan paling menentukan dulu.
 
-### Langkah 1 — Pastikan `machine_id` wajib atau tidak (murah, tanpa risiko)
-Baca form pembuatan order (`js/sales.js`, modal Submit Sales Request). Cek apakah select mesin `required` dan apakah ada jalur simpan yang bisa melewatkannya.
-- **Wajib** → §4.2 turun jadi catatan defensif saja; tambahkan guard + `console.error` supaya kalau suatu hari terpicu, tidak diam.
-- **Opsional** → §4.2 naik jadi bug nyata yang harus diperbaiki, bukan laten.
+### Langkah 1 — Pastikan `machine_id` wajib atau tidak (murah, tanpa risiko) — ✅ SELESAI 2026-08-27
+
+**Hasil: WAJIB.** Form (`#modal-request-form`, `js/sales.js:2229`) punya `novalidate`, jadi validasi HTML5 native dimatikan — tapi submit handler-nya (`js/sales.js:2646-2665`) punya validator custom sendiri: `form.querySelectorAll('[required]').forEach(...)` memblokir submit dengan bubble merah kalau kosong. Select mesin (`js/sales.js:2548`, opsi placeholder `disabled selected` di baris 2201) tetap membawa atribut `required`, jadi tetap tertangkap validator ini. Diperiksa di **kedua** jalur simpan — order baru (baris ~2804-2831) dan edit (baris ~2770-2803) — sama-sama lewat validator yang sama.
+
+Dicek juga semua pemanggil `saveData('request_order_items', ...)` lain di repo (`js/leader.js:120`, `js/packing.js:2229`/`2574`, beberapa di `js/sales.js` sendiri) — semuanya menyimpan ulang objek item yang **sudah ada** (hasil fetch dari DB), bukan membuat baris baru. `js/leader.js`'s `handleApprove()` khususnya hanya mengubah `item_status`/`quantity_pending` pada baris yang sudah ada, tidak pernah menyentuh `machine_id` dan tidak membuat baris baru — dan (dicatat sebagai pengamatan sampingan, di luar cakupan investigasi ini) jalur approve di leader.js sama sekali tidak memanggil logika deduksi stok `findMatchingPacked`/FIFO — itu murni transisi status, bukan bug.
+
+**Kesimpulan sesuai percabangan rencana:** §4.2 turun jadi catatan defensif. Guard + `console.error` sudah ditambahkan di `js/sales.js:1726` (persis sebelum baris `szItems = ...`) — kalau cabang tanpa `coffee_code` dan tanpa `machine_id` ini suatu hari benar-benar terpicu, sekarang akan gagal dengan jejak log, bukan diam-diam mengkredit `quantity_prepared` tanpa mengurangi stok apa pun. Perubahan ini murni tambahan (tidak mengubah perilaku jalur normal), disyntax-check via `node --check js/sales.js` + `node test.js`, versi di `index.html` dinaikkan ke `js/sales.js?v=28`.
 
 ### Langkah 2 — Verifikasi FIFO lintas-mesin (inti dari task ini)
 Pakai pola pengujian yang sudah terbukti sepanjang sesi ini:

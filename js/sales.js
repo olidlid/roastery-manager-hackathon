@@ -1723,6 +1723,12 @@ async function approveSalesOrder(orderId) {
             // rows/machines exactly when the calendar says it should.
             if (fQty > 0) {
                 const matchingPacked = findMatchingPacked(item);
+                if (!item.coffee_code && !item.machine_id) {
+                    // Defensive: the order form requires machine_id on every item (see modal-request-form's
+                    // custom [required] validator), so this branch should be unreachable. If it's ever hit,
+                    // fail loudly instead of silently crediting quantity_prepared with zero stock deducted.
+                    console.error('[sales] request_order_item has neither coffee_code nor machine_id — no packed stock can be matched, quantity_prepared will be credited without any deduction. item:', item);
+                }
                 const szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
                 const szItemById = new Map(szItems.map(p => [p.id, p]));
 
