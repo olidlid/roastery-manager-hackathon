@@ -3741,9 +3741,10 @@ async function resumeStockTake(take) {
     currentStockTakeId = take.id;
     _stockOpnamePackedLotsCache = null;
 
-    const [{ data: items }, groups] = await Promise.all([
+    const [{ data: items }, groups, { data: machinesForFound }] = await Promise.all([
         fetchData('stock_take_items'),
-        buildStockTakeGroups()
+        buildStockTakeGroups(),
+        fetchData('machines')
     ]);
     const allMyItems = (items || []).filter(it => it.stock_take_id === take.id);
     // Fase 4: lot-detail rows (parent_item_id set) are children of a group
@@ -3791,6 +3792,33 @@ async function resumeStockTake(take) {
                 }));
             }
             resumedGroups.push(g);
+        } else if (item.is_found_item) {
+            // Fase 5: a found item never has a matching fresh-built group
+            // (buildStockTakeGroups can't produce one — that's the whole
+            // point, its system stock was 0/hidden) so it would otherwise
+            // fall into the stale-row branch below and lose its ability to
+            // post. foundMeta is reconstructed from the label this same
+            // modal writes (`name · size · machine` / `name · machine` —
+            // always the first ' · '-separated piece) plus the snapshot
+            // columns saved at add-time, so a refresh doesn't strand it.
+            const machine = (machinesForFound || []).find(m => m.name === item.machine_name);
+            resumedGroups.push({
+                category: item.category,
+                label: item.item_name,
+                unit: item.unit,
+                coffeeCode: item.coffee_code || '',
+                systemQty: 0,
+                rows: [],
+                itemId: item.id,
+                actualQty,
+                counted: !!item.counted,
+                isFoundItem: true,
+                foundMeta: {
+                    coffeeName: (item.item_name || '').split(' · ')[0],
+                    machineId: machine ? machine.id : null,
+                    gram: item.bag_size_g ? parseInt(item.bag_size_g) : null
+                }
+            });
         } else {
             resumedGroups.push({
                 category: item.category,
@@ -3834,17 +3862,22 @@ function renderStockTakeSheet() {
         const hasValue = g.actualQty !== null && g.actualQty !== undefined;
         const valueAttr = hasValue ? `value="${g.actualQty}"` : '';
         const staleTag = g.stale ? ` <span style="font-size:0.65rem; color:var(--warning);" title="${window.t ? (window.t('stockopname_stale_row') || 'not found — item changed since this take started') : 'not found — item changed since this take started'}">⚠</span>` : '';
+        // Fase 5: a found item never had a real packed_coffee row at Tahap
+        // 1 time (that's why it needed this button at all) — its lots don't
+        // exist until Finalize creates them, so it gets the same "found"
+        // marker instead of a stale one and no lot-detail arrow.
+        const foundTag = g.isFoundItem ? ` <span style="font-size:0.65rem; color:var(--success); font-weight:700;" title="${window.t ? (window.t('stockopname_found_row') || 'found item — not in the original list') : 'found item — not in the original list'}">🔍</span>` : '';
         // Fase 4 §4.5 point 1: the arrow opens the lot-detail modal for this
         // group alone — only packed has lots to detail (§1: "Tahap 2 hanya
-        // berlaku untuk packed coffee"), and a stale row has no live rows to
-        // fetch lots from, so both get a blank cell instead.
-        const arrowCell = (g.category === 'packed' && !g.stale)
+        // berlaku untuk packed coffee"), and a stale or found row has no
+        // live rows to fetch lots from, so both get a blank cell instead.
+        const arrowCell = (g.category === 'packed' && !g.stale && !g.isFoundItem)
             ? `<td class="text-center" style="cursor:pointer; color:var(--text-muted); font-weight:700;" onclick="openStockTakeDetailModal([${i}])" title="${window.t ? (window.t('stockopname_open_detail') || 'Enter lot detail') : 'Enter lot detail'}">›</td>`
             : `<td></td>`;
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td class="text-center" style="font-family:monospace; font-weight:700;">${g.coffeeCode || '—'}</td>
-            <td><strong>${g.label}</strong>${staleTag}</td>
+            <td><strong>${g.label}</strong>${staleTag}${foundTag}</td>
             <td class="text-center">${sysDisplay} ${g.unit}</td>
             <td class="text-center"><input type="number" class="form-control stockopname-actual-input" data-group-index="${i}" ${valueAttr} step="${step}" min="0" placeholder="—" style="width:110px; text-align:center; margin:0 auto;"></td>
             <td class="stockopname-status-cell text-center" data-group-index="${i}">${stockOpnameStatusHtml(g, hasValue ? g.actualQty : null)}</td>
@@ -3874,6 +3907,8 @@ function renderStockTakeSheet() {
     // the header, regardless of whether anything currently needs detailing
     // — idempotent onclick assignment, same convention loadStockOpnameReport
     // already uses for the Start/Cancel/Finalize buttons.
+    const addFoundBtn = document.getElementById('btn-stockopname-add-found');
+    if (addFoundBtn) addFoundBtn.onclick = openAddFoundItemModal;
     const printStage2Btn = document.getElementById('btn-stockopname-print-stage2');
     if (printStage2Btn) printStage2Btn.onclick = printStockCountFormStage2;
     const printStage2BarBtn = document.getElementById('btn-stockopname-print-stage2-bar');
@@ -4535,6 +4570,218 @@ async function saveStockTakeDetailForGroup(groupIndex, g, filledLots) {
     }
 }
 
+// Fase 5 §Barang temuan (cacat #2): buildStockTakeGroups filters bulk and
+// packed groups whose system quantity is <= 0 (green bean never gets that
+// filter — see the comment on that forEach — so it can never have a
+// "found" case, only bulk/packed can). A team that physically finds real
+// stock for one of these during counting has nowhere to enter it without
+// this button, short of printing hundreds of blank zero-stock rows nobody
+// wants (the whole reason cacat #2 wasn't just "remove the filter").
+// Deliberately requires picking an existing green_coffee/blend_recipes
+// entry from the list (not a free-typed name) — this is for stock the
+// system already knows about but temporarily lost track of, not for
+// registering a brand new coffee identity through a stock count.
+async function openAddFoundItemModal() {
+    if (!currentStockTakeGroups || !currentStockTakeId) return;
+    const [
+        { data: greenbeans }, { data: recipes }, { data: machines }, { data: sizes }
+    ] = await Promise.all([
+        fetchData('green_coffee'), fetchData('blend_recipes'),
+        fetchData('machines'), fetchData('packaging_sizes')
+    ]);
+    const activeSizes = (sizes || []).filter(s => s.is_visible).sort((a, b) => a.gram - b.gram);
+
+    // Same "CODE — NAME" datalist convention as js/packing.js's
+    // openCustomPackingModal, so identity resolves the same way every other
+    // manual-entry flow in the app does.
+    const coffeeByName = new Map();
+    (greenbeans || []).forEach(gb => { if (!coffeeByName.has(gb.name)) coffeeByName.set(gb.name, { code: gb.code || '' }); });
+    (recipes || []).forEach(r => { if (!coffeeByName.has(r.name)) coffeeByName.set(r.name, { code: r.code || '' }); });
+    const displayToName = new Map();
+    const sortedNames = Array.from(coffeeByName.keys()).sort((a, b) => a.localeCompare(b));
+    const datalistOptions = sortedNames.map(name => {
+        const code = coffeeByName.get(name).code;
+        const display = code ? `${code} — ${name}` : name;
+        displayToName.set(display, name);
+        return `<option value="${display}"></option>`;
+    }).join('');
+    const machineOptions = (machines || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+    const sizeOptions = activeSizes.map(s => `<option value="${s.gram}">${s.gram >= 1000 ? (s.gram / 1000) + 'kg' : s.gram + 'g'}</option>`).join('');
+
+    const html = `
+        <form id="modal-found-item-form" novalidate>
+            <div class="form-group">
+                <label class="form-label">${window.t ? (window.t('col_category') || 'Category') : 'Category'}</label>
+                <select id="fi-category" class="form-control" required>
+                    <option value="bulk">${window.t ? (window.t('cat_bulk') || 'Bulk Roasted') : 'Bulk Roasted'}</option>
+                    <option value="packed">${window.t ? (window.t('cat_packed') || 'Packed') : 'Packed'}</option>
+                </select>
+            </div>
+            <div class="form-group mt-3">
+                <label class="form-label">${window.t ? (window.t('col_item') || 'Item') : 'Item'}</label>
+                <input type="text" id="fi-coffee" class="form-control" list="fi-coffee-list" placeholder="..." required>
+                <datalist id="fi-coffee-list">${datalistOptions}</datalist>
+            </div>
+            <div class="form-row mt-3">
+                <div class="form-group" id="fi-size-group">
+                    <label class="form-label">${window.t ? (window.t('stockopname_lbl_bag_size') || 'Bag Size') : 'Bag Size'}</label>
+                    <select id="fi-size" class="form-control">${sizeOptions}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">${window.t ? (window.t('stockopname_lbl_machine') || 'Machine') : 'Machine'}</label>
+                    <select id="fi-machine" class="form-control" required>
+                        <option value="" disabled selected>--</option>
+                        ${machineOptions}
+                    </select>
+                </div>
+            </div>
+            <div class="form-group mt-3">
+                <label class="form-label">${window.t ? (window.t('col_actual_qty') || 'Actual') : 'Actual'}</label>
+                <input type="number" id="fi-qty" class="form-control" min="1" step="1" required>
+            </div>
+            <div class="modal-footer-actions-lg">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">${window.t ? (window.t('btn_cancel') || 'Cancel') : 'Cancel'}</button>
+                <button type="submit" class="btn btn-primary">${window.t ? (window.t('btn_stockopname_add_found') || 'Add Found Item') : 'Add Found Item'}</button>
+            </div>
+        </form>
+    `;
+    openModal(window.t ? (window.t('stockopname_add_found_title') || 'Add Found Item') : 'Add Found Item', html, '560px');
+
+    const catSelect = document.getElementById('fi-category');
+    const sizeGroup = document.getElementById('fi-size-group');
+    function syncCategoryFields() {
+        const isPacked = catSelect.value === 'packed';
+        sizeGroup.style.display = isPacked ? '' : 'none';
+        document.getElementById('fi-size').required = isPacked;
+    }
+    catSelect.addEventListener('change', syncCategoryFields);
+    syncCategoryFields();
+
+    document.getElementById('modal-found-item-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const category = catSelect.value;
+        const typed = document.getElementById('fi-coffee').value.trim();
+        const coffeeName = displayToName.get(typed) || typed;
+        const info = coffeeByName.get(coffeeName);
+        const machineId = parseInt(document.getElementById('fi-machine').value);
+        const qty = parseInt(document.getElementById('fi-qty').value);
+
+        if (!info) {
+            alert(window.t ? (window.t('alert_stockopname_found_unknown_coffee') || 'Please pick a coffee from the list — this is for stock the system already knows about, not a brand new coffee.') : 'Please pick a coffee from the list — this is for stock the system already knows about, not a brand new coffee.');
+            return;
+        }
+        if (isNaN(machineId) || isNaN(qty) || qty <= 0) {
+            alert(window.t ? (window.t('alert_stockopname_found_incomplete') || 'Please complete all fields with a quantity greater than 0.') : 'Please complete all fields with a quantity greater than 0.');
+            return;
+        }
+
+        const machineName = ((machines || []).find(m => m.id === machineId) || {}).name || '';
+        let label, unit, gram = null;
+        if (category === 'packed') {
+            gram = parseInt(document.getElementById('fi-size').value);
+            const sizeLabel = gram >= 1000 ? `${gram / 1000}kg` : `${gram}g`;
+            label = `${coffeeName} · ${sizeLabel} · ${machineName}`;
+            unit = 'bags';
+        } else {
+            label = `${coffeeName} · ${machineName}`;
+            unit = 'kg';
+        }
+
+        // Deliberately does NOT touch real stock here — same as every other
+        // row on the sheet, the adjustment only happens at Finalize
+        // (finalizeStockTake's foundItemAdjustments branch), so an
+        // abandoned/cancelled take never left a found item's stock
+        // half-applied.
+        const { data: itemRow, error: itemErr } = await saveData('stock_take_items', {
+            stock_take_id: currentStockTakeId,
+            category, item_name: label, unit,
+            system_qty: 0, actual_qty: qty, variance: qty,
+            counted: true, counted_at: new Date().toISOString(),
+            counted_by: (currentUser && currentUser.name) || null,
+            is_found_item: true,
+            coffee_code: info.code || null,
+            machine_name: machineName || null,
+            bag_size_g: gram
+        });
+        if (itemErr) { console.error('Failed to save found item row:', itemErr); alert('Failed to save found item: ' + itemErr.message); return; }
+
+        currentStockTakeGroups.push({
+            category, label, coffeeCode: info.code || '', unit,
+            systemQty: 0, rows: [], itemId: itemRow ? itemRow.id : null,
+            actualQty: qty, counted: true, isFoundItem: true,
+            foundMeta: { coffeeName, machineId, gram }
+        });
+
+        document.getElementById('btn-close-modal').click();
+        renderStockTakeSheet();
+    });
+}
+
+// Fase 5 posting: resolves the found item's identity fresh at posting time
+// (green_coffee/blend_recipes lookup by name) rather than storing
+// single_coffee_id/blend_recipe_id up front — foundMeta is the same shape
+// whether it came from a same-session add or a resume reconstruction, so
+// this is the one place that needs to know about coffee_type at all.
+async function applyFoundItemAdjustment(group, qty, stockTakeId) {
+    if (!qty || qty <= 0 || !group.foundMeta) return;
+    const { coffeeName, machineId, gram } = group.foundMeta;
+    if (!machineId) { console.error('Found item has no resolvable machine, skipping adjustment:', group.label); return; }
+
+    if (group.category === 'packed') {
+        const row = await getOrCreatePackedCoffeeRow(coffeeName, gram, machineId);
+        if (!row) { console.error('Failed to resolve packed row for found item', group.label); return; }
+        await applyPackedCoffeeManualQtyDelta(row.id, qty, 'stocktake', 'stock_takes', stockTakeId);
+        return;
+    }
+
+    if (group.category === 'bulk') {
+        const [{ data: greenbeans }, { data: recipes }, { data: bulkList }] = await Promise.all([
+            fetchData('green_coffee'), fetchData('blend_recipes'), fetchData('bulk_roasted_coffee')
+        ]);
+        const gb = (greenbeans || []).find(g => g.name === coffeeName);
+        const recipe = !gb ? (recipes || []).find(r => r.name === coffeeName) : null;
+        if (!gb && !recipe) { console.error('Could not resolve coffee identity for found bulk item', group.label); return; }
+        const coffeeType = gb ? 'Single' : 'Blend';
+        const singleId = gb ? gb.id : null;
+        const blendId = recipe ? recipe.id : null;
+
+        // Same existing-row-vs-fresh-insert shape js/roasting.js's
+        // addWeightToBulkRoastedCoffee uses, adapted here since that helper
+        // hardcodes mv_operation:'roast' and can't be reused as-is —
+        // matched by identity + machine only (not production_date), since
+        // a found item has no real roast day to match against; refunding
+        // into whatever row already carries this identity is correct
+        // regardless of when it was originally roasted, but a brand new
+        // row gets today's date rather than guessing an old one.
+        const existing = (bulkList || []).find(b =>
+            b.coffee_type === coffeeType &&
+            (coffeeType === 'Single' ? b.single_coffee_id === singleId : b.blend_recipe_id === blendId) &&
+            b.machine_id === machineId && !b.is_repack
+        );
+        if (existing) {
+            const { error } = await window.supabaseClient.rpc('refund_bulk_lot', {
+                p_bulk_id: existing.id, p_kg: qty,
+                p_operation: 'stocktake', p_ref_table: 'stock_takes', p_ref_id: stockTakeId,
+                p_user: (currentUser && currentUser.name) || null
+            });
+            if (error) console.error('refund_bulk_lot RPC failed for found item:', error);
+        } else {
+            const { error } = await saveData('bulk_roasted_coffee', {
+                coffee_type: coffeeType,
+                single_coffee_id: singleId,
+                blend_recipe_id: blendId,
+                machine_id: machineId,
+                coffee_name: coffeeName,
+                bulk_available: qty,
+                production_date: new Date().toISOString().split('T')[0],
+                mv_operation: 'stocktake', mv_ref_table: 'stock_takes', mv_ref_id: stockTakeId,
+                mv_user: (currentUser && currentUser.name) || null
+            });
+            if (error) console.error('Failed to insert bulk row for found item:', error);
+        }
+    }
+}
+
 async function finalizeStockTake() {
     if (!currentStockTakeGroups || !currentStockTakeId) return;
     const tbody = document.getElementById('stockopname-count-body');
@@ -4546,6 +4793,7 @@ async function finalizeStockTake() {
     const lines = [];
     const adjustments = [];
     const detailedLotGroups = [];
+    const foundItemGroups = [];
     const itemUpdates = [];
     currentStockTakeGroups.forEach((g, i) => {
         const input = tbody.querySelector(`.stockopname-actual-input[data-group-index="${i}"]`);
@@ -4578,7 +4826,13 @@ async function finalizeStockTake() {
         // (a real risk since detailing exists specifically to catch that).
         // This is checked before the matched/guessed-split branch below so
         // a detailed-and-matching group never silently skips its lot writes.
-        if (g.detailed && g.category === 'packed' && g.lotBreakdown) {
+        if (g.isFoundItem) {
+            // Fase 5: a found item's systemQty is always 0 by definition, so
+            // it can never "match" — it always needs its stock created,
+            // never distributed via the guessed-split branch below (there
+            // is nothing existing to distribute against).
+            foundItemGroups.push({ group: g, actual });
+        } else if (g.detailed && g.category === 'packed' && g.lotBreakdown) {
             detailedLotGroups.push(g);
         } else if (!matched) {
             if (g.stale) {
@@ -4643,6 +4897,12 @@ async function finalizeStockTake() {
     // lot via set_packed_lot_remaining, no distribution logic involved.
     for (const g of detailedLotGroups) {
         await applyStockGroupDetailedLotsAdjustment(g, currentStockTakeId);
+    }
+    // Fase 5: found items create their stock (or refund into an existing
+    // zero row) instead of adjusting an existing one — nothing to
+    // distribute against, since systemQty is always 0 by definition.
+    for (const { group, actual } of foundItemGroups) {
+        await applyFoundItemAdjustment(group, actual, currentStockTakeId);
     }
 
     alert(window.t ? (window.t('alert_stockopname_saved') || 'Stock take finalized and stock adjusted.') : 'Stock take finalized and stock adjusted.');
