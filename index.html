@@ -1925,6 +1925,12 @@
 
                         <!-- History (default view) -->
                         <div id="stockopname-history">
+                            <div class="card" id="stockopname-accuracy-trend-card" style="margin-bottom:16px;">
+                                <h3 class="card-title" data-i18n="stockopname_accuracy_trend_title">Accuracy Trend</h3>
+                                <div style="position:relative; height:220px;">
+                                    <canvas id="stockopname-accuracy-chart"></canvas>
+                                </div>
+                            </div>
                             <div class="card" style="overflow-x:auto;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                                     <h3 class="card-title" style="margin-bottom:0;" data-i18n="stockopname_history_title">Stock Opname History</h3>
@@ -1941,9 +1947,11 @@
                                         <thead>
                                             <tr>
                                                 <th data-i18n="col_date">Date</th>
+                                                <th data-i18n="col_status">Status</th>
                                                 <th data-i18n="col_performed_by">Performed By</th>
                                                 <th style="text-align:center;" data-i18n="col_items">Items</th>
                                                 <th style="text-align:center;" data-i18n="col_variances">Differences</th>
+                                                <th style="text-align:center;" data-i18n="stockopname_col_accuracy">Accuracy</th>
                                                 <th data-i18n="col_notes">Notes</th>
                                                 <th style="text-align:center;" data-i18n="col_actions">Actions</th>
                                             </tr>
@@ -2682,7 +2690,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=47"></script>
+    <script src="js/translations.js?v=48"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
@@ -2694,6 +2702,6 @@
     <script src="js/sales.js?v=27"></script>
     <script src="js/settings.js?v=23"></script>
     <script src="js/tracking.js?v=8"></script>
-    <script src="js/app.js?v=94"></script>
+    <script src="js/app.js?v=95"></script>
 </body>
 </html>

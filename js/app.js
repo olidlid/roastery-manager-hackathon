@@ -3627,7 +3627,10 @@ async function loadStockOpnameReport(startDate, endDate) {
     if (sheet) sheet.classList.add('hidden');
     if (history) history.classList.remove('hidden');
 
-    const { data: takes } = await fetchData('stock_takes');
+    const [{ data: takes }, { data: allItems }] = await Promise.all([
+        fetchData('stock_takes'),
+        fetchData('stock_take_items')
+    ]);
     const filtered = (takes || []).filter(t => {
         const d = t.take_date || t.created_at?.split('T')[0];
         if (!d) return true;
@@ -3636,24 +3639,114 @@ async function loadStockOpnameReport(startDate, endDate) {
         return true;
     }).sort((a, b) => (b.take_date || '').localeCompare(a.take_date || '') || b.id - a.id);
 
+    // Fase 7: accuracy needs each take's own items, so group once here
+    // instead of re-filtering the full stock_take_items table per row.
+    const itemsByTake = new Map();
+    (allItems || []).forEach(it => {
+        if (!itemsByTake.has(it.stock_take_id)) itemsByTake.set(it.stock_take_id, []);
+        itemsByTake.get(it.stock_take_id).push(it);
+    });
+
+    renderStockopnameAccuracyTrend(filtered, itemsByTake);
+
     const tbody = document.getElementById('stockopname-history-body');
     if (!tbody) return;
     tbody.innerHTML = '';
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" class="table-empty-state">${window.t ? (window.t('stockopname_empty') || 'No stock takes recorded yet.') : 'No stock takes recorded yet.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty-state">${window.t ? (window.t('stockopname_empty') || 'No stock takes recorded yet.') : 'No stock takes recorded yet.'}</td></tr>`;
         return;
     }
     filtered.forEach(t => {
+        const accuracy = computeStockTakeAccuracy(itemsByTake.get(t.id));
+        const accuracyDisplay = accuracy
+            ? `${accuracy.pct.toFixed(0)}% <span style="color:var(--text-muted); font-weight:400;">(${accuracy.matched}/${accuracy.total})</span>`
+            : '—';
+        const statusKey = t.status === 'cancelled' ? 'stockopname_status_cancelled' : 'stockopname_status_posted';
+        const statusFallback = t.status === 'cancelled' ? 'Cancelled' : 'Posted';
+        const statusColor = t.status === 'cancelled' ? 'var(--text-muted)' : 'var(--success)';
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td><strong>${t.take_date || '-'}</strong></td>
+            <td><span style="font-size:0.72rem; font-weight:700; color:${statusColor};">${window.t ? (window.t(statusKey) || statusFallback) : statusFallback}</span></td>
             <td>${t.performed_by || '-'}</td>
-            <td class="text-center">${t.total_items || 0}</td>
+            <td class="text-center">${t.total_items || 0} <span style="color:var(--text-muted);">(${t.skipped_items || 0} ${window.t ? (window.t('stockopname_col_skipped') || 'not counted') : 'not counted'})</span></td>
             <td style="text-align:center; ${(t.variance_items || 0) > 0 ? 'color:var(--danger); font-weight:700;' : ''}">${t.variance_items || 0}</td>
+            <td class="text-center">${accuracyDisplay}</td>
             <td>${t.notes || '-'}</td>
             <td class="text-center"><button class="btn btn-secondary btn-sm" onclick="viewStockTake(${t.id})">${window.t ? (window.t('btn_view') || 'View') : 'View'}</button></td>
         `;
         tbody.appendChild(tr);
+    });
+}
+
+// Fase 7: matched top-level counted rows ÷ all top-level counted rows.
+// Deliberately excludes two kinds of row a raw count over stock_take_items
+// would otherwise skew:
+//  - lot-detail children (parent_item_id set) — whether a LOT matches
+//    Stage 1 is a different question from "did the physical count match
+//    the system", and one messy coffee's dozen lot rows shouldn't dominate
+//    the denominator.
+//  - found items (is_found_item) — system_qty is always 0 by definition,
+//    so they can never "match"; that's the system having no record at
+//    all, not a counting miss, and would unfairly drag accuracy down for
+//    a genuinely good count.
+function computeStockTakeAccuracy(items) {
+    const topLevel = (items || []).filter(it => !it.parent_item_id && !it.is_found_item && it.counted);
+    if (topLevel.length === 0) return null;
+    const matched = topLevel.filter(it => stockOpnameVarianceIsMatch(it.category, parseFloat(it.system_qty) || 0, parseFloat(it.variance) || 0)).length;
+    return { matched, total: topLevel.length, pct: (matched / topLevel.length) * 100 };
+}
+
+// Fase 7: month-over-month accuracy trend across POSTED takes only
+// (cancelled ones never really counted anything) — one point per calendar
+// month, averaging every take's own accuracy that landed in that month.
+let stockopnameAccuracyChart = null;
+function renderStockopnameAccuracyTrend(takes, itemsByTake) {
+    const canvas = document.getElementById('stockopname-accuracy-chart');
+    const card = document.getElementById('stockopname-accuracy-trend-card');
+    if (!canvas) return;
+
+    const byMonth = new Map(); // 'YYYY-MM' -> [pct, pct, ...]
+    (takes || []).forEach(t => {
+        if (t.status !== 'posted') return;
+        const acc = computeStockTakeAccuracy(itemsByTake.get(t.id));
+        if (!acc) return;
+        const month = (t.take_date || '').slice(0, 7);
+        if (!month) return;
+        if (!byMonth.has(month)) byMonth.set(month, []);
+        byMonth.get(month).push(acc.pct);
+    });
+
+    if (card) card.style.display = byMonth.size === 0 ? 'none' : '';
+    if (byMonth.size === 0) return;
+
+    const months = Array.from(byMonth.keys()).sort();
+    const avgPct = months.map(m => {
+        const vals = byMonth.get(m);
+        return vals.reduce((s, v) => s + v, 0) / vals.length;
+    });
+
+    if (stockopnameAccuracyChart) stockopnameAccuracyChart.destroy();
+    stockopnameAccuracyChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: months,
+            datasets: [{
+                label: window.t ? (window.t('stockopname_col_accuracy') || 'Accuracy') : 'Accuracy',
+                data: avgPct,
+                borderColor: 'rgb(45, 80, 22)',
+                backgroundColor: 'rgba(45, 80, 22, 0.15)',
+                fill: true,
+                tension: 0.25,
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { y: { min: 0, max: 100, ticks: { callback: (v) => v + '%' } } },
+            plugins: { legend: { display: false } }
+        }
     });
 }
 
@@ -3946,11 +4039,19 @@ function formatVarianceText(variance, unit) {
 const STOCKOPNAME_KG_TOLERANCE_PCT = 0.01;
 const STOCKOPNAME_KG_TOLERANCE_MIN_KG = 0.1;
 
-function stockOpnameIsMatch(group, actual) {
-    const variance = actual - group.systemQty;
-    if (group.category !== 'greenbean') return Math.abs(variance) < 1e-9;
-    const tolerance = Math.max(STOCKOPNAME_KG_TOLERANCE_MIN_KG, group.systemQty * STOCKOPNAME_KG_TOLERANCE_PCT);
+// Fase 7: pulled out of stockOpnameIsMatch so history/accuracy reporting
+// can reuse the exact same tolerance rule from already-saved
+// stock_take_items rows (category/system_qty/variance), without needing a
+// live `group` object — the live sheet and the history view must never be
+// able to disagree about what counts as a match.
+function stockOpnameVarianceIsMatch(category, systemQty, variance) {
+    if (category !== 'greenbean') return Math.abs(variance) < 1e-9;
+    const tolerance = Math.max(STOCKOPNAME_KG_TOLERANCE_MIN_KG, systemQty * STOCKOPNAME_KG_TOLERANCE_PCT);
     return Math.abs(variance) <= tolerance;
+}
+
+function stockOpnameIsMatch(group, actual) {
+    return stockOpnameVarianceIsMatch(group.category, group.systemQty, actual - group.systemQty);
 }
 
 // Renders the Status cell's content for one group: "—" when nothing has
@@ -5098,62 +5199,106 @@ async function viewStockTake(takeId) {
         fetchData('stock_take_items')
     ]);
     const take = (takes || []).find(t => t.id === takeId);
-    const lines = (items || []).filter(it => it.stock_take_id === takeId);
+    const allLines = (items || []).filter(it => it.stock_take_id === takeId);
+    // Fase 7: children (lot-detail rows, parent_item_id set) render nested
+    // under their own parent instead of as flat siblings — mixing them in
+    // flatly made a detailed group's dozen lot rows indistinguishable from
+    // ordinary top-level items, and inflated the row count misleadingly.
+    const topLevel = allLines.filter(l => !l.parent_item_id);
+    const childrenByParent = new Map();
+    allLines.filter(l => l.parent_item_id).forEach(l => {
+        if (!childrenByParent.has(l.parent_item_id)) childrenByParent.set(l.parent_item_id, []);
+        childrenByParent.get(l.parent_item_id).push(l);
+    });
+
+    const fmtQty = (v, unit) => {
+        const n = parseFloat(v);
+        if (isNaN(n)) return '-';
+        return unit === 'kg' ? n.toFixed(1) : n;
+    };
 
     let rowsHtml = '';
-    lines.forEach(l => {
-        const sys = l.unit === 'kg' ? parseFloat(l.system_qty).toFixed(1) : l.system_qty;
+    topLevel.forEach(l => {
+        const sys = fmtQty(l.system_qty, l.unit);
         // Stock Opname Phase 1: rows saved before this migration have no
         // `counted` value to trust (it defaults false for all historical
         // data — see the migration's own note), so they fall back to the
-        // old always-"counted" display. Only take.id's created after the
-        // migration carry a meaningful `counted` flag.
+        // old always-"counted" display.
         const wasCounted = l.counted === true || l.actual_qty !== null;
+        const foundTag = l.is_found_item ? ` <span style="font-size:0.65rem; color:var(--success);" title="${window.t ? (window.t('stockopname_found_row') || 'found item') : 'found item'}">🔍</span>` : '';
+        const children = childrenByParent.get(l.id) || [];
+
+        let statusHtml;
         if (!wasCounted) {
-            rowsHtml += `
-            <tr>
-                <td style="padding:6px 10px; border-bottom:1px solid var(--border);"><span style="font-size:0.7rem; color:#0891b2; background:rgba(6,182,212,0.1); padding:2px 6px; border-radius:5px;">${stockCategoryLabel(l.category)}</span></td>
-                <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${l.item_name}</td>
-                <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center;">${sys} ${l.unit}</td>
-                <td colspan="2" style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center; color:var(--text-muted); font-style:italic;">${window.t ? (window.t('stockopname_not_counted') || 'Not counted') : 'Not counted'}</td>
-            </tr>`;
-            return;
+            statusHtml = `<span style="color:var(--text-muted); font-style:italic;">${window.t ? (window.t('stockopname_not_counted') || 'Not counted') : 'Not counted'}</span>`;
+        } else if (children.length > 0) {
+            // A detailed group's own status is "Detailed" regardless of
+            // whether its final total happens to match system — same
+            // convention the live sheet uses (cacat #6: the lots can still
+            // have shifted against each other even when the sum nets even).
+            statusHtml = `<span style="color:var(--success); font-weight:700;">📋 ${window.t ? (window.t('stockopname_status_detailed') || 'Detailed') : 'Detailed'}</span>`;
+        } else {
+            const varN = parseFloat(l.variance) || 0;
+            const isMatch = stockOpnameVarianceIsMatch(l.category, parseFloat(l.system_qty) || 0, varN);
+            statusHtml = isMatch
+                ? `<span style="color:var(--success); font-weight:700;">✓ ${window.t ? (window.t('stockopname_status_match') || 'Match') : 'Match'}</span>`
+                : `<span style="color:${varN > 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:700;">${window.t ? (window.t('col_variance') || 'Difference') : 'Difference'} ${formatVarianceText(varN, l.unit)}</span>`;
         }
-        const act = l.unit === 'kg' ? parseFloat(l.actual_qty).toFixed(1) : l.actual_qty;
-        const varN = parseFloat(l.variance) || 0;
-        const varDisplay = l.unit === 'kg' ? varN.toFixed(1) : varN;
-        const varColor = varN === 0 ? 'var(--text-muted)' : (varN > 0 ? 'var(--success)' : 'var(--danger)');
+
+        const actDisplay = wasCounted ? `${fmtQty(l.actual_qty, l.unit)} ${l.unit}` : '—';
+
         rowsHtml += `
             <tr>
-                <td style="padding:6px 10px; border-bottom:1px solid var(--border);"><span style="font-size:0.7rem; color:#0891b2; background:rgba(6,182,212,0.1); padding:2px 6px; border-radius:5px;">${stockCategoryLabel(l.category)}</span></td>
-                <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${l.item_name}</td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); font-family:monospace; font-weight:700;">${l.coffee_code || '—'}</td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border);">${l.item_name}${foundTag}</td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center;">${sys} ${l.unit}</td>
-                <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center;">${act} ${l.unit}</td>
-                <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center; color:${varColor}; font-weight:${varN === 0 ? '400' : '700'};">${varN > 0 ? '+' : ''}${varDisplay}</td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center;">${actDisplay}</td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); text-align:center;">${statusHtml}</td>
             </tr>`;
+
+        // Lot-detail children — one indented sub-row per lot, strip code as
+        // the row's own identity (§4.3's convention: "Tidak ada kolom
+        // nomor urut — strip code sudah menjadi penanda baris").
+        children.forEach(c => {
+            const cVarN = parseFloat(c.variance) || 0;
+            const cMatch = Math.abs(cVarN) < 1e-9;
+            rowsHtml += `
+            <tr style="background:var(--bg-app);">
+                <td style="padding:4px 10px 4px 24px; border-bottom:1px solid var(--border); font-family:monospace; font-size:0.78rem; color:var(--text-muted);">${c.strip_code || '-'}</td>
+                <td style="padding:4px 10px; border-bottom:1px solid var(--border); font-size:0.78rem; color:var(--text-muted);">${c.lot_code || '-'}</td>
+                <td style="padding:4px 10px; border-bottom:1px solid var(--border); text-align:center; font-size:0.78rem; color:var(--text-muted);">${fmtQty(c.system_qty, c.unit)} ${c.unit}</td>
+                <td style="padding:4px 10px; border-bottom:1px solid var(--border); text-align:center; font-size:0.78rem; color:var(--text-muted);">${fmtQty(c.actual_qty, c.unit)} ${c.unit}</td>
+                <td style="padding:4px 10px; border-bottom:1px solid var(--border); text-align:center; font-size:0.78rem; color:${cMatch ? 'var(--text-muted)' : (cVarN > 0 ? 'var(--success)' : 'var(--danger)')};">${cMatch ? '=' : formatVarianceText(cVarN, c.unit)}</td>
+            </tr>`;
+        });
     });
+
+    const accuracy = computeStockTakeAccuracy(topLevel);
+    const accuracySummary = accuracy
+        ? ` <span style="margin-left:10px;">· ${window.t ? (window.t('stockopname_col_accuracy') || 'Accuracy') : 'Accuracy'}: <strong>${accuracy.pct.toFixed(0)}%</strong> (${accuracy.matched}/${accuracy.total})</span>`
+        : '';
 
     const html = `
         <div style="margin-bottom:12px; font-size:0.85rem; color:var(--text-secondary);">
-            <strong>${take ? (take.take_date || '') : ''}</strong> — ${take ? (take.performed_by || '') : ''}
+            <strong>${take ? (take.take_date || '') : ''}</strong> — ${take ? (take.performed_by || '') : ''}${accuracySummary}
             ${take && take.notes ? `<br>${take.notes}` : ''}
         </div>
         <div style="max-height:60vh; overflow-y:auto;">
             <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
                 <thead>
                     <tr>
-                        <th style="text-align:left; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_category') || 'Category') : 'Category'}</th>
+                        <th style="text-align:left; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_stockopname_code') || 'Code') : 'Code'}</th>
                         <th style="text-align:left; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_item') || 'Item') : 'Item'}</th>
                         <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_system_qty') || 'System') : 'System'}</th>
                         <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_actual_qty') || 'Actual') : 'Actual'}</th>
-                        <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_variance') || 'Difference') : 'Difference'}</th>
+                        <th style="text-align:center; padding:6px 10px; border-bottom:2px solid var(--border);">${window.t ? (window.t('col_status') || 'Status') : 'Status'}</th>
                     </tr>
                 </thead>
                 <tbody>${rowsHtml || `<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--text-muted);">No line items.</td></tr>`}</tbody>
             </table>
         </div>
     `;
-    openModal(window.t ? (window.t('stockopname_detail_title') || 'Stock Take Detail') : 'Stock Take Detail', html);
+    openModal(window.t ? (window.t('stockopname_detail_title') || 'Stock Take Detail') : 'Stock Take Detail', html, '760px');
 }
 
 // Print a blank counting form (one page per category) for the team to fill in
