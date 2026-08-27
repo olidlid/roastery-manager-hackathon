@@ -1,6 +1,6 @@
 # Investigasi: "Approval mengurangi stok dari mesin yang salah" (task_5220ed75)
 
-**Status:** Kemungkinan besar **sudah selesai** — perlu verifikasi, bukan perburuan akar masalah.
+**Status:** ✅ **SELESAI — ditutup dengan bukti live.** FIFO lintas-mesin terbukti benar di produksi (Langkah 2, 2026-08-27).
 **Tanggal:** 2026-08-27
 **Asal laporan:** ditemukan sebagai efek samping investigasi lain, 2026-08-21. Dicatat waktu itu sebagai *"Root cause not yet located... Not a data-integrity risk today... worth prioritizing"*.
 
@@ -105,18 +105,29 @@ Dicek juga semua pemanggil `saveData('request_order_items', ...)` lain di repo (
 
 **Kesimpulan sesuai percabangan rencana:** §4.2 turun jadi catatan defensif. Guard + `console.error` sudah ditambahkan di `js/sales.js:1726` (persis sebelum baris `szItems = ...`) — kalau cabang tanpa `coffee_code` dan tanpa `machine_id` ini suatu hari benar-benar terpicu, sekarang akan gagal dengan jejak log, bukan diam-diam mengkredit `quantity_prepared` tanpa mengurangi stok apa pun. Perubahan ini murni tambahan (tidak mengubah perilaku jalur normal), disyntax-check via `node --check js/sales.js` + `node test.js`, versi di `index.html` dinaikkan ke `js/sales.js?v=28`.
 
-### Langkah 2 — Verifikasi FIFO lintas-mesin (inti dari task ini)
-Pakai pola pengujian yang sudah terbukti sepanjang sesi ini:
-1. Cari kopi trade-name yang **sudah** punya lot di dua mesin dengan tanggal berbeda — jangan buat stok baru kalau tidak perlu.
-2. Catat `remaining_pcs` **kedua** lot sebagai baseline (query langsung, bukan dari UI).
-3. Buat order uji khusus (pola `RTL-007 - test` seperti investigasi 2026-08-21), approve dengan jumlah yang hanya menyentuh sebagian lot tertua.
-4. Query ulang kedua lot → bandingkan dengan prediksi tabel §4.1.
-5. Periksa `packed_stock_movements` mencatat pengurangan itu dengan `ref_id` order yang benar.
-6. **Bersihkan**: undo/hapus order uji, kembalikan `remaining_pcs` ke baseline, konfirmasi lewat query.
+### Langkah 2 — Verifikasi FIFO lintas-mesin (inti dari task ini) — ✅ SELESAI 2026-08-27, TERBUKTI BENAR
 
-### Langkah 3 — Tutup atau buka kembali
-- **FIFO benar** → tutup task_5220ed75 dengan bukti; perbarui memori proyek (catatan "NOT yet fixed" di `project_packed_coffee_derived_quantity_completion.md` baris 29 sudah basi dan menyesatkan).
-- **Masih salah** → baru cari akar masalah di `js/sales.js:1724-1745`, dengan data repro yang sudah di tangan.
+**Kandidat & baseline.** BRAZIL ROSA (kode dagang `"1"` di `green_coffee`, size 250g) sudah punya lot di dua mesin. Lot dengan sisa >0 tertua **tanpa ambiguitas tanggal**: lot 156 (GIESEN W15A, `packed_date` 2026-08-11, sisa 50 pcs). Semua lot lain — baik GIESEN maupun STRONGHOLD — bertanggal lebih baru (2026-08-13 s.d. 2026-08-25). Baseline penuh (9 lot bersisa) dicatat via query langsung sebelum menyentuh apa pun.
+
+**Order uji.** Dibuat lewat form order asli (bukan simulasi SQL): `KH270826002` (id 48), customer `WHL-009 - test`, item BRAZIL ROSA 250g × 10, field mesin diisi GIESEN (nilai form saja — sesuai §2, tidak dipakai untuk pooling trade-name). Modal Approve Order mengonfirmasi "Packed Stock 165, combined across 1 origin" (= 81 STRONGHOLD + 84 GIESEN, cocok dengan baseline) dan "10 ready". Diklik **Confirm Approval** dengan izin eksplisit dari user.
+
+**Hasil — persis sesuai prediksi "benar" di §4.1:**
+| Lot | Sebelum | Sesudah |
+|---|---|---|
+| 156 (GIESEN, tertua, 2026-08-11) | 50 | **40** (−10, persis sejumlah order) |
+| Semua 8 lot lain (kedua mesin, termasuk lot 233 STRONGHOLD 2026-08-13) | — | **tidak berubah** |
+
+`packed_stock_movements` mencatat **satu** baris: `operation: 'approval_fulfil'`, `delta_pcs: -10`, `balance_after: 40`, `ref_table: 'request_order_items'`, `ref_id: 79` (item order uji) — jejak audit benar dan tunggal, tidak ada duplikasi.
+
+**Kesimpulan: FIFO lintas-mesin bekerja benar di produksi.** Pengambilan mengikuti `packed_date` global lintas pool, bukan urutan baris/mesin — order bertanda mesin GIESEN mengambil dari lot GIESEN yang memang tertua, dan lot STRONGHOLD yang lebih muda maupun lot GIESEN lain sama sekali tidak tersentuh.
+
+**Bersih-bersih (sudah dikonfirmasi lewat query):** `packed_coffee_lots.remaining_pcs` lot 156 dikembalikan ke 50, baris `packed_stock_movements` sintetis (id 427) dihapus, item + order uji (`request_order_items` id 79, `request_orders` id 48) dihapus. Query ulang penuh atas 9 lot BRAZIL ROSA 250g menghasilkan angka **identik** dengan baseline sebelum uji.
+
+*Catatan proses:* tab Chrome pertama sempat rusak di tengah pengujian (`Supabase fetch failed ... switching to mock`, gejala yang sama seperti dicatat di audit 2026-08-22) — diselesaikan dengan membuka tab baru, bukan men-debug tab yang rusak, sesuai catatan lama. Juga ditemukan tombol Approve ada di tab "Dispatch Approval" (bukan "Sales Dispatch Request" yang aktif secara default) — bukan bug, hanya salah tab saat pertama kali mencoba klik.
+
+### Langkah 3 — Tutup atau buka kembali — ✅ DITUTUP DENGAN BUKTI
+
+FIFO lintas-mesin **benar**. task_5220ed75 ditutup. Catatan "NOT yet fixed" di `project_packed_coffee_derived_quantity_completion.md` baris ~29 sudah basi dan perlu diperbarui — lihat pembaruan memori terkait.
 
 ---
 
