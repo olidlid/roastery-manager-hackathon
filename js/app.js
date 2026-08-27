@@ -3601,7 +3601,7 @@ async function loadStockOpnameReport(startDate, endDate) {
     }
     const finalizeBtn = document.getElementById('btn-stockopname-finalize');
     if (finalizeBtn) {
-        finalizeBtn.onclick = finalizeStockTake;
+        finalizeBtn.onclick = openStockTakeReviewModal;
         finalizeBtn.disabled = !canPerform;
         finalizeBtn.title = canPerform ? '' : 'No permission to finalize a stock opname';
     }
@@ -4100,14 +4100,20 @@ async function cancelStockTake() {
 // originally held; bulk has no such separate "originally held" figure to
 // protect (bulk_available is the only stock number a row carries), so its
 // increase branch below adjusts the row directly instead.
+// Fase 6: returns true/false instead of nothing — executeStockTakePosting
+// needs to know whether THIS group's write actually succeeded so it can
+// stop and revert status on the first real failure rather than silently
+// continuing (§5.2's "posting gagal di tengah" case). A shortfall (some of
+// the requested kg/pcs couldn't be drawn from any lot) counts as failure
+// here even though the underlying helpers don't throw for it.
 async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
     const delta = actual - group.systemQty;
-    if (Math.abs(delta) < 1e-9) return;
+    if (Math.abs(delta) < 1e-9) return true;
 
     if (group.category === 'greenbean') {
         const bean = group.rows[0].rec;
         if (delta > 0) {
-            await createGreenCoffeeLot({
+            const lot = await createGreenCoffeeLot({
                 coffeeId: bean.id,
                 coffeeCode: bean.code,
                 arrivalDate: new Date().toISOString().split('T')[0],
@@ -4115,8 +4121,9 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
                 supplier: 'Stock Take Adjustment',
                 purchasePricePerKg: null
             });
+            return !!lot;
         } else {
-            const { draws } = await consumeGreenCoffeeLotsFifo(bean.id, -delta);
+            const { draws, shortfallKg } = await consumeGreenCoffeeLotsFifo(bean.id, -delta);
             for (const d of draws) {
                 await saveData('green_coffee_lot_adjustments', {
                     green_coffee_id: bean.id,
@@ -4126,8 +4133,8 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
                     adjusted_by: (currentUser && currentUser.name) || null
                 });
             }
+            return shortfallKg < 1e-9;
         }
-        return;
     }
 
     if (group.category === 'packed') {
@@ -4136,7 +4143,7 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
         // the same row order applyStockGroupAdjustment used: surplus lands
         // on the first row, shortage drains rows in list order.
         if (delta > 0) {
-            await applyPackedCoffeeManualQtyDelta(group.rows[0].rec.id, delta, 'stocktake', 'stock_takes', stockTakeId);
+            return await applyPackedCoffeeManualQtyDelta(group.rows[0].rec.id, delta, 'stocktake', 'stock_takes', stockTakeId);
         } else {
             let remaining = -delta;
             for (const row of group.rows) {
@@ -4144,11 +4151,12 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
                 const avail = parseFloat(row.rec.quantity) || 0;
                 const take = Math.min(avail, remaining);
                 if (take <= 0) continue;
-                await applyPackedCoffeeManualQtyDelta(row.rec.id, -take, 'stocktake', 'stock_takes', stockTakeId);
+                const ok = await applyPackedCoffeeManualQtyDelta(row.rec.id, -take, 'stocktake', 'stock_takes', stockTakeId);
+                if (!ok) return false;
                 remaining -= take;
             }
+            return remaining <= 1e-9;
         }
-        return;
     }
 
     if (group.category === 'bulk') {
@@ -4161,12 +4169,18 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
         // surplus lands on the first row, shortage drains rows in list
         // order.
         if (delta > 0) {
-            const { error } = await window.supabaseClient.rpc('refund_bulk_lot', {
+            // refund_bulk_lot RETURNS a row via `RETURNING bulk_available` —
+            // for a bulk_id that doesn't exist, that UPDATE matches zero
+            // rows and comes back as {data: null, error: null} (no
+            // Postgres exception at all, confirmed live) — checking only
+            // `error` would silently treat that as success.
+            const { data, error } = await window.supabaseClient.rpc('refund_bulk_lot', {
                 p_bulk_id: group.rows[0].rec.id, p_kg: delta,
                 p_operation: 'stocktake', p_ref_table: 'stock_takes', p_ref_id: stockTakeId,
                 p_user: (currentUser && currentUser.name) || null
             });
-            if (error) console.error('refund_bulk_lot RPC failed:', error);
+            if (error || data === null) { console.error('refund_bulk_lot RPC failed:', error || 'no matching row'); return false; }
+            return true;
         } else {
             let remaining = -delta;
             for (const row of group.rows) {
@@ -4174,17 +4188,24 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
                 const avail = parseFloat(row.rec.bulk_available) || 0;
                 const take = Math.min(avail, remaining);
                 if (take <= 0) continue;
-                const { error } = await window.supabaseClient.rpc('consume_bulk_lot', {
+                // consume_bulk_lot returns the ACTUAL kg consumed (via a
+                // before/after diff), which is 0 — not an error — for a
+                // bulk_id that doesn't exist or already has less than
+                // requested. Track the real returned amount, not the
+                // requested `take`, so a silent no-op still shows up as a
+                // shortfall below instead of being counted as applied.
+                const { data: takenKg, error } = await window.supabaseClient.rpc('consume_bulk_lot', {
                     p_bulk_id: row.rec.id, p_kg: take,
                     p_operation: 'stocktake', p_ref_table: 'stock_takes', p_ref_id: stockTakeId,
                     p_user: (currentUser && currentUser.name) || null
                 });
-                if (error) { console.error('consume_bulk_lot RPC failed:', error); continue; }
-                remaining -= take;
+                if (error) { console.error('consume_bulk_lot RPC failed:', error); return false; }
+                remaining -= parseFloat(takenKg) || 0;
             }
+            return remaining <= 1e-9;
         }
-        return;
     }
+    return true;
 }
 
 // Fase 4 cacat #6: writes a detailed group's true per-lot counts directly —
@@ -4192,16 +4213,31 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
 // modal is skipped entirely here (same "blank = not counted, don't touch
 // it" rule as everywhere else in this feature), so its remaining_pcs stays
 // whatever it already was.
-async function applyStockGroupDetailedLotsAdjustment(group, stockTakeId) {
+//
+// Fase 6: marks each lot's own stock_take_items child row with posted_at
+// the moment its write succeeds (finer-grained than the group level —
+// matches cacat #6's own "per lot, not per group" spirit) and returns
+// false on the first failed lot, so executeStockTakePosting can stop and
+// revert status instead of silently leaving some lots unposted. A retry
+// skips lots already marked via `postedLotItemIds`, so it resumes from the
+// lot that failed rather than re-writing ones that already succeeded.
+async function applyStockGroupDetailedLotsAdjustment(group, stockTakeId, postedLotItemIds) {
     for (const l of group.lotBreakdown) {
         if (l.actualQty === null || l.actualQty === undefined) continue;
-        const { error } = await window.supabaseClient.rpc('set_packed_lot_remaining', {
+        if (l.itemId && postedLotItemIds && postedLotItemIds.has(l.itemId)) continue;
+        // Returns the new remaining_pcs via `RETURNING` — for a lot_id that
+        // no longer exists, that's zero matched rows and {data: null,
+        // error: null} (confirmed live: no Postgres exception at all), so
+        // `data === null` has to be checked as failure too, not just `error`.
+        const { data, error } = await window.supabaseClient.rpc('set_packed_lot_remaining', {
             p_lot_id: l.lotId, p_pcs: l.actualQty,
             p_operation: 'stocktake', p_ref_table: 'stock_takes', p_ref_id: stockTakeId,
             p_user: (currentUser && currentUser.name) || null
         });
-        if (error) console.error('set_packed_lot_remaining RPC failed:', error);
+        if (error || data === null) { console.error('set_packed_lot_remaining RPC failed:', error || 'no matching lot'); return false; }
+        if (l.itemId) await saveData('stock_take_items', { id: l.itemId, posted_at: new Date().toISOString() });
     }
+    return true;
 }
 
 // Fase 4 §4.3/§4.4/§4.5: groups that currently need a Tahap 2 lot count —
@@ -4729,15 +4765,14 @@ async function openAddFoundItemModal() {
 // whether it came from a same-session add or a resume reconstruction, so
 // this is the one place that needs to know about coffee_type at all.
 async function applyFoundItemAdjustment(group, qty, stockTakeId) {
-    if (!qty || qty <= 0 || !group.foundMeta) return;
+    if (!qty || qty <= 0 || !group.foundMeta) return true;
     const { coffeeName, machineId, gram } = group.foundMeta;
-    if (!machineId) { console.error('Found item has no resolvable machine, skipping adjustment:', group.label); return; }
+    if (!machineId) { console.error('Found item has no resolvable machine, skipping adjustment:', group.label); return false; }
 
     if (group.category === 'packed') {
         const row = await getOrCreatePackedCoffeeRow(coffeeName, gram, machineId);
-        if (!row) { console.error('Failed to resolve packed row for found item', group.label); return; }
-        await applyPackedCoffeeManualQtyDelta(row.id, qty, 'stocktake', 'stock_takes', stockTakeId);
-        return;
+        if (!row) { console.error('Failed to resolve packed row for found item', group.label); return false; }
+        return await applyPackedCoffeeManualQtyDelta(row.id, qty, 'stocktake', 'stock_takes', stockTakeId);
     }
 
     if (group.category === 'bulk') {
@@ -4746,7 +4781,7 @@ async function applyFoundItemAdjustment(group, qty, stockTakeId) {
         ]);
         const gb = (greenbeans || []).find(g => g.name === coffeeName);
         const recipe = !gb ? (recipes || []).find(r => r.name === coffeeName) : null;
-        if (!gb && !recipe) { console.error('Could not resolve coffee identity for found bulk item', group.label); return; }
+        if (!gb && !recipe) { console.error('Could not resolve coffee identity for found bulk item', group.label); return false; }
         const coffeeType = gb ? 'Single' : 'Blend';
         const singleId = gb ? gb.id : null;
         const blendId = recipe ? recipe.id : null;
@@ -4765,12 +4800,14 @@ async function applyFoundItemAdjustment(group, qty, stockTakeId) {
             b.machine_id === machineId && !b.is_repack
         );
         if (existing) {
-            const { error } = await window.supabaseClient.rpc('refund_bulk_lot', {
+            // Same null-for-nonexistent-row gap as applyStockGroupAdjustmentToLots'
+            // refund_bulk_lot call — check the returned value, not just error.
+            const { data, error } = await window.supabaseClient.rpc('refund_bulk_lot', {
                 p_bulk_id: existing.id, p_kg: qty,
                 p_operation: 'stocktake', p_ref_table: 'stock_takes', p_ref_id: stockTakeId,
                 p_user: (currentUser && currentUser.name) || null
             });
-            if (error) console.error('refund_bulk_lot RPC failed for found item:', error);
+            if (error || data === null) { console.error('refund_bulk_lot RPC failed for found item:', error || 'no matching row'); return false; }
         } else {
             const { error } = await saveData('bulk_roasted_coffee', {
                 coffee_type: coffeeType,
@@ -4783,24 +4820,32 @@ async function applyFoundItemAdjustment(group, qty, stockTakeId) {
                 mv_operation: 'stocktake', mv_ref_table: 'stock_takes', mv_ref_id: stockTakeId,
                 mv_user: (currentUser && currentUser.name) || null
             });
-            if (error) console.error('Failed to insert bulk row for found item:', error);
+            if (error) { console.error('Failed to insert bulk row for found item:', error); return false; }
         }
     }
+    return true;
 }
 
-async function finalizeStockTake() {
-    if (!currentStockTakeGroups || !currentStockTakeId) return;
+// Fase 6: reads the sheet's current DOM state into everything the review
+// modal needs to render AND everything posting needs to execute — kept as
+// one function so the two can never disagree about what "this take" means.
+// Pure read, no writes — safe to call as many times as needed (the review
+// modal calls it once to render, executeStockTakePosting calls it again
+// fresh at Post-click time in case anything changed while the modal was open).
+function collectStockTakeFinalizeData() {
     const tbody = document.getElementById('stockopname-count-body');
-    if (!tbody) return;
-
-    // Stock Opname Phase 1 cacat #1 fix: a blank input is no longer
-    // coerced into "matches system" — it is skipped entirely, both from
-    // the adjustment list and from being marked counted.
     const lines = [];
     const adjustments = [];
     const detailedLotGroups = [];
     const foundItemGroups = [];
     const itemUpdates = [];
+    if (!currentStockTakeGroups || !tbody) {
+        return { lines, adjustments, detailedLotGroups, foundItemGroups, itemUpdates, countedCount: 0, skippedCount: 0, varianceCount: 0 };
+    }
+
+    // Stock Opname Phase 1 cacat #1 fix: a blank input is no longer
+    // coerced into "matches system" — it is skipped entirely, both from
+    // the adjustment list and from being marked counted.
     currentStockTakeGroups.forEach((g, i) => {
         const input = tbody.querySelector(`.stockopname-actual-input[data-group-index="${i}"]`);
         const raw = input ? input.value : '';
@@ -4818,7 +4863,7 @@ async function finalizeStockTake() {
         // only decides whether it drives an adjustment, it never hides the
         // true count.
         const matched = stockOpnameIsMatch(g, actual);
-        lines.push({ category: g.category, item_name: g.label, variance, matched });
+        lines.push({ group: g, category: g.category, item_name: g.label, coffeeCode: g.coffeeCode, unit: g.unit, systemQty: g.systemQty, actual, variance, matched });
         if (g.itemId) {
             itemUpdates.push({
                 id: g.itemId, actual_qty: actual, variance, counted: true,
@@ -4857,16 +4902,171 @@ async function finalizeStockTake() {
     const countedCount = lines.length;
     const skippedCount = currentStockTakeGroups.length - countedCount;
     const varianceCount = lines.filter(l => !l.matched).length;
+    return { lines, adjustments, detailedLotGroups, foundItemGroups, itemUpdates, countedCount, skippedCount, varianceCount };
+}
 
-    const confirmMsg = (window.t ? (window.t('confirm_stockopname_finalize') || 'Finalize this stock take? System stock will be adjusted to match your counts.') : 'Finalize this stock take? System stock will be adjusted to match your counts.')
-        + `\n\nCounted: ${countedCount}  |  Not counted: ${skippedCount}  |  Differences: ${varianceCount}`;
-    if (!confirm(confirmMsg)) return;
+// Fase 6 (replaces the bare confirm() this used to be): shows what Posting
+// will actually do before it happens. Not an approval gate (§2's own
+// decision stands) — just makes sure whoever clicks Posting has seen the
+// impact, especially the items that will NOT be touched because they were
+// never counted.
+function openStockTakeReviewModal() {
+    if (!currentStockTakeGroups || !currentStockTakeId) return;
+    const collected = collectStockTakeFinalizeData();
+    const { lines, countedCount, skippedCount, varianceCount } = collected;
 
-    // The stock_takes row already exists (created 'counting' by
-    // startStockTake) — update it in place rather than inserting a new
-    // one, which is what the pre-Phase-1 code did every single finalize.
-    const { error: parentErr } = await saveData('stock_takes', {
-        id: currentStockTakeId,
+    const varianceLines = lines.filter(l => !l.matched);
+    // A detailed group can still need real lot writes even when its OWN
+    // total matches the system total (cacat #6 — see collectStockTakeFinalizeData's
+    // comment), which means it wouldn't appear in varianceLines above
+    // despite genuinely changing stock. Its lot-level variance rows are
+    // surfaced here instead, each carrying its own strip code per §6's spec.
+    const detailedLotVarianceRows = [];
+    collected.detailedLotGroups.forEach(g => {
+        (g.lotBreakdown || []).forEach(l => {
+            if (l.actualQty === null || l.actualQty === undefined) return;
+            const v = l.actualQty - l.systemQty;
+            if (Math.abs(v) < 1e-9) return;
+            detailedLotVarianceRows.push({ label: g.label, coffeeCode: g.coffeeCode, stripCode: l.stripCode, systemQty: l.systemQty, actual: l.actualQty, variance: v });
+        });
+    });
+
+    const rowHtml = (coffeeCode, itemName, systemQty, actual, variance, unit) => `
+        <tr>
+            <td style="font-family:monospace;">${coffeeCode || '—'}</td>
+            <td>${itemName}</td>
+            <td class="text-center">${systemQty} ${unit}</td>
+            <td class="text-center">${actual} ${unit}</td>
+            <td class="text-center" style="font-weight:700; color:${variance > 0 ? 'var(--success)' : 'var(--danger)'};">${formatVarianceText(variance, unit)}</td>
+        </tr>`;
+    let rowsHtml = varianceLines.map(l => rowHtml(l.coffeeCode, l.item_name, l.systemQty, l.actual, l.variance, l.unit)).join('');
+    rowsHtml += detailedLotVarianceRows.map(r => rowHtml(r.coffeeCode, `${r.label} · ${r.stripCode || '-'}`, r.systemQty, r.actual, r.variance, 'bags')).join('');
+
+    const skippedWarning = skippedCount > 0
+        ? `<div style="margin-bottom:14px; padding:10px 14px; border-radius:8px; background:rgba(217,119,6,0.1); border:1px solid var(--warning); color:var(--warning); font-size:0.85rem; font-weight:600;">${(window.t ? (window.t('stockopname_review_uncounted_warning') || '{count} item(s) have not been counted and will not be adjusted.') : '{count} item(s) have not been counted and will not be adjusted.').replace('{count}', skippedCount)}</div>`
+        : '';
+
+    const html = `
+        <div style="display:flex; gap:16px; margin-bottom:14px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:110px; padding:10px; border-radius:8px; background:var(--bg-app); text-align:center;">
+                <div style="font-size:1.3rem; font-weight:800;">${countedCount}</div>
+                <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase;">${window.t ? (window.t('stockopname_review_counted') || 'Counted') : 'Counted'}</div>
+            </div>
+            <div style="flex:1; min-width:110px; padding:10px; border-radius:8px; background:var(--bg-app); text-align:center;">
+                <div style="font-size:1.3rem; font-weight:800; color:${skippedCount > 0 ? 'var(--warning)' : 'inherit'};">${skippedCount}</div>
+                <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase;">${window.t ? (window.t('stockopname_review_not_counted') || 'Not Counted') : 'Not Counted'}</div>
+            </div>
+            <div style="flex:1; min-width:110px; padding:10px; border-radius:8px; background:var(--bg-app); text-align:center;">
+                <div style="font-size:1.3rem; font-weight:800; color:${varianceCount > 0 ? 'var(--danger)' : 'inherit'};">${varianceCount}</div>
+                <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase;">${window.t ? (window.t('col_variance') || 'Difference') : 'Difference'}</div>
+            </div>
+        </div>
+        ${skippedWarning}
+        <div class="table-container" style="max-height:44vh; overflow-y:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>${window.t ? (window.t('col_stockopname_code') || 'Code') : 'Code'}</th>
+                        <th>${window.t ? (window.t('col_item') || 'Item') : 'Item'}</th>
+                        <th style="text-align:center;">${window.t ? (window.t('col_system_qty') || 'System') : 'System'}</th>
+                        <th style="text-align:center;">${window.t ? (window.t('col_actual_qty') || 'Actual') : 'Actual'}</th>
+                        <th style="text-align:center;">${window.t ? (window.t('col_variance') || 'Difference') : 'Difference'}</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml || `<tr><td colspan="5" class="table-empty-state">${window.t ? (window.t('stockopname_review_no_diff') || 'No differences.') : 'No differences.'}</td></tr>`}</tbody>
+            </table>
+        </div>
+        <div class="modal-footer-actions-lg">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">${window.t ? (window.t('btn_cancel') || 'Cancel') : 'Cancel'}</button>
+            <button type="button" class="btn btn-primary" id="btn-stockopname-post">${window.t ? (window.t('btn_stockopname_post') || 'Posting') : 'Posting'}</button>
+        </div>
+    `;
+    openModal(window.t ? (window.t('stockopname_review_title') || 'Review & Post') : 'Review & Post', html, '680px');
+
+    const postBtn = document.getElementById('btn-stockopname-post');
+    if (postBtn) {
+        postBtn.onclick = async () => {
+            postBtn.disabled = true;
+            document.getElementById('btn-close-modal').click();
+            await executeStockTakePosting();
+        };
+    }
+}
+
+// Fase 6: the actual posting sequence — `counting` -> `posting` -> write
+// every adjustment (marking each item's `posted_at` the moment IT succeeds)
+// -> `posted`. Re-collects fresh from the DOM rather than trusting whatever
+// the review modal saw, in case anything changed in between.
+//
+// "Status aman adalah status terkunci" (§5.2): if any adjustment fails,
+// status goes back to `counting` — never left sitting in `posting`, which
+// the freeze trigger blocks the same as `counting` but has no defined way
+// out of on its own. Items that already got `posted_at` keep it, so
+// clicking Finalize again resumes past them instead of double-applying —
+// checked here via a fresh fetch of stock_take_items, not the in-memory
+// group state, so this is safe even after a page reload mid-recovery.
+async function executeStockTakePosting() {
+    if (!currentStockTakeGroups || !currentStockTakeId) return;
+    const takeId = currentStockTakeId;
+    const collected = collectStockTakeFinalizeData();
+    const { itemUpdates, countedCount, skippedCount, varianceCount } = collected;
+
+    const { data: takes } = await fetchData('stock_takes');
+    const takeRow = (takes || []).find(t => t.id === takeId);
+    if (!takeRow || (takeRow.status !== 'counting' && takeRow.status !== 'posting')) {
+        alert(window.t ? (window.t('alert_stockopname_take_not_open') || 'This stock take is no longer open — reload the page.') : 'This stock take is no longer open — reload the page.');
+        return;
+    }
+    if (takeRow.status === 'counting') {
+        const { error: postingErr } = await saveData('stock_takes', { id: takeId, status: 'posting' });
+        if (postingErr) { alert('Failed to start posting: ' + postingErr.message); return; }
+    }
+
+    // Re-affirming counted values is not a stock write — safe to redo on
+    // every attempt regardless of what already posted.
+    for (const upd of itemUpdates) await saveData('stock_take_items', upd);
+
+    const { data: freshItems } = await fetchData('stock_take_items');
+    const myItems = (freshItems || []).filter(it => it.stock_take_id === takeId);
+    const postedItemIds = new Set(myItems.filter(it => it.posted_at).map(it => it.id));
+
+    let failed = false;
+
+    for (const adj of collected.adjustments) {
+        if (adj.group.itemId && postedItemIds.has(adj.group.itemId)) continue;
+        const ok = await applyStockGroupAdjustmentToLots(adj.group, adj.actual, takeId);
+        if (!ok) { failed = true; break; }
+        if (adj.group.itemId) await saveData('stock_take_items', { id: adj.group.itemId, posted_at: new Date().toISOString() });
+    }
+
+    if (!failed) {
+        for (const g of collected.detailedLotGroups) {
+            const ok = await applyStockGroupDetailedLotsAdjustment(g, takeId, postedItemIds);
+            if (!ok) { failed = true; break; }
+            if (g.itemId && !postedItemIds.has(g.itemId)) {
+                await saveData('stock_take_items', { id: g.itemId, posted_at: new Date().toISOString() });
+            }
+        }
+    }
+
+    if (!failed) {
+        for (const { group, actual } of collected.foundItemGroups) {
+            if (group.itemId && postedItemIds.has(group.itemId)) continue;
+            const ok = await applyFoundItemAdjustment(group, actual, takeId);
+            if (!ok) { failed = true; break; }
+            if (group.itemId) await saveData('stock_take_items', { id: group.itemId, posted_at: new Date().toISOString() });
+        }
+    }
+
+    if (failed) {
+        await saveData('stock_takes', { id: takeId, status: 'counting' });
+        alert(window.t ? (window.t('alert_stockopname_posting_failed') || 'Posting failed partway through. Adjustments already applied were kept — the take is locked again as "counting". Fix the issue, then use Finalize again to resume from where it stopped.') : 'Posting failed partway through. Adjustments already applied were kept — the take is locked again as "counting". Fix the issue, then use Finalize again to resume from where it stopped.');
+        if (typeof resumeStockTake === 'function') await resumeStockTake({ id: takeId, ...takeRow, status: 'counting' });
+        return;
+    }
+
+    const { error: postedErr } = await saveData('stock_takes', {
+        id: takeId,
         status: 'posted',
         posted_at: new Date().toISOString(),
         total_items: currentStockTakeGroups.length,
@@ -4875,40 +5075,9 @@ async function finalizeStockTake() {
         skipped_items: skippedCount,
         notes: (document.getElementById('stockopname-notes') || {}).value || ''
     });
-    if (parentErr) {
-        alert('Failed to finalize stock take: ' + parentErr.message);
+    if (postedErr) {
+        alert(window.t ? (window.t('alert_stockopname_post_flip_failed') || 'Adjustments were applied but the take could not be marked posted — it is still locked as "posting". Try Finalize again.') : 'Adjustments were applied but the take could not be marked posted — it is still locked as "posting". Try Finalize again.');
         return;
-    }
-
-    // Re-affirm the counted values idempotently — the staged 'change'
-    // saves already wrote most of these, this just guarantees the final
-    // state matches what was reviewed in the confirm dialog above (e.g. a
-    // value edited then submitted via Enter without a separate blur).
-    for (const upd of itemUpdates) {
-        await saveData('stock_take_items', upd);
-    }
-
-    // Adjust the live source rows. All three categories now go through
-    // applyStockGroupAdjustmentToLots — bulk_roasted_coffee got its own
-    // atomic RPCs + movement ledger in STOCK_LEDGER_PLAN.md Phase 6, so the
-    // plain applyStockGroupAdjustment/saveData path is retired. Uncounted
-    // (blank) items were never added to `adjustments` above, so they are
-    // never touched — this is the actual fix for cacat #1, not just the
-    // bookkeeping around it.
-    for (const adj of adjustments) {
-        await applyStockGroupAdjustmentToLots(adj.group, adj.actual, currentStockTakeId);
-    }
-    // Fase 4 cacat #6: detailed groups bypass the guessed split above
-    // entirely — each lot's counted quantity is written straight to that
-    // lot via set_packed_lot_remaining, no distribution logic involved.
-    for (const g of detailedLotGroups) {
-        await applyStockGroupDetailedLotsAdjustment(g, currentStockTakeId);
-    }
-    // Fase 5: found items create their stock (or refund into an existing
-    // zero row) instead of adjusting an existing one — nothing to
-    // distribute against, since systemQty is always 0 by definition.
-    for (const { group, actual } of foundItemGroups) {
-        await applyFoundItemAdjustment(group, actual, currentStockTakeId);
     }
 
     alert(window.t ? (window.t('alert_stockopname_saved') || 'Stock take finalized and stock adjusted.') : 'Stock take finalized and stock adjusted.');

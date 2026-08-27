@@ -3696,11 +3696,15 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId, 
 // same as a fresh manual pack); a decrease is drawn FIFO (oldest packed_date
 // first, same convention as every other consumption flow in this file) across
 // however many lots it takes, clamped so no lot goes negative.
+// Returns true/false for whether the full delta was actually applied —
+// added for Stock Opname Fase 6, which needs to detect a failed adjustment
+// mid-posting to revert status safely (STOCK_OPNAME_PLAN.md §5.2). Existing
+// callers that ignore the return value are unaffected.
 async function applyPackedCoffeeManualQtyDelta(packedCoffeeId, delta, movementOperation = 'manual_edit', movementRefTable = null, movementRefId = null) {
-    if (!delta) return;
+    if (!delta) return true;
     if (delta > 0) {
-        await getOrCreatePackedCoffeeLot(packedCoffeeId, delta, null, movementOperation, movementRefTable, movementRefId, true);
-        return;
+        const lot = await getOrCreatePackedCoffeeLot(packedCoffeeId, delta, null, movementOperation, movementRefTable, movementRefId, true);
+        return !!lot;
     }
     let remaining = -delta;
     const { data: lots } = await fetchData('packed_coffee_lots');
@@ -3722,6 +3726,7 @@ async function applyPackedCoffeeManualQtyDelta(packedCoffeeId, delta, movementOp
     }
     // Any shortfall (asking to remove more than the lots actually hold) is
     // simply not applied further — quantity floors at whatever the lots sum to.
+    return remaining <= 0;
 }
 
 // Shared by openPackBulkModal, openPrintBarcodeModal, AND
