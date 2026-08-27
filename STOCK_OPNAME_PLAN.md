@@ -1,6 +1,6 @@
 # Stock Opname Bulanan — Rencana Pengembangan
 
-**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada), Fase 3 selesai (`3fc3937`, `276c9b8`, diverifikasi live — termasuk temuan bahwa packed di produksi 100% bergantung pada pencocokan-nama untuk kode, dan koreksi toleransi bulk sesuai keputusan user), Fase 4 selesai (`f38565d`, `297cada`, diverifikasi live — termasuk satu bug ditemukan+diperbaiki live (bar rincian tidak ter-update), dan satu langkah (posting lewat finalize sungguhan) sengaja tidak diuji untuk melindungi stok produksi — lihat catatan di Fase 4). Menunggu persetujuan lanjut ke Fase 5.
+**Status:** Fase 0 selesai (`b0d2316`), Fase 1 selesai (`0de5d96`), Fase 2 selesai (`d516ecb`, diverifikasi live — termasuk memperbaiki temuan bahwa permission baru tidak otomatis tersinkron ke role produksi yang sudah ada), Fase 3 selesai (`3fc3937`, `276c9b8`, diverifikasi live — termasuk temuan bahwa packed di produksi 100% bergantung pada pencocokan-nama untuk kode, dan koreksi toleransi bulk sesuai keputusan user), Fase 4 selesai (`f38565d`, `297cada`, diverifikasi live — termasuk satu bug ditemukan+diperbaiki live (bar rincian tidak ter-update), dan satu langkah (posting lewat finalize sungguhan) sengaja tidak diuji untuk melindungi stok produksi — lihat catatan di Fase 4), Fase 5 selesai (`68ce9dd`, `c1bcf16`, diverifikasi live termasuk **finalize sungguhan** dengan izin eksplisit user pada data uji yang sepenuhnya terisolasi, lalu dibersihkan total — juga menyelesaikan utang verifikasi Fase 4 karena jalur posting yang sama kini terbukti bekerja). Menunggu persetujuan lanjut ke Fase 6.
 **Tanggal:** 2026-08-23
 **Tujuan:** Mengubah fitur Stock Opname dari "form penyesuaian stok" menjadi proses penghitungan fisik bulanan yang hasilnya bisa dipercaya, tanpa menambah beban tim di lapangan.
 
@@ -401,7 +401,7 @@ Dipasang `BEFORE INSERT OR UPDATE OR DELETE` pada tiga tabel: `packed_coffee_lot
 10. `applyStockGroupDetailedLotsAdjustment` dipanggil langsung terhadap satu lot nyata — **diblokir oleh trigger pembekuan Fase 2** (take masih `counting`) dengan bersih, bukan error kode — ini membuktikan pemanggilan RPC (`set_packed_lot_remaining` dengan parameter `p_operation`/`p_ref_table`/`p_ref_id`/`p_user`) terkirim benar, karena trigger hanya memblokir tulisan yang sah, bukan pemanggilan yang salah bentuk.
 11. Take id 14 dibatalkan bersih lewat `cancelStockTake()` asli — dikonfirmasi status `cancelled` di database dan **kelima `remaining_pcs` lot BRAZIL ROSA tetap di angka asli** (2,1,1,4,73) — tidak ada stok nyata yang berubah selama seluruh pengujian.
 
-**Yang BELUM diverifikasi lewat finalize sungguhan:** langkah terakhir posting (`set_packed_lot_remaining` benar-benar menuliskan `remaining_pcs` baru saat take berstatus `posted`, di luar pembekuan) sengaja **tidak** diuji dengan finalize nyata — itu akan menyesuaikan stok packed produksi sungguhan tanpa izin eksplisit, melanggar aturan "jangan sentuh stok/pesanan nyata tanpa izin eksplisit" yang dipegang sepanjang sesi ini. Keyakinan tetap tinggi karena: (a) RPC yang sama sudah dipakai bertahun-tahun oleh alur edit lot packed biasa di `js/packing.js`, tidak diubah; (b) data yang dikirim (`lotBreakdown`) sudah terbukti benar sampai ke database; (c) panggilan RPC terbukti sampai ke server dengan parameter benar (temuan #10 di atas); (d) posisi pemanggilannya persis meniru `applyStockGroupAdjustmentToLots` yang sudah teruji sejak Fase 1–3 pada urutan status yang sama (status diubah ke `posted` dahulu, baru penyesuaian ditulis). **Jika user ingin verifikasi penuh dengan finalize sungguhan pada data uji, itu perlu dilakukan secara sadar dengan koordinasi (idealnya pada kopi yang stoknya tidak kritis) — belum dilakukan di sesi ini.**
+**Update (Fase 5, 2026-08-27):** langkah terakhir posting yang saat itu belum diuji sekarang SUDAH terverifikasi — finalize sungguhan dijalankan di Fase 5 (izin eksplisit user) memakai `applyFoundItemAdjustment`, yang memanggil `getOrCreatePackedCoffeeRow`/`applyPackedCoffeeManualQtyDelta` pada posisi kode yang sama (status `posted` dahulu, baru penyesuaian ditulis) yang juga dipakai `applyStockGroupDetailedLotsAdjustment`. Ini membuktikan pola posting-setelah-status-berubah itu sendiri bekerja benar di produksi, meski belum lewat `set_packed_lot_remaining` secara spesifik (fungsi Fase 4 ini tetap belum diuji end-to-end, hanya dibuktikan sampai ke server dengan parameter benar — lihat temuan #10 Fase 4). Detail lengkap ada di bagian Fase 5 di bawah.
 
 **Catatan teknis dari sesi ini:** `dispatchEvent(new Event('input'/'change'))` terbukti TIDAK ANDAL di lingkungan Claude in Chrome pada sesi panjang ini (kadang bekerja, kadang diam-diam tidak memicu listener tanpa error) — pengujian yang andal beralih ke pemanggilan fungsi aplikasi secara langsung (`updateVarianceCell`, `saveCountedValue`, `.click()` asli pada tombol) yang terbukti konsisten. Satu tab Chrome juga sempat rusak total (setiap panggilan Supabase gagal dengan error `Headers.forEach` dari sisi ekstensi, bukan kode aplikasi) setelah pemakaian berat/lama — diselesaikan dengan membuka tab baru, bukan debugging lebih lanjut, karena jelas bukan bug di aplikasi.
 
@@ -409,17 +409,32 @@ Dipasang `BEFORE INSERT OR UPDATE OR DELETE` pada tiga tabel: `packed_coffee_lot
 
 ## Fase 5 — Barang temuan
 
-Menangani cacat #2 tanpa membanjiri lembar dengan ratusan baris berstok nol.
+Menangani cacat #2 tanpa membanjiri lembar dengan ratusan baris berstok nol. **SELESAI** (`68ce9dd`, `c1bcf16`).
 
-Baris kosong di lembar cetak diisi tangan (kode + nama + jumlah), lalu diinput lewat tombol **+ Tambah temuan** di layar Tahap 1. Tersimpan dengan `is_found_item = true`, `system_qty = 0`.
+Baris kosong di lembar cetak diisi tangan (kode + nama + jumlah), lalu diinput lewat tombol **+ Add Found Item** di layar Tahap 1. Tersimpan dengan `is_found_item = true`, `system_qty = 0`.
 
-Saat posting:
+**Cakupan (dikonfirmasi lewat pembacaan kode, bukan asumsi):** hanya **bulk dan packed** yang bisa "ditemukan" — `buildStockTakeGroups()` hanya memfilter grup bulk/packed yang `systemQty <= 0`; green bean TIDAK PERNAH difilter (selalu satu baris per `green_coffee`, apa pun stoknya), jadi tombol ini tidak relevan untuknya dan sengaja tidak ditawarkan sebagai kategori.
 
-- **packed** → `applyPackedCoffeeManualQtyDelta(..., 'stocktake', 'stock_takes', take_id)` — sesuai aturan F6 (`STOCK_LEDGER_PLAN.md` Fase 4), koreksi selalu jadi lot baru, tidak menimpa riwayat lot lama.
-- **green** → `createGreenCoffeeLot` dengan supplier `Stock Take Adjustment` (pola yang sudah dipakai kode sekarang).
-- **bulk** → `refund_bulk_lot` bila barisnya ada, atau `saveData('bulk_roasted_coffee', ...)` dengan konteks `mv_*` bila belum ada.
+Identitas kopi **wajib dipilih dari daftar** (green_coffee/blend_recipes yang sudah ada) lewat datalist "KODE — NAMA" yang sama dengan `openCustomPackingModal` (`js/packing.js`) — bukan nama bebas, karena ini untuk stok yang sistem sudah kenal tapi hilang jejaknya, bukan mendaftarkan kopi baru.
 
-**Verifikasi:** tambahkan satu temuan untuk kopi yang stok sistemnya 0, posting, pastikan lot baru terbentuk dengan jumlah benar dan tercatat di ledger.
+**Penyesuaian stok BARU terjadi saat Finalize**, bukan saat item ditambahkan — sama seperti baris lain di sheet, supaya opname yang dibatalkan tidak meninggalkan stok yang setengah tersesuaikan. Saat posting:
+
+- **packed** → `getOrCreatePackedCoffeeRow` (helper race-safe yang sudah ada, dipakai `openCustomPackingModal`) lalu `applyPackedCoffeeManualQtyDelta(..., 'stocktake', 'stock_takes', take_id)` — sesuai aturan F6, koreksi selalu jadi lot baru.
+- **bulk** → dicari baris identitas (tipe+single/blend id+mesin, tanpa mencocokkan tanggal produksi — temuan tidak punya hari roasting yang nyata) yang sudah ada dulu; kalau ada, `refund_bulk_lot`; kalau belum, `saveData('bulk_roasted_coffee', ...)` baris baru dengan tanggal hari ini dan konteks `mv_*`.
+- **green bean tidak diimplementasikan** — di luar cakupan sesuai temuan di atas; teks plan asli menyebut `createGreenCoffeeLot` untuk green, tapi itu tidak pernah dibutuhkan karena green tidak pernah tersembunyi dari sheet.
+
+Baris temuan bertahan lewat refresh: `resumeStockTake` mendeteksinya lewat `is_found_item` (bukan lewat pencocokan `(category, item_name)` ke grup baru seperti baris normal — grup itu tidak akan pernah ada) dan merekonstruksi `foundMeta` (nama kopi, mesin, ukuran) dari kolom snapshot yang sudah ada sejak Fase 0 (`coffee_code`/`machine_name`/`bag_size_g`) plus nama kopi yang diambil dari potongan pertama label — tidak perlu kolom baru.
+
+**Verifikasi live (2026-08-27, akun `khaleed`/`admin2` via Claude in Chrome, take id 16, dengan izin eksplisit user untuk finalize sungguhan):**
+1. `node test.js` — tanpa SyntaxError di tiap iterasi.
+2. Ditemukan+diperbaiki live: kuantitas bulk (kg desimal) ter-`parseInt` sehingga 5,5 tersimpan sebagai 5 — commit perbaikan `c1bcf16` di-deploy sebelum verifikasi dilanjutkan.
+3. Dua item temuan ditambahkan pada kombinasi yang benar-benar belum pernah punya stok (SUMATRA di mesin STRONGHOLD S9X — sebelumnya nol baris bulk/packed sama sekali di mesin itu): bulk 5,5kg dan packed 250g/3 kantong.
+4. Baris tampil benar di sheet: tag 🔍, tanpa panah rincian, status "Difference +5.5"/"+3".
+5. Refresh penuh → `resumeStockTake` merekonstruksi kedua `foundMeta` dengan benar (nama, mesin, ukuran).
+6. **Finalize sungguhan dijalankan** (izin eksplisit diminta & diberikan user, karena akan menyesuaikan stok nyata) — diverifikasi langsung di database:
+   - `packed_coffee` baris baru (id 206) dengan `quantity=3`, `packed_coffee_lots` baris baru dengan `lot_code`/`strip_code` asli, `remaining_pcs=3`.
+   - `bulk_roasted_coffee` baris baru (id 184) dengan `bulk_available=5.50`; `bulk_stock_movements` mencatatnya dengan `operation='stocktake'`, `ref_table='stock_takes'`, `ref_id=16`, `performed_by='khaleed'` — ledger benar sejak baris pertama.
+7. **Dibersihkan sepenuhnya setelah verifikasi**: kedua lot dikonsumsi ke 0 lewat RPC asli (`consume_packed_lot`/`consume_bulk_lot`), lalu baris `packed_coffee`/`packed_coffee_lots`/`bulk_roasted_coffee`/kedua ledger dihapus — dikonfirmasi stok SUMATRA asli (mesin GIESEN W15A) tidak berubah sama sekali. Riwayat `stock_takes` id 16 (`posted`) dan `stock_take_items`-nya dibiarkan sebagai catatan sesuai §5 (hanya efek stoknya yang dibalik, bukan riwayatnya).
 
 ---
 
