@@ -41,7 +41,6 @@ roastery-manager-v2/
 │                             #   copy; ignore/remove it rather than treating it as "mirrors js/". capacitor.config.json
 │                             #   (webDir: "dist", appId: com.roastery.leader) packages this into the Android app.
 ├── android/                  # Capacitor-generated Android project (Gradle) for the Leader app
-├── whatsapp-service/          # Standalone Node service: polls Supabase for pending orders, notifies via WhatsApp
 ├── database/supabase_schema.sql  # Column-accurate snapshot of PRODUCTION schema (synced 2026-07-06)
 ├── server.js                 # Trivial static file server for local dev (node server.js, port 8000)
 └── test.js                   # Parses <script src="js/..."> tags from index.html, concatenates them in order, evaluates in a jsdom/vm sandbox to catch SyntaxErrors
@@ -55,7 +54,6 @@ roastery-manager-v2/
 - **Syntax-check all split scripts:** `node test.js` (parses the `<script src="js/...">` tags out of `index.html` in document order, concatenates them exactly like the browser's shared global scope would, and evaluates the result in a jsdom `vm` context to catch SyntaxErrors/`X is not defined` — automatically picks up new files if `js/` is split further; there is no real test suite; `npm test` is a stub that always fails)
 - **Quick syntax check alternative:** `node --check js/<file>.js` (run per file, e.g. `js/app.js`, `js/auth.js`, `js/greenbean.js`, etc.)
 - **Android build:** standard Capacitor/Gradle flow from `android/` (`gradlew assembleDebug`, etc.); `dist/` must be (re)built/copied first since `capacitor.config.json` points `webDir` at it. ⚠️ `dist/js/app.js` (6,359 lines) was NOT updated by the V1 modularization — it's a separate, stale snapshot from before the split, not mirroring the current `js/*.js` split files. Confirm/resync before the next Android build.
-- **WhatsApp service:** `cd whatsapp-service && npm install && node index.js` (requires `.env` with `SUPABASE_URL`, `SUPABASE_KEY`, `LEADER_PHONE` — see `.env.example`)
 
 There is no bundler, transpiler, or package build for the main app — every `js/*.js` file is loaded directly by the browser as a plain script, in the load order listed above.
 
@@ -129,9 +127,6 @@ Since the V1 modularization (see REFACTORING.md), these load as separate plain `
 ### `leader.html` / `js/leader.js`
 A minimal companion page (also the source for the Capacitor Android "Leader" app via `dist/`) that only lists pending sales orders and lets a leader Approve/Reject them, reusing `window.fetchData`/`saveData` from the shared `js/supabase.js` client.
 
-### `whatsapp-service/`
-Independent Node process (`whatsapp-web.js` + Puppeteer) that polls `request_orders` for `status = 'Pending Approval'` every 10s and sends a WhatsApp message to `LEADER_PHONE` when a new one appears. Runs completely outside the web app's process; only shares the Supabase project as an integration point.
-
 ---
 
 ## Recent Changes (as of 2026-07-05)
@@ -146,7 +141,9 @@ Independent Node process (`whatsapp-web.js` + Puppeteer) that polls `request_ord
 
 ## Current Status
 
-**Working:** Email/Password + Google OAuth auth, RBAC via `custom_roles` (6 default roles / ~40 permission keys), dashboard, green coffee inventory CRUD, roasting plans & batches, packing, sales requests & dispatch approval, dark/light theme, EN/AR i18n, barcode scan → quick roast log, customer management, WhatsApp leader notifications.
+**Working:** Email/Password + Google OAuth auth, RBAC via `custom_roles` (6 default roles / ~40 permission keys), dashboard, green coffee inventory CRUD, roasting plans & batches, packing, sales requests & dispatch approval, dark/light theme, EN/AR i18n, barcode scan → quick roast log, customer management.
+
+**Removed (2026-08-27):** the standalone WhatsApp leader-notification service (`whatsapp-service/`) — was never used, unlikely to be needed soon. It shared no code with the main app (separate Node process, only integration point was polling the same Supabase project), so removal was just deleting that local directory. If it's ever wanted again, it can be rebuilt from scratch or recovered from git history before this commit (it was never git-tracked — see `.gitignore` — so there's no tracked history to restore either; the design (poll `request_orders` for `status = 'Pending Approval'`, message `LEADER_PHONE` via `whatsapp-web.js`+Puppeteer) is documented here for reference only).
 
 **Needs more testing/completion:**
 - Full end-to-end workflow across Green Bean → Roasting → Packing → Sales.

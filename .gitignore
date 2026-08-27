@@ -2,7 +2,6 @@ node_modules/
 .env
 .DS_Store
 desktop-tutorial
-whatsapp-service/
 *.log
 
 # Supabase CLI local metadata cache (project ref, DB pooler URL, version

@@ -519,7 +519,6 @@
         <li>Customer management, sales agents, and request orders (a sales agent's order, itemized).</li>
         <li>Approval workflow: a request moves to <em>Pending Approval</em> and a Production Leader approves or rejects it — from the main app or the standalone Leader companion app.</li>
         <li>Dispatch confirmation and waybill/print output for approved, fulfilled orders.</li>
-        <li>Optional WhatsApp notification to the leader when a new request needs approval (see §6, standalone service).</li>
       </ul>
 
       <h3>Reports</h3>
@@ -537,7 +536,6 @@
       <h3>Companion surfaces</h3>
       <div class="cardgrid">
         <div class="card"><h4>Leader app</h4><p>Minimal standalone page (also packaged as an Android app via Capacitor) that lists pending sales requests for one-tap approve/reject, for a leader who doesn't need the full system.</p></div>
-        <div class="card"><h4>WhatsApp notifier</h4><p>Independent background service that watches for new pending requests and messages the leader's phone — a nudge, not a dependency of the core workflow.</p></div>
       </div>
     </section>
 
@@ -579,7 +577,6 @@
             <tr><td>Charts</td><td>Chart.js</td></tr>
             <tr><td>Icons</td><td>Lucide</td></tr>
             <tr><td>Companion mobile app</td><td>Capacitor-wrapped build of the Leader page, targeting Android</td></tr>
-            <tr><td>Notification service</td><td>Standalone Node process (whatsapp-web.js), polls Supabase, runs independently of the web app</td></tr>
           </tbody>
         </table>
       </div>
@@ -614,7 +611,7 @@
       <h2><span class="secnum">09</span> Current status</h2>
       <p class="lede">An honest read on what's solid, what's still being shaken out, and what's known debt.</p>
       <h3>Working in daily production use</h3>
-      <p>Auth (email/password + Google), role-based access across six roles, dashboard, green coffee inventory, roasting plans &amp; batches, packing, sales requests &amp; dispatch approval, dark/light theme, EN/AR i18n, barcode scan-to-log, customer management, WhatsApp leader notifications.</p>
+      <p>Auth (email/password + Google), role-based access across six roles, dashboard, green coffee inventory, roasting plans &amp; batches, packing, sales requests &amp; dispatch approval, dark/light theme, EN/AR i18n, barcode scan-to-log, customer management.</p>
       <h3>Needs more testing or completion</h3>
       <ul>
         <li>Full end-to-end walkthrough of Green Bean → Roasting → Packing → Sales as one continuous flow.</li>
@@ -661,6 +658,7 @@
       <div class="cardgrid">
         <div class="card"><h4>Work Order <span class="chip out">Not needed</span></h4><p>Confirmed already covered by the existing Roasting Plans → Batches flow. No separate entity is being built unless a concrete gap surfaces later.</p></div>
         <div class="card"><h4>B2B customer portal <span class="chip out">Deferred to V3</span></h4><p>Self-serve ordering or per-customer contract pricing — direction not yet chosen, and not needed for V2.</p></div>
+        <div class="card"><h4>WhatsApp leader notifier <span class="chip out">Removed</span></h4><p>Standalone Node service that nudged the leader on WhatsApp for a new pending approval. Never used in practice and not needed soon, so it was removed (2026-08-27) rather than kept as unused surface area. Independent of the core approval workflow either way — a leader still sees pending requests in-app or in the Leader companion page.</p></div>
       </div>
     </section>
 
