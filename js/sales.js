@@ -83,73 +83,91 @@ async function loadCustomersSection(filterType) {
     });
 }
 
-async function openCustomerModal(editId = null) {
-    const { data: customers } = await fetchData('customers');
-    let existing = null;
-    if (editId) {
-        existing = (customers || []).find(c => c.id === editId);
+// Field markup shared by the full Customer Directory Add/Edit modal and the
+// inline "+ Add Customer" shortcut opened from other forms (e.g. Submit
+// Sales Request Order) — kept in one place so the two never drift apart.
+// Wholesale/Retail grouped <option> list for a customer <select> — shared
+// by the initial Submit Sales Request Order render and the refresh that
+// runs after the "+ Add Customer" shortcut creates one, so both stay in
+// exactly the same shape/order.
+function buildCustomerOptionsHtml(customersList, selectedId) {
+    let html = '';
+    const whlCustomers = (customersList || []).filter(c => c.type === 'Wholesale' && c.is_active !== false);
+    const rtlCustomers = (customersList || []).filter(c => c.type === 'Retail' && c.is_active !== false);
+    if (whlCustomers.length) {
+        html += '<optgroup label="🏭 Wholesale">';
+        html += whlCustomers.map(c => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
+        html += '</optgroup>';
     }
-    
-    const html = `
-        <form id="modal-customer-form" novalidate>
-            <div class="form-row">
-                <div class="form-group flex-1" >
-                    <label class="form-label">Customer ID</label>
-                    <input type="text" id="m-cust-id" class="form-control" readonly placeholder="Auto Generated" value="${existing ? existing.customer_id : ''}">
-                </div>
-                <div class="form-group flex-1" >
-                    <label class="form-label">Type</label>
-                    <select id="m-cust-type" class="form-control" ${editId ? 'disabled' : ''} required>
-                        <option value="Wholesale" ${existing?.type === 'Wholesale' || !existing ? 'selected' : ''}>🏭 Wholesale</option>
-                        <option value="Retail" ${existing?.type === 'Retail' ? 'selected' : ''}>☕ Retail</option>
-                    </select>
-                </div>
+    if (rtlCustomers.length) {
+        html += '<optgroup label="☕ Retail">';
+        html += rtlCustomers.map(c => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
+        html += '</optgroup>';
+    }
+    return html;
+}
+
+function buildCustomerFormFieldsHtml(existing, editId) {
+    return `
+        <div class="form-row">
+            <div class="form-group flex-1" >
+                <label class="form-label">Customer ID</label>
+                <input type="text" id="m-cust-id" class="form-control" readonly placeholder="Auto Generated" value="${existing ? existing.customer_id : ''}">
             </div>
-            <div class="form-group">
-                <label class="form-label">Customer / Company Name</label>
-                <input type="text" id="m-cust-name" class="form-control" required value="${existing ? existing.name : ''}" placeholder="e.g. PT Kopi Nusantara">
+            <div class="form-group flex-1" >
+                <label class="form-label">Type</label>
+                <select id="m-cust-type" class="form-control" ${editId ? 'disabled' : ''} required>
+                    <option value="Wholesale" ${existing?.type === 'Wholesale' || !existing ? 'selected' : ''}>🏭 Wholesale</option>
+                    <option value="Retail" ${existing?.type === 'Retail' ? 'selected' : ''}>☕ Retail</option>
+                </select>
             </div>
-            <div class="form-row">
-                <div class="form-group flex-1" >
-                    <label class="form-label">Contact Person</label>
-                    <input type="text" id="m-cust-contact" class="form-control" value="${existing?.contact_person || ''}" placeholder="PIC name">
-                </div>
-                <div class="form-group flex-1" >
-                    <label class="form-label">Phone</label>
-                    <input type="text" id="m-cust-phone" class="form-control" value="${existing?.phone || ''}" placeholder="08xxx">
-                </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Customer / Company Name</label>
+            <input type="text" id="m-cust-name" class="form-control" required value="${existing ? existing.name : ''}" placeholder="e.g. PT Kopi Nusantara">
+        </div>
+        <div class="form-row">
+            <div class="form-group flex-1" >
+                <label class="form-label">Contact Person</label>
+                <input type="text" id="m-cust-contact" class="form-control" value="${existing?.contact_person || ''}" placeholder="PIC name">
             </div>
-            <div class="form-row">
-                <div class="form-group flex-1" >
-                    <label class="form-label">Email</label>
-                    <input type="email" id="m-cust-email" class="form-control" value="${existing?.email || ''}" placeholder="email@example.com">
-                </div>
-                <div class="form-group flex-1" >
-                    <label class="form-label">City</label>
-                    <input type="text" id="m-cust-city" class="form-control" value="${existing?.city || ''}" placeholder="Jakarta">
-                </div>
+            <div class="form-group flex-1" >
+                <label class="form-label">Phone</label>
+                <input type="text" id="m-cust-phone" class="form-control" value="${existing?.phone || ''}" placeholder="08xxx">
             </div>
-            <div class="form-group">
-                <label class="form-label">Address</label>
-                <input type="text" id="m-cust-address" class="form-control" value="${existing?.address || ''}" placeholder="Full address">
+        </div>
+        <div class="form-row">
+            <div class="form-group flex-1" >
+                <label class="form-label">Email</label>
+                <input type="email" id="m-cust-email" class="form-control" value="${existing?.email || ''}" placeholder="email@example.com">
             </div>
-            <div class="form-group">
-                <label class="form-label">Notes</label>
-                <input type="text" id="m-cust-notes" class="form-control" value="${existing?.notes || ''}" placeholder="Additional notes">
+            <div class="form-group flex-1" >
+                <label class="form-label">City</label>
+                <input type="text" id="m-cust-city" class="form-control" value="${existing?.city || ''}" placeholder="Jakarta">
             </div>
-            <div class="modal-footer-actions">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
-                <button type="submit" class="btn btn-primary">${editId ? 'Save Changes' : 'Add Customer'}</button>
-            </div>
-        </form>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Address</label>
+            <input type="text" id="m-cust-address" class="form-control" value="${existing?.address || ''}" placeholder="Full address">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Notes</label>
+            <input type="text" id="m-cust-notes" class="form-control" value="${existing?.notes || ''}" placeholder="Additional notes">
+        </div>
     `;
-    
-    openModal(editId ? 'Edit Customer' : 'Add New Customer', html, '650px');
-    
-    // Auto-generate customer ID for new customers
+}
+
+// Wires Customer ID auto-generation + submit/save for whichever host element
+// rendered buildCustomerFormFieldsHtml — `closeFn` abstracts away whether
+// that's the singleton #modal-container (openCustomerModal) or the stacked
+// quick-add overlay (openAddCustomerShortcutModal), so this logic doesn't
+// need to know or care which one it's running inside. `onSaved(newRecord)`
+// lets a caller (e.g. the Request Order form) react to the customer that
+// was just created.
+function wireCustomerForm({ existing, editId, customers, closeFn, onSaved }) {
     const typeSelect = document.getElementById('m-cust-type');
     const custIdInput = document.getElementById('m-cust-id');
-    
+
     async function generateCustomerId() {
         const type = typeSelect.value;
         const prefix = type === 'Wholesale' ? 'WHL' : 'RTL';
@@ -161,18 +179,17 @@ async function openCustomerModal(editId = null) {
         });
         custIdInput.value = `${prefix}-${String(maxNum + 1).padStart(3, '0')}`;
     }
-    
+
     if (!editId) {
         generateCustomerId();
         typeSelect.addEventListener('change', generateCustomerId);
     }
-    
-    // Form submit
+
     document.getElementById('modal-customer-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = document.getElementById('m-cust-name').value.trim();
         if (!name) { alert('Customer name is required'); return; }
-        
+
         const record = {
             id: editId || undefined,
             customer_id: custIdInput.value,
@@ -186,14 +203,88 @@ async function openCustomerModal(editId = null) {
             notes: document.getElementById('m-cust-notes').value.trim(),
             is_active: true
         };
-        
-        const { error } = await saveData('customers', record);
+
+        const { data, error } = await saveData('customers', record);
         if (error) {
             alert('Failed to save customer: ' + error.message);
         } else {
-            document.getElementById('btn-close-modal').click();
+            closeFn();
             await loadCustomersSection();
+            if (onSaved) onSaved(data);
         }
+    });
+}
+
+async function openCustomerModal(editId = null) {
+    const { data: customers } = await fetchData('customers');
+    let existing = null;
+    if (editId) {
+        existing = (customers || []).find(c => c.id === editId);
+    }
+
+    const html = `
+        <form id="modal-customer-form" novalidate>
+            ${buildCustomerFormFieldsHtml(existing, editId)}
+            <div class="modal-footer-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                <button type="submit" class="btn btn-primary">${editId ? 'Save Changes' : 'Add Customer'}</button>
+            </div>
+        </form>
+    `;
+
+    openModal(editId ? 'Edit Customer' : 'Add New Customer', html, '650px');
+
+    wireCustomerForm({
+        existing, editId, customers,
+        closeFn: () => document.getElementById('btn-close-modal').click()
+    });
+}
+
+// Inline shortcut for forms that need to create a customer without losing
+// their own in-progress state — e.g. Submit Sales Request Order. Opening the
+// full openCustomerModal here would go through the SINGLE shared
+// #modal-container (see openModal in js/app.js), overwriting whatever form
+// is currently open behind it. This renders into its own stacked overlay
+// instead (z-index above .overlay's default 1000, same pattern
+// showWarningModal uses), so the caller's modal survives underneath and
+// `onSaved` can prefill the new customer once it's created.
+async function openAddCustomerShortcutModal(onSaved) {
+    const { data: customers } = await fetchData('customers');
+
+    let container = document.getElementById('quick-add-customer-modal-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'quick-add-customer-modal-container';
+        container.className = 'overlay';
+        container.style.zIndex = '2000';
+        document.body.appendChild(container);
+    }
+
+    container.innerHTML = `
+        <div class="overlay-card" style="max-width: 650px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 16px;">
+                <h3 style="font-size: 1.15rem; font-weight: 700;">Add New Customer</h3>
+                <button type="button" id="btn-close-quick-add-customer" style="background: transparent; border: 0; cursor: pointer; color: var(--text-muted); font-size: 1.5rem; line-height: 1;">&times;</button>
+            </div>
+            <form id="modal-customer-form" novalidate>
+                ${buildCustomerFormFieldsHtml(null, null)}
+                <div class="modal-footer-actions">
+                    <button type="button" class="btn btn-secondary" id="btn-cancel-quick-add-customer">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Customer</button>
+                </div>
+            </form>
+        </div>
+    `;
+    container.classList.remove('hidden');
+
+    const close = () => container.classList.add('hidden');
+    document.getElementById('btn-close-quick-add-customer').addEventListener('click', close);
+    document.getElementById('btn-cancel-quick-add-customer').addEventListener('click', close);
+
+    wireCustomerForm({
+        existing: null, editId: null, customers,
+        closeFn: close,
+        onSaved
     });
 }
 
@@ -2217,19 +2308,7 @@ async function openSalesRequestModal(orderId = null) {
 
     // Customer options
     const { data: customersList } = await fetchData('customers');
-    let customerOptionsHtml = '';
-    const whlCustomers = (customersList || []).filter(c => c.type === 'Wholesale' && c.is_active !== false);
-    const rtlCustomers = (customersList || []).filter(c => c.type === 'Retail' && c.is_active !== false);
-    if (whlCustomers.length) {
-        customerOptionsHtml += '<optgroup label="🏭 Wholesale">';
-        customerOptionsHtml += whlCustomers.map(c => `<option value="${c.id}" ${existingOrder?.customer_id === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
-        customerOptionsHtml += '</optgroup>';
-    }
-    if (rtlCustomers.length) {
-        customerOptionsHtml += '<optgroup label="☕ Retail">';
-        customerOptionsHtml += rtlCustomers.map(c => `<option value="${c.id}" ${existingOrder?.customer_id === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
-        customerOptionsHtml += '</optgroup>';
-    }
+    const customerOptionsHtml = buildCustomerOptionsHtml(customersList, existingOrder?.customer_id ?? null);
 
     const html = `
         <form id="modal-request-form" novalidate>
@@ -2242,10 +2321,13 @@ async function openSalesRequestModal(orderId = null) {
             <input type="hidden" id="m-req-sales" value="${existingOrder ? existingOrder.sales_name : (currentUser ? currentUser.name : '')}">
             <div class="form-group mt-25" >
                 <label class="form-label">Customer</label>
-                <select id="m-req-customer" class="form-control" required>
-                    <option value="" disabled selected>-- Select Customer --</option>
-                    ${customerOptionsHtml}
-                </select>
+                <div style="display: flex; gap: 8px; align-items: stretch;">
+                    <select id="m-req-customer" class="form-control" required style="flex: 1;">
+                        <option value="" disabled selected>-- Select Customer --</option>
+                        ${customerOptionsHtml}
+                    </select>
+                    <button type="button" id="btn-req-add-customer" class="btn btn-secondary" style="flex: 0 0 auto; white-space: nowrap;" title="Add new customer">+ Add Customer</button>
+                </div>
             </div>
             
             <div class="form-group mt-3" >
@@ -2276,6 +2358,24 @@ async function openSalesRequestModal(orderId = null) {
     const itemsList = document.getElementById('sales-items-list');
     const agentInput = document.getElementById('m-req-sales');
     const orderNoInput = document.getElementById('m-req-orderno');
+    const customerSelect = document.getElementById('m-req-customer');
+
+    // "+ Add Customer" shortcut — opens in its own stacked overlay (see
+    // openAddCustomerShortcutModal) so this Request Order form and whatever
+    // the user already filled in stay open underneath. Once saved, the new
+    // customer is added to the dropdown and selected automatically.
+    document.getElementById('btn-req-add-customer').addEventListener('click', () => {
+        openAddCustomerShortcutModal((newCustomer) => {
+            if (!newCustomer) return;
+            fetchData('customers').then(({ data: freshCustomers }) => {
+                customerSelect.innerHTML = `
+                    <option value="" disabled>-- Select Customer --</option>
+                    ${buildCustomerOptionsHtml(freshCustomers, newCustomer.id)}
+                `;
+                customerSelect.value = newCustomer.id;
+            });
+        });
+    });
 
     // ── Order Number Generation ──────────────────────────────────────────────
     // The sales agent is now the logged-in user (hidden, prefilled) rather than a
