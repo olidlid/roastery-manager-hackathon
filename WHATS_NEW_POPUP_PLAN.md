@@ -13,7 +13,11 @@ Rencana ini ditulis agar bisa dikerjakan tanpa percakapan yang menghasilkannya. 
 | Hal | Keputusan | Alasan |
 |---|---|---|
 | Pemicu | Saat membuka halaman **Item Request** (`sec-handover`) | Permintaan eksplisit; pembaruan terbesar memang ada di alur itu |
-| Frekuensi | Sekali per versi, per perangkat | |
+| Bentuk | **Satu fitur per halaman**, dengan tombol Berikutnya sampai halaman terakhir | Tiap perubahan dapat ruang untuk gambar before/after-nya sendiri |
+| Selesai membaca | Menekan **Selesai** di halaman terakhir → rilis ini ditandai sudah dilihat | |
+| Ditutup di tengah | Lewati / tombol X / Escape → **ditunda 1 jam**, lalu muncul lagi saat membuka Item Request berikutnya | User yang sedang buru-buru tidak dipaksa, tapi pengumumannya tidak hilang begitu saja |
+| Kotak centang | **Mematikan permanen untuk semua rilis berikutnya**, bukan hanya rilis ini | Pilihan sadar user yang memang tidak mau diganggu sama sekali |
+| Jalan kembali | Wajib ada entri **Setting › What's new** | Tanpa ini, sekali centang berarti terputus permanen tanpa cara membatalkan — lihat §7 |
 | Penyimpanan status | `localStorage` | Tanpa migrasi database. Kalau user buka di HP, muncul sekali lagi di sana — untuk pengumuman ini wajar |
 | Sumber konten | Array di dalam file JS | Entri ditambahkan di commit yang sama dengan fiturnya, jadi konten dan kode selalu sinkron |
 | Cakupan | Semua yang punya akses Item Request | Sederhana, tidak ada yang terlewat |
@@ -29,15 +33,32 @@ navigateTo('sec-handover')  →  loadSectionData('sec-handover')
    ↓
 checkWhatsNewPopup()  (fire-and-forget, tidak memblokir loading halaman)
    ↓
-Baca localStorage: versi terakhir yang sudah dilihat
+Baca localStorage
    ↓
-   ├─ sama dengan versi terbaru  →  tidak melakukan apa-apa
-   └─ beda / belum ada           →  tampilkan popup
-                                      ↓
-                                 user menutup  →  simpan versi terbaru ke localStorage
+   ├─ opt-out permanen aktif        →  tidak melakukan apa-apa
+   ├─ versi terlihat == versi kini  →  tidak melakukan apa-apa
+   ├─ ditunda & belum lewat 1 jam   →  tidak melakukan apa-apa
+   └─ selain itu                    →  tampilkan popup di halaman 1
+                                          ↓
+                        ┌─────────────────┴─────────────────┐
+                        ↓                                   ↓
+              Selesai (halaman akhir)            Lewati / X / Escape
+                        ↓                                   ↓
+              simpan versi terlihat              simpan waktu tunda = sekarang
+              (+ opt-out bila dicentang)         (versi TIDAK ditandai terlihat)
 ```
 
-**Penting:** yang disimpan adalah **versi rilis terakhir yang dilihat**, bukan flag benar/salah. Dengan begitu rilis berikutnya otomatis memunculkan popup lagi tanpa perlu menghapus apa pun.
+**Tiga kunci `localStorage` terpisah**, jangan digabung jadi satu:
+
+| Kunci | Isi | Guna |
+|---|---|---|
+| `whatsnew_seen_version` | string versi, mis. `'2026-08-29'` | Rilis yang sudah benar-benar tuntas dibaca |
+| `whatsnew_snoozed_at` | timestamp epoch | Penundaan 1 jam saat ditutup di tengah |
+| `whatsnew_opt_out` | `'1'` | Mematikan permanen untuk semua rilis |
+
+Yang disimpan di kunci pertama adalah **versi**, bukan flag benar/salah — dengan begitu rilis berikutnya otomatis memunculkan popup lagi tanpa perlu menghapus apa pun.
+
+**Penundaan harus dibersihkan saat rilis berganti.** Kalau `whatsnew_snoozed_at` masih tersisa dari rilis sebelumnya, rilis baru bisa ikut tertunda tanpa alasan. Simpan versi bersama timestamp-nya, atau hapus kunci tunda begitu versi terdeteksi berbeda.
 
 ---
 
@@ -101,13 +122,15 @@ Sesuaikan lagi saat mengerjakan; kalau perombakan modal Sales Order (`SALES_ORDE
 
 ## 5. Tampilan popup
 
-- Overlay gelap, kartu di tengah, lebar sekitar **760px** (bukan 480px — perlu ruang untuk sepasang gambar berdampingan), tinggi maksimal `85vh` dengan isi yang bisa digulung
-- Judul: **What's New** + tanggal rilis
-- Daftar butir perubahan, tiap butir dengan penanda kecil
-- Butir yang punya gambar menampilkan pasangan **Sebelum / Sesudah** (lihat §5.1)
-- Tombol tunggal: **Mengerti** / **Got it** — menutup dan menyimpan versi
-- Tombol X di pojok juga menutup dan menyimpan (perlakuan sama, supaya popup tidak muncul lagi hanya karena user menutup lewat X)
-- Tutup dengan tombol Escape juga menyimpan
+- Overlay gelap, kartu di tengah, lebar sekitar **760px** (perlu ruang untuk sepasang gambar berdampingan), tinggi maksimal `85vh` dengan isi yang bisa digulung
+- Judul: **What's new** + tanggal rilis, tetap terlihat di semua halaman
+- **Satu fitur per halaman**: judul fitur, penjelasan singkat, lalu pasangan gambar Sebelum/Sesudah (§5.1)
+- **Titik indikator** di kiri bawah menunjukkan jumlah halaman dan posisi saat ini — tanpa ini alur "berikutnya" terasa tidak berujung
+- Tombol kanan bawah: **Berikutnya** di halaman non-terakhir, **Selesai** di halaman terakhir
+- **Kembali** muncul mulai halaman kedua
+- **Lewati** di halaman non-terakhir — menutup dengan penundaan 1 jam, sama seperti X
+- Tombol X dan Escape: sama dengan Lewati (tunda 1 jam), **bukan** menandai sudah dibaca
+- **Kotak centang hanya di halaman terakhir.** Labelnya harus menyebut konsekuensinya secara eksplisit — bukan sekadar "jangan tampilkan lagi", tapi bahwa pembaruan berikutnya ikut dimatikan, beserta cara mengaktifkannya kembali
 
 Ikuti token warna yang ada (`var(--bg-app)`, `var(--text-primary)`, dst.) — **jangan hardcode warna**, aturan proyek ini.
 
@@ -149,23 +172,26 @@ Folder per tanggal rilis supaya gambar rilis lama tidak tertimpa saat rilis beri
 
 Tiga fase. Fase 1 sudah menghasilkan popup yang berfungsi; gambar menyusul di Fase 2 supaya kalau ada masalah, jelas bagian mana penyebabnya.
 
-### Fase 1 — Popup + penyimpanan versi
+### Fase 1 — Popup bertahap + tiga status penyimpanan
 
 - Tambahkan `WHATS_NEW_VERSION` dan `WHATS_NEW_RELEASES` di `js/app.js`.
 - Tambahkan `checkWhatsNewPopup()` mengikuti bentuk `checkStockFreezeBanner()` — async, try/catch, tidak memblokir.
 - Panggil dari `case 'sec-handover':` di `loadSectionData()`.
 - Overlay sendiri, bukan `openModal()`.
-- Simpan versi ke `localStorage` saat ditutup (lewat tombol, X, maupun Escape).
-- Bungkus akses `localStorage` dengan try/catch — mode privat browser bisa melempar error, dan popup yang gagal tidak boleh merusak halaman.
+- Navigasi antar halaman: Berikutnya / Kembali / titik indikator / Lewati.
+- Terapkan tiga kunci `localStorage` (§2) berikut pembersihan kunci tunda saat versi berganti.
+- Bungkus **setiap** akses `localStorage` dengan try/catch — mode privat browser bisa melempar error, dan popup yang gagal tidak boleh merusak halaman.
 
 **Verifikasi:**
 1. `node test.js` lulus.
-2. Buka Item Request → popup muncul.
-3. Tutup → buka halaman lain → kembali ke Item Request → **tidak muncul lagi**.
-4. Hapus kunci di localStorage lewat console → buka lagi → muncul lagi.
-5. Ubah `WHATS_NEW_VERSION` ke nilai baru → buka lagi → muncul lagi (ini yang membuktikan rilis berikutnya akan terdeteksi).
+2. Buka Item Request → popup muncul di halaman 1.
+3. Berikutnya sampai halaman terakhir → titik indikator ikut berpindah → **Selesai** → tutup.
+4. Kembali ke Item Request → **tidak muncul lagi**.
+5. Ubah `WHATS_NEW_VERSION` → buka lagi → **muncul lagi** (bukti rilis berikutnya terdeteksi).
 6. Buka halaman selain Item Request → popup **tidak** muncul.
-7. Tutup lewat tombol X dan lewat Escape → keduanya harus ikut menyimpan.
+7. **Uji penundaan:** buka popup → tekan Lewati → langsung buka Item Request lagi → **tidak muncul**. Lalu majukan `whatsnew_snoozed_at` mundur >1 jam lewat console → buka lagi → **muncul lagi**. Ulangi untuk tombol X dan Escape.
+8. **Uji penundaan tidak bocor antar rilis:** dalam keadaan tertunda, ubah `WHATS_NEW_VERSION` → buka lagi → harus **langsung muncul**, tidak ikut tertunda.
+9. **Uji opt-out:** centang di halaman terakhir → Selesai → ubah `WHATS_NEW_VERSION` → buka lagi → tetap **tidak muncul**.
 
 ### Fase 2 — Gambar before/after
 
@@ -182,12 +208,15 @@ Tiga fase. Fase 1 sudah menghasilkan popup yang berfungsi; gambar menyusul di Fa
 5. Buka lewat URL produksi (bukan hanya localhost) → gambar benar-benar termuat, bukan 404 yang jatuh ke `index.html`. Ini pembuktian nyata bahwa rewrite Vercel tidak mengganggu.
 6. Matikan jaringan setelah halaman termuat lalu buka popup → gambar gagal muat tidak boleh merusak tata letak (`alt` tampil, kartu tetap utuh).
 
-### Fase 3 — i18n + rilis
+### Fase 3 — Jalan kembali di Setting + i18n + rilis
 
-- Kunci baru (judul, tombol, label) ke **`en` dan `ar`** di `js/translations.js`.
+- **Tambahkan entri "What's new" di Setting.** Fungsinya dua: membuka kembali popup kapan saja, dan **membatalkan opt-out permanen**. Tanpa ini, kotak centang di Fase 1 adalah pintu satu arah.
+- Kunci baru (judul, tombol, label, teks penjelas kotak centang) ke **`en` dan `ar`** di `js/translations.js`.
 - Isi butir perubahan dua bahasa.
 - Bump `?v=` untuk `js/app.js` dan `js/translations.js` di `index.html`.
 - Ganti bahasa ke Arab, buka Item Request, pastikan popup ikut berganti bahasa dan tata letaknya tidak rusak dalam mode RTL.
+
+**Verifikasi:** centang opt-out → pastikan popup mati → buka Setting › What's new → popup terbuka lagi dan opt-out ikut batal → buka Item Request pada rilis berikutnya → muncul normal.
 
 ---
 
@@ -195,7 +224,7 @@ Tiga fase. Fase 1 sudah menghasilkan popup yang berfungsi; gambar menyusul di Fa
 
 Dicatat supaya tidak dianggap kelalaian:
 
-- **Tidak ada cara membuka ulang popup.** Setelah ditutup, user tidak bisa melihatnya lagi sampai rilis berikutnya. Kalau nanti terasa perlu, tambahkan tautan kecil "What's new" di Settings — perubahannya kecil karena datanya sudah ada.
+> **Catatan: satu hal yang tadinya di daftar ini sekarang WAJIB dikerjakan.** Rencana versi awal menyebut "tidak ada cara membuka ulang popup" sebagai kelalaian yang bisa diterima — karena saat itu popup otomatis muncul lagi tiap rilis. Setelah kotak centang berubah arti menjadi **mematikan permanen untuk semua rilis**, tidak adanya jalan kembali berarti sekali centang user terputus selamanya tanpa cara membatalkan. Entri **Setting › What's new** karena itu masuk lingkup kerja (Fase 3), bukan opsional.
 - **Gambar tidak bisa diperbesar (tanpa lightbox).** Gambar tampil apa adanya di dalam kartu. Kalau detailnya terlalu kecil untuk dibaca, obat pertamanya adalah memotong tangkapan layar lebih rapat pada bagian yang berubah — bukan menambah lightbox. Memotong lebih rapat juga membuat berkasnya lebih kecil.
 - **Gambar tidak diterjemahkan.** Tangkapan layar akan menampilkan antarmuka dalam satu bahasa saja, apa pun bahasa yang sedang aktif. Hanya teks `alt` yang mengikuti bahasa. Menyiapkan tangkapan layar per bahasa berarti menggandakan pekerjaan tiap rilis, dan tidak sepadan untuk pengumuman sesaat.
 - **Tidak per-user lintas perangkat.** Konsekuensi memilih `localStorage`: user yang membuka di HP akan melihatnya sekali lagi di sana. Kalau ini mengganggu, pindahkan ke kolom di tabel `profiles` — perlu migrasi kolom nullable (aman terhadap trigger `handle_new_user` karena trigger itu menulis kolom tertentu saja).
@@ -210,6 +239,9 @@ Dicatat supaya tidak dianggap kelalaian:
 - [ ] String baru ada di **`en` dan `ar`**
 - [ ] Warna lewat CSS custom property
 - [ ] Akses `localStorage` dibungkus try/catch
+- [ ] Penundaan 1 jam diuji, termasuk tidak bocor ke rilis berikutnya
+- [ ] Opt-out permanen diuji, **dan** bisa dibatalkan lewat Setting
+- [ ] Label kotak centang menyebut konsekuensinya secara eksplisit
 - [ ] Diuji dalam mode RTL (bahasa Arab)
 - [ ] Gambar dikompres (<150KB) dan diletakkan di folder ber-versi
 - [ ] Tiap `<img>` punya `alt`, `loading="lazy"`, dan dimensi eksplisit
