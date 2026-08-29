@@ -2743,6 +2743,38 @@ document.getElementById('btn-export-blend-recipes').addEventListener('click', as
     exportToExcel(rows, `Blend_Recipes_${new Date().toISOString().split('T')[0]}`);
 });
 
+// Batch Date default for a NEW batch (not editing an existing one) — used by
+// both openRoastBatchModal and openQuickRoastModal. Plain "today" would reset
+// on every modal open, silently discarding a deliberate manual date (e.g. a
+// late-shift batch backdated to the production day) the moment the modal is
+// reopened. Instead: the field only actually resets once per calendar day —
+// on any later open the same day, it autofills with whatever date the
+// operator last manually picked that day via saveSmartBatchDate() below.
+const BATCH_DATE_STORAGE_KEY = 'roastery_last_batch_date';
+
+function getSmartBatchDate() {
+    const todayStr = new Date().toISOString().split('T')[0];
+    try {
+        const raw = localStorage.getItem(BATCH_DATE_STORAGE_KEY);
+        if (raw) {
+            const saved = JSON.parse(raw);
+            // Only reuse it if it was saved TODAY — a saved value from a
+            // prior day means the day already rolled over, so fall through
+            // to today's real date instead.
+            if (saved && saved.day === todayStr && saved.value) return saved.value;
+        }
+    } catch (e) { /* localStorage unavailable — fall back to today */ }
+    return todayStr;
+}
+
+function saveSmartBatchDate(dateStr) {
+    if (!dateStr) return;
+    const todayStr = new Date().toISOString().split('T')[0];
+    try {
+        localStorage.setItem(BATCH_DATE_STORAGE_KEY, JSON.stringify({ day: todayStr, value: dateStr }));
+    } catch (e) { /* localStorage unavailable — nothing to persist, next open just uses today */ }
+}
+
 async function openRoastBatchModal(plan = null, editId = null) {
     const [
         { data: greenbeans },
@@ -3055,6 +3087,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
         checkBatchStock();
     });
     dateInput.addEventListener('change', updateGeneratedBatchCodeAndWeight);
+    dateInput.addEventListener('change', () => saveSmartBatchDate(dateInput.value));
 
     // Prefill logic
     if (editId && existingBatch) {
@@ -3071,7 +3104,7 @@ async function openRoastBatchModal(plan = null, editId = null) {
         calcDepreciation();
         checkBatchStock();
     } else if (plan) {
-        dateInput.value = todayStr;
+        dateInput.value = getSmartBatchDate();
         machineSelect.value = getCookie('last_machine_id') || machines[0]?.id || '';
         coffeeSelect.value = `${plan.coffee_type}-${plan.single_coffee_id || plan.blend_recipe_id}`;
         testCheckbox.checked = false;
@@ -3086,8 +3119,8 @@ async function openRoastBatchModal(plan = null, editId = null) {
         // Look up cookies
         const lastMachine = getCookie('last_machine_id');
         const lastCoffee = getCookie('last_coffee_val');
-        
-        dateInput.value = todayStr;
+
+        dateInput.value = getSmartBatchDate();
         
         if (lastMachine && machines.some(m => m.id === parseInt(lastMachine))) {
             machineSelect.value = lastMachine;
@@ -3908,8 +3941,8 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
     const recSelectOpts = [...(recipes || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(r => `<option value="Blend-${r.id}" ${r.id === coffeeId && coffeeType === 'Blend' ? 'selected' : ''}>${r.name}</option>`).join('');
     const machOpts = (machines || []).map(m => `<option value="${m.id}" ${m.id === machineId ? 'selected' : ''}>${m.name}</option>`).join('');
     
-    const todayStr = new Date().toISOString().split('T')[0];
-    
+    const smartDateStr = getSmartBatchDate();
+
     const html = `
         <form id="modal-batch-form">
             <div style="background: var(--primary-light); color: var(--primary); padding: 8px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 0.85rem; display: flex; align-items: center; gap: 8px;">
@@ -3923,7 +3956,7 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
                 </div>
                 <div class="form-group">
                     <label class="form-label">Date</label>
-                    <input type="date" id="m-bat-date" class="form-control" value="${todayStr}" required>
+                    <input type="date" id="m-bat-date" class="form-control" value="${smartDateStr}" required>
                 </div>
             </div>
             <div class="form-row mt-3" >
@@ -3998,6 +4031,7 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
     const roastedWeightInput = document.getElementById('m-bat-roasted');
     const depreciationInput = document.getElementById('m-bat-depreciation');
     const degreeInput = document.getElementById('m-bat-degree');
+    dateInput.addEventListener('change', () => saveSmartBatchDate(dateInput.value));
 
     // V2 1F: auto pre-fill Roast Degree from the most recently logged batch of
     // the same coffee + machine (editable — operator can override); blank if
