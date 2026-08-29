@@ -68,7 +68,12 @@ const WHATS_NEW_RELEASES = [
         items: [
             {
                 en: 'Add a new customer directly from the Sales Request form',
-                ar: '...'
+                ar: '...',
+                // Opsional — hanya untuk perubahan yang memang layak
+                // ditunjukkan. Butir tanpa gambar tetap sah.
+                before: 'images/whatsnew/2026-08-29/add-customer-before.png',
+                after:  'images/whatsnew/2026-08-29/add-customer-after.png',
+                alt: { en: 'Sales Request form', ar: '...' }
             },
             // ...
         ]
@@ -96,22 +101,53 @@ Sesuaikan lagi saat mengerjakan; kalau perombakan modal Sales Order (`SALES_ORDE
 
 ## 5. Tampilan popup
 
-Sederhana, tidak perlu berlebihan:
-
-- Overlay gelap, kartu di tengah, lebar sekitar 480px
+- Overlay gelap, kartu di tengah, lebar sekitar **760px** (bukan 480px — perlu ruang untuk sepasang gambar berdampingan), tinggi maksimal `85vh` dengan isi yang bisa digulung
 - Judul: **What's New** + tanggal rilis
 - Daftar butir perubahan, tiap butir dengan penanda kecil
+- Butir yang punya gambar menampilkan pasangan **Sebelum / Sesudah** (lihat §5.1)
 - Tombol tunggal: **Mengerti** / **Got it** — menutup dan menyimpan versi
 - Tombol X di pojok juga menutup dan menyimpan (perlakuan sama, supaya popup tidak muncul lagi hanya karena user menutup lewat X)
 - Tutup dengan tombol Escape juga menyimpan
 
 Ikuti token warna yang ada (`var(--bg-app)`, `var(--text-primary)`, dst.) — **jangan hardcode warna**, aturan proyek ini.
 
+### 5.1 Gambar before/after
+
+**Penyimpanan: file statis biasa.** Sudah diverifikasi live 2026-08-29 bahwa `vercel.json` yang me-rewrite semua rute ke `index.html` **tidak** mengganggu file statis — Vercel melayani berkas yang benar-benar ada lebih dulu. Diuji dengan `curl`: PNG di root kembali sebagai `image/png` (200), sementara path yang tidak ada baru jatuh ke `index.html`. Jadi tidak perlu base64, dan `js/app.js` tidak ikut membengkak.
+
+Letakkan di folder ber-versi:
+
+```
+images/whatsnew/2026-08-29/add-customer-before.png
+images/whatsnew/2026-08-29/add-customer-after.png
+```
+
+Folder per tanggal rilis supaya gambar rilis lama tidak tertimpa saat rilis berikutnya memakai nama file yang mirip.
+
+**Tata letak.** Dua gambar berdampingan dengan label kecil *Sebelum* dan *Sesudah* di atasnya; menumpuk jadi satu kolom di layar sempit (`grid-template-columns: 1fr 1fr` → `1fr` di bawah ~640px). Beri `border` tipis dan `border-radius` supaya batas gambar jelas terhadap latar kartu.
+
+**Wajib pada tiap `<img>`:**
+- `loading="lazy"` — popup bisa memuat beberapa pasang gambar
+- `width`/`height` atau `aspect-ratio` — mencegah isi melompat saat gambar selesai dimuat
+- `alt` yang bermakna, diambil dari `alt.en`/`alt.ar` sesuai bahasa aktif
+- `max-width: 100%` — jangan sampai gambar melebarkan kartu
+
+**Ukuran berkas.** Lebar sumber cukup ~1200px, kompres hingga di bawah ~150KB per gambar. Repo ini sudah punya PNG ~45KB sebagai pembanding. Gambar ikut ter-commit selamanya, jadi jangan memasukkan tangkapan layar mentah beresolusi penuh.
+
+> **Keputusan yang perlu diambil saat mengerjakan: tangkapan layar tema terang atau gelap?** Aplikasi ini punya mode terang dan gelap. Tangkapan layar mode terang akan terlihat mencolok di atas kartu bertema gelap, dan sebaliknya. Tiga pilihan, tidak ada yang gratis:
+> 1. **Satu set saja** (paling sederhana) — terima saja bahwa di salah satu tema gambarnya terlihat kontras. Redam dengan memberi bingkai netral di sekeliling gambar.
+> 2. **Dua set**, dipilih saat render berdasarkan tema aktif — tampilan paling rapi, tapi setiap rilis harus menyiapkan dua kali lipat gambar dan ukurannya berlipat.
+> 3. **Tanpa tangkapan layar mentah** — pakai gambar ilustrasi yang memang netral terhadap tema.
+>
+> Rekomendasi: pilihan 1 dengan bingkai, kecuali nanti terasa mengganggu.
+
+**RTL.** Dalam mode Arab, urutan Sebelum/Sesudah akan terbalik mengikuti arah baca — itu benar dan diinginkan. Yang perlu dipastikan hanya labelnya ikut berpindah bersama gambarnya, bukan tertukar.
+
 ---
 
 ## 6. Fase pengerjaan
 
-Kecil, cukup dua fase.
+Tiga fase. Fase 1 sudah menghasilkan popup yang berfungsi; gambar menyusul di Fase 2 supaya kalau ada masalah, jelas bagian mana penyebabnya.
 
 ### Fase 1 — Popup + penyimpanan versi
 
@@ -131,7 +167,22 @@ Kecil, cukup dua fase.
 6. Buka halaman selain Item Request → popup **tidak** muncul.
 7. Tutup lewat tombol X dan lewat Escape → keduanya harus ikut menyimpan.
 
-### Fase 2 — i18n + rilis
+### Fase 2 — Gambar before/after
+
+- Buat folder `images/whatsnew/<versi>/`, masukkan pasangan gambar yang sudah dikompres.
+- Tambahkan dukungan field `before`/`after`/`alt` pada renderer butir (§4). Butir **tanpa** gambar harus tetap tampil normal — jangan sampai renderer mengasumsikan gambar selalu ada.
+- Terapkan tata letak §5.1: dua kolom, menumpuk di layar sempit, `loading="lazy"`, dimensi eksplisit, `alt` sesuai bahasa.
+- Ambil keputusan soal tema tangkapan layar (§5.1) dan catat pilihannya di komentar kode, supaya rilis berikutnya konsisten.
+
+**Verifikasi:**
+1. Popup menampilkan pasangan gambar dengan label Sebelum/Sesudah.
+2. Butir tanpa gambar tetap tampil rapi di daftar yang sama.
+3. Perkecil lebar jendela → gambar menumpuk, kartu tidak melebar keluar layar.
+4. Cek di tema terang **dan** gelap.
+5. Buka lewat URL produksi (bukan hanya localhost) → gambar benar-benar termuat, bukan 404 yang jatuh ke `index.html`. Ini pembuktian nyata bahwa rewrite Vercel tidak mengganggu.
+6. Matikan jaringan setelah halaman termuat lalu buka popup → gambar gagal muat tidak boleh merusak tata letak (`alt` tampil, kartu tetap utuh).
+
+### Fase 3 — i18n + rilis
 
 - Kunci baru (judul, tombol, label) ke **`en` dan `ar`** di `js/translations.js`.
 - Isi butir perubahan dua bahasa.
@@ -145,6 +196,8 @@ Kecil, cukup dua fase.
 Dicatat supaya tidak dianggap kelalaian:
 
 - **Tidak ada cara membuka ulang popup.** Setelah ditutup, user tidak bisa melihatnya lagi sampai rilis berikutnya. Kalau nanti terasa perlu, tambahkan tautan kecil "What's new" di Settings — perubahannya kecil karena datanya sudah ada.
+- **Gambar tidak bisa diperbesar (tanpa lightbox).** Gambar tampil apa adanya di dalam kartu. Kalau detailnya terlalu kecil untuk dibaca, obat pertamanya adalah memotong tangkapan layar lebih rapat pada bagian yang berubah — bukan menambah lightbox. Memotong lebih rapat juga membuat berkasnya lebih kecil.
+- **Gambar tidak diterjemahkan.** Tangkapan layar akan menampilkan antarmuka dalam satu bahasa saja, apa pun bahasa yang sedang aktif. Hanya teks `alt` yang mengikuti bahasa. Menyiapkan tangkapan layar per bahasa berarti menggandakan pekerjaan tiap rilis, dan tidak sepadan untuk pengumuman sesaat.
 - **Tidak per-user lintas perangkat.** Konsekuensi memilih `localStorage`: user yang membuka di HP akan melihatnya sekali lagi di sana. Kalau ini mengganggu, pindahkan ke kolom di tabel `profiles` — perlu migrasi kolom nullable (aman terhadap trigger `handle_new_user` karena trigger itu menulis kolom tertentu saja).
 - **Tidak ada penargetan per role.** Semua yang bisa membuka Item Request akan melihatnya.
 
@@ -158,6 +211,10 @@ Dicatat supaya tidak dianggap kelalaian:
 - [ ] Warna lewat CSS custom property
 - [ ] Akses `localStorage` dibungkus try/catch
 - [ ] Diuji dalam mode RTL (bahasa Arab)
+- [ ] Gambar dikompres (<150KB) dan diletakkan di folder ber-versi
+- [ ] Tiap `<img>` punya `alt`, `loading="lazy"`, dan dimensi eksplisit
+- [ ] Butir tanpa gambar tetap tampil normal
+- [ ] Gambar diuji termuat di **URL produksi**, bukan hanya localhost
 - [ ] Setelah push, tunggu Vercel "Ready", hard refresh, verifikasi live
 
 ## Lampiran — Jebakan khusus repo ini
@@ -165,3 +222,4 @@ Dicatat supaya tidak dianggap kelalaian:
 - **`openModal` memakai satu `#modal-container` bersama** — modal apa pun yang dibuka di atasnya akan menimpanya. Pakai overlay sendiri.
 - **`.btn` mengalahkan atribut `[hidden]`** (`display:inline-flex` menang atas default UA). Kalau ada tombol yang disembunyikan lewat `[hidden]`, tambahkan override `[hidden] { display: none !important; }`.
 - **`js/app_backup.js` bukan bagian aplikasi** — pencarian teks akan menemukannya, abaikan.
+- **`vercel.json` me-rewrite semua rute ke `index.html`, tapi file statis tetap aman.** Vercel melayani berkas yang benar-benar ada lebih dulu; rewrite hanya menangkap rute yang tidak cocok dengan berkas mana pun. Sudah diuji 2026-08-29. Konsekuensinya: gambar yang **salah nama/path tidak akan memberi 404** — ia mengembalikan `index.html` dengan status 200, dan `<img>` gagal tanpa pesan yang jelas. Kalau gambar tidak muncul, periksa nama berkasnya lebih dulu sebelum mencurigai hal lain.
