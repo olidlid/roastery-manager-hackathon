@@ -2222,17 +2222,40 @@ async function deleteBatch(id) {
 
             // Refund/deduct from bulk_roasted_coffee if it was already approved/Success
             if (batch.qc_status === 'Success') {
-                const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-                const bulkRec = bulkList.find(b =>
-                    b.coffee_type === batch.coffee_type &&
-                    (batch.coffee_type === 'Single' ? b.single_coffee_id === batch.single_coffee_id : b.blend_recipe_id === batch.blend_recipe_id) &&
-                    b.machine_id === batch.machine_id &&
-                    b.production_date === batch.roast_date
-                );
-                if (bulkRec) {
+                // TEST_BATCH_CARD_PLAN.md follow-up: "Approve & Combine" can land this
+                // batch's output in a bulk row with a DIFFERENT machine/date than the
+                // batch itself (the leader's chosen target) — the old coffee+machine+
+                // date guess below only ever matches the auto-pool case, so it would
+                // silently find nothing for a combined batch and leave that kg stuck
+                // in the other lot forever. bulk_stock_movements always has the real
+                // answer: every roast-sourced add (auto-pool OR combine) logs
+                // ref_table='roast_batches', ref_id=<this batch> — look that up
+                // directly instead of re-deriving a guess.
+                let bulkId = null;
+                const { data: movement } = await window.supabaseClient
+                    .from('bulk_stock_movements')
+                    .select('bulk_roasted_coffee_id')
+                    .eq('ref_table', 'roast_batches').eq('ref_id', id).eq('operation', 'roast')
+                    .order('id', { ascending: false }).limit(1).maybeSingle();
+                if (movement) bulkId = movement.bulk_roasted_coffee_id;
+
+                if (!bulkId) {
+                    // Fallback for a row predating this ledger (or a fetch hiccup) —
+                    // the old guess, better than doing nothing.
+                    const { data: bulkList } = await fetchData('bulk_roasted_coffee');
+                    const bulkRec = bulkList.find(b =>
+                        b.coffee_type === batch.coffee_type &&
+                        (batch.coffee_type === 'Single' ? b.single_coffee_id === batch.single_coffee_id : b.blend_recipe_id === batch.blend_recipe_id) &&
+                        b.machine_id === batch.machine_id &&
+                        b.production_date === batch.roast_date
+                    );
+                    bulkId = bulkRec ? bulkRec.id : null;
+                }
+
+                if (bulkId) {
                     // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
                     const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
-                        p_bulk_id: bulkRec.id, p_kg: parseFloat(batch.output_weight_kg),
+                        p_bulk_id: bulkId, p_kg: parseFloat(batch.output_weight_kg),
                         p_operation: 'undo', p_ref_table: 'roast_batches', p_ref_id: id,
                         p_reason: 'Roast batch log deleted', p_user: (currentUser && currentUser.name) || null
                     });
@@ -2445,53 +2468,204 @@ async function finalizePostBlendNow(parentPlanId) {
     await loadRoastingPlans();
 }
 
+// TEST_BATCH_CARD_PLAN.md §4: core approval logic factored out of the old
+// approveTestBatch so both approve paths share it — the plain path (auto-
+// pool into whatever bulk row matches this batch's coffee+machine+date,
+// unchanged from before this refactor) and "Approve & Combine" (merge into
+// a leader-chosen bulk row instead, via openApproveAndCombineModal below).
+// targetBulkId is null for the plain path, a bulk_roasted_coffee.id for combine.
+async function finalizeTestBatchApproval(batch, targetBulkId = null) {
+    // Only save fields that exist in production schema
+    const updateRecord = {
+        id: batch.id,
+        batch_code: batch.batch_code,
+        roast_date: batch.roast_date,
+        roasting_plan_id: batch.roasting_plan_id,
+        coffee_type: batch.coffee_type,
+        single_coffee_id: batch.single_coffee_id,
+        blend_recipe_id: batch.blend_recipe_id,
+        machine_id: batch.machine_id,
+        input_weight_kg: batch.input_weight_kg,
+        output_weight_kg: batch.output_weight_kg,
+        yield_percentage: batch.yield_percentage,
+        roast_type: batch.roast_type,
+        qc_status: 'Success',
+        notes: batch.notes
+    };
+    await saveData('roast_batches', updateRecord);
+
+    if (targetBulkId) {
+        // Approve & Combine: merge straight into the leader's chosen bulk
+        // row via the same atomic RPC addWeightToBulkRoastedCoffee uses for
+        // its own existing-match branch (STOCK_LEDGER_PLAN.md Phase 6) —
+        // just pointed at a manually-picked id instead of an auto match.
+        const { error: refundErr } = await window.supabaseClient.rpc('refund_bulk_lot', {
+            p_bulk_id: targetBulkId, p_kg: parseFloat(batch.output_weight_kg),
+            p_operation: 'roast', p_ref_table: 'roast_batches', p_ref_id: batch.id,
+            p_reason: `Test batch #${batch.id} digabung manual ke bulk #${targetBulkId}`,
+            p_user: (currentUser && currentUser.name) || null
+        });
+        if (refundErr) console.error('refund_bulk_lot RPC failed (combine):', refundErr);
+    } else {
+        // Fetch coffee name
+        const [
+            { data: greenbeans },
+            { data: recipes }
+        ] = await Promise.all([
+            fetchData('green_coffee'),
+            fetchData('blend_recipes')
+        ]);
+        let coffeeName = '';
+        if (batch.coffee_type === 'Single') {
+            const gb = greenbeans.find(g => g.id === batch.single_coffee_id);
+            coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
+        } else {
+            const r = recipes.find(rec => rec.id === batch.blend_recipe_id);
+            coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+        }
+
+        await addWeightToBulkRoastedCoffee(batch.coffee_type, batch.single_coffee_id, batch.blend_recipe_id, batch.machine_id, coffeeName, parseFloat(batch.output_weight_kg), batch.roast_date, 'roast_batches', batch.id);
+    }
+
+    // This approval can now be triggered from the Batch Log table OR the
+    // Ready to Pack Test card — never assume only one of them is mounted.
+    if (document.getElementById('roast-batches-tbody')) loadRoastingBatches();
+    if (document.getElementById('ready-to-pack-cards')) loadPackingSection();
+    scheduleDashboardRefresh();
+}
+
 async function approveTestBatch(id) {
     if (await showWarningModal("Are you sure you want to approve this test batch? Doing so will transfer its output weight to the bulk roasted inventory, making it available for packing.")) {
         const { data: batches } = await fetchData('roast_batches');
         const batch = batches.find(b => b.id === id);
         if (batch) {
-            // Only save fields that exist in production schema
-            const updateRecord = {
-                id: batch.id,
-                batch_code: batch.batch_code,
-                roast_date: batch.roast_date,
-                roasting_plan_id: batch.roasting_plan_id,
-                coffee_type: batch.coffee_type,
-                single_coffee_id: batch.single_coffee_id,
-                blend_recipe_id: batch.blend_recipe_id,
-                machine_id: batch.machine_id,
-                input_weight_kg: batch.input_weight_kg,
-                output_weight_kg: batch.output_weight_kg,
-                yield_percentage: batch.yield_percentage,
-                roast_type: batch.roast_type,
-                qc_status: 'Success',
-                notes: batch.notes
-            };
-            await saveData('roast_batches', updateRecord);
-
-            // Fetch coffee name
-            const [
-                { data: greenbeans },
-                { data: recipes }
-            ] = await Promise.all([
-                fetchData('green_coffee'),
-                fetchData('blend_recipes')
-            ]);
-            let coffeeName = '';
-            if (batch.coffee_type === 'Single') {
-                const gb = greenbeans.find(g => g.id === batch.single_coffee_id);
-                coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
-            } else {
-                const r = recipes.find(rec => rec.id === batch.blend_recipe_id);
-                coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
-            }
-
-            await addWeightToBulkRoastedCoffee(batch.coffee_type, batch.single_coffee_id, batch.blend_recipe_id, batch.machine_id, coffeeName, parseFloat(batch.output_weight_kg), batch.roast_date, 'roast_batches', batch.id);
-
-            loadRoastingBatches();
-            scheduleDashboardRefresh();
+            await finalizeTestBatchApproval(batch, null);
         }
     }
+}
+
+// TEST_BATCH_CARD_PLAN.md §4: lets the leader merge this test batch's output
+// into an existing bulk lot they pick, instead of the automatic coffee+
+// machine+date match. Stacked overlay (its own #overlay div, z-index 2000)
+// rather than openModal's shared #modal-container, so it can be opened from
+// the Ready to Pack Test card without destroying whatever modal is already
+// open — same pattern as showWarningModal / openAddCustomerShortcutModal.
+async function openApproveAndCombineModal(id) {
+    const [
+        { data: batches },
+        { data: bulkList },
+        { data: machines },
+        { data: greenbeans },
+        { data: recipes },
+        { data: roastBatches }
+    ] = await Promise.all([
+        fetchData('roast_batches'), fetchData('bulk_roasted_coffee'), fetchData('machines'),
+        fetchData('green_coffee'), fetchData('blend_recipes'), fetchData('roast_batches')
+    ]);
+    const batch = (batches || []).find(b => b.id === id);
+    if (!batch) return;
+
+    let coffeeName = '';
+    if (batch.coffee_type === 'Single') {
+        const gb = (greenbeans || []).find(g => g.id === batch.single_coffee_id);
+        coffeeName = gb ? gb.name : 'Single Origin';
+    } else {
+        const r = (recipes || []).find(rec => rec.id === batch.blend_recipe_id);
+        coffeeName = r ? r.name : 'Blend Recipe';
+    }
+
+    // Same coffee only; post-blend/repack excluded — mirrors the rule
+    // renderReadyToPackCards already applies to auto-pooling (js/packing.js:
+    // "Post-blends and repacks are deliberately never grouped... merging two
+    // of either into one pool would misrepresent separate events as one lot").
+    const candidates = (bulkList || []).filter(b =>
+        parseFloat(b.bulk_available) > 0.005 &&
+        !b.is_post_blend && !b.is_repack &&
+        b.coffee_type === batch.coffee_type &&
+        (batch.coffee_type === 'Single' ? b.single_coffee_id === batch.single_coffee_id : b.blend_recipe_id === batch.blend_recipe_id)
+    );
+    // The same-machine+date lot (what plain Approve would auto-pool into)
+    // surfaces first and flagged, so the leader can see at a glance which
+    // lot is the "default" before picking a different one on purpose.
+    candidates.sort((a, b) => {
+        const aAuto = a.machine_id === batch.machine_id && a.production_date === batch.roast_date;
+        const bAuto = b.machine_id === batch.machine_id && b.production_date === batch.roast_date;
+        if (aAuto !== bAuto) return aAuto ? -1 : 1;
+        return (b.production_date || '').localeCompare(a.production_date || '');
+    });
+
+    let container = document.getElementById('combine-test-batch-modal-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'combine-test-batch-modal-container';
+        container.className = 'overlay';
+        container.style.zIndex = '2000';
+        document.body.appendChild(container);
+    }
+
+    const outputG = (parseFloat(batch.output_weight_kg || 0) * 1000).toFixed(0);
+    const bodyHtml = candidates.length === 0 ? `
+        <div style="text-align:center; padding:20px 10px; color:var(--text-muted);">
+            <div style="font-size:1.8rem; margin-bottom:8px;">📭</div>
+            <p style="font-size:0.85rem;" data-i18n="msg_combine_no_candidates">No existing bulk lots of this coffee to combine into yet. Use the plain "Approve" button instead — it will start a new bulk lot automatically.</p>
+        </div>
+    ` : `
+        <div style="display:flex; flex-direction:column; gap:8px; max-height:50vh; overflow-y:auto; padding-right:4px;">
+            ${candidates.map(b => {
+                const isAuto = b.machine_id === batch.machine_id && b.production_date === batch.roast_date;
+                const mach = (machines || []).find(m => m.id === b.machine_id);
+                const lotCode = b.custom_blend_code || (typeof buildPreviewLotCode === 'function' ? buildPreviewLotCode(b, machines, greenbeans, recipes, roastBatches, b.production_date) : '');
+                return `
+                    <label style="display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid ${isAuto ? 'var(--primary)' : 'var(--border)'}; border-radius:8px; cursor:pointer;">
+                        <input type="radio" name="combine-target" value="${b.id}" ${isAuto ? 'checked' : ''}>
+                        <div style="flex:1; min-width:0;">
+                            <div style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:0.88rem; flex-wrap:wrap;">
+                                <span>${mach ? mach.name : 'Unknown'}</span>
+                                ${isAuto ? `<span style="font-size:0.62rem; font-weight:700; color:var(--primary); background:var(--primary-glow); padding:1px 6px; border-radius:9999px;" data-i18n="badge_same_machine">SAME MACHINE</span>` : ''}
+                            </div>
+                            <div style="font-size:0.75rem; color:var(--text-muted); font-family:monospace;">${b.production_date || '-'} &middot; ${lotCode}</div>
+                        </div>
+                        <div style="font-weight:700; color:var(--primary); white-space:nowrap;">${parseFloat(b.bulk_available).toFixed(2)} kg</div>
+                    </label>
+                `;
+            }).join('')}
+        </div>
+    `;
+
+    container.innerHTML = `
+        <div class="overlay-card" style="max-width: 520px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:14px;">
+                <div>
+                    <h3 style="font-size:1.1rem; font-weight:700;" data-i18n="title_combine_test_batch">Approve &amp; Combine</h3>
+                    <div style="font-size:0.78rem; color:var(--text-muted); margin-top:2px;">${coffeeName} &middot; ${outputG} g from batch ${batch.batch_code || ('#' + batch.id)}</div>
+                </div>
+                <button type="button" id="btn-close-combine-test-modal" style="background:transparent; border:0; cursor:pointer; color:var(--text-muted); font-size:1.5rem; line-height:1;">&times;</button>
+            </div>
+            ${bodyHtml}
+            <div class="modal-footer-actions" style="margin-top:16px;">
+                <button type="button" class="btn btn-secondary" id="btn-cancel-combine-test-modal" data-i18n="btn_cancel">Cancel</button>
+                ${candidates.length > 0 ? `<button type="button" class="btn btn-primary" id="btn-submit-combine-test-modal" data-i18n="btn_approve_combine_test">Approve &amp; Combine</button>` : ''}
+            </div>
+        </div>
+    `;
+    container.classList.remove('hidden');
+
+    const close = () => container.classList.add('hidden');
+    document.getElementById('btn-close-combine-test-modal').addEventListener('click', close);
+    document.getElementById('btn-cancel-combine-test-modal').addEventListener('click', close);
+
+    const submitBtn = document.getElementById('btn-submit-combine-test-modal');
+    if (submitBtn) {
+        submitBtn.addEventListener('click', async () => {
+            const checked = container.querySelector('input[name="combine-target"]:checked');
+            if (!checked) return;
+            const chosenId = parseInt(checked.value);
+            close();
+            await finalizeTestBatchApproval(batch, chosenId);
+        });
+    }
+
+    if (window.translatePage) window.translatePage();
 }
 
 // Log roasting batch

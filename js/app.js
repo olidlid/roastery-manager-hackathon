@@ -210,7 +210,15 @@ const MOCK_DB = {
                 greenbean_analysis_add: false, greenbean_analysis_edit: false,
                 greenbean_outbound_view: false, greenbean_outbound_add: false, greenbean_outbound_edit: false, greenbean_outbound_delete: false,
                 roasting_view: true, roasting_plan_add: false, roasting_plan_edit: false, roasting_plan_delete: false,
-                roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: false,
+                // roasting_batch_approve extended to Roaster (TEST_BATCH_CARD_PLAN.md
+                // §1/§4): gates both the Batch Log table's Approve button AND the new
+                // Ready to Pack Test card's Approve/Approve & Combine buttons. This is
+                // only the MOCK_DB seed used to first-populate custom_roles if the
+                // table is ever empty (see CLAUDE.md "Full Supabase Mode") — it does
+                // NOT retroactively change an already-populated production table.
+                // Production also needs the manual step: Settings → Role Management →
+                // Roaster → check "Approve Test Batch" → Save.
+                roasting_batch_view: true, roasting_batch_add: true, roasting_batch_edit: false, roasting_batch_delete: false, roasting_batch_approve: true,
                 blend_view: true, blend_add: false, blend_edit: false, blend_delete: false,
                 production_potential_view: true,
                 packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_repack: false, packing_stock_release: false, packing_completed_view: false, packing_dispatch_checkout: false,

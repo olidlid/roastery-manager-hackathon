@@ -125,14 +125,29 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         .filter(b => parseFloat(b.bulk_available) > 0.005)
         .sort((a, b) => a.coffee_name.localeCompare(b.coffee_name) || (a.machine_id || 0) - (b.machine_id || 0) || (a.production_date || '').localeCompare(b.production_date || ''));
 
-    if (activeBulk.length === 0) {
+    // TEST_BATCH_CARD_PLAN.md: a Test batch never touches bulk_roasted_coffee
+    // until it's approved (addWeightToBulkRoastedCoffee's callers are all
+    // gated on qc_status === 'Success' — see js/roasting.js), so a pending
+    // one has no row in bulkList at all. Sourced straight from roast_batches
+    // instead, oldest roast_date first (longest-waiting approval on top).
+    const pendingTestBatches = (roastBatches || [])
+        .filter(b => b.roast_type === 'Test' && b.qc_status === 'Pending')
+        .sort((a, b) => (a.roast_date || '').localeCompare(b.roast_date || ''));
+
+    // A coffee that ONLY has a pending Test batch (no bulk yet at all) must
+    // still render its Test card — the empty-state return below used to fire
+    // before pendingTestBatches existed and would have hidden it.
+    if (activeBulk.length === 0 && pendingTestBatches.length === 0) {
         if (emptyEl) emptyEl.classList.remove('hidden');
         if (filterBar) filterBar.classList.add('hidden');
         if (noMatchEl) noMatchEl.classList.add('hidden');
         return;
     }
     if (emptyEl) emptyEl.classList.add('hidden');
-    if (filterBar) filterBar.classList.remove('hidden');
+    // The filter bar only ever filters bulk cards (RTP_FILTER_DATA below) —
+    // no point showing it when there's nothing to filter yet, even if Test
+    // cards are on screen.
+    if (filterBar) filterBar.classList.toggle('hidden', activeBulk.length === 0);
 
     // Post-blends and repacks are deliberately never grouped: a post-blend
     // carries its own custom_blend_code (CB-/PB-) and a repack's identity is
@@ -330,6 +345,59 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
             style="align-self: flex-end; background: none; border: none; padding: 2px 0; cursor: pointer; color: var(--text-muted); font-size: 0.74rem; text-decoration: underline; font-family: inherit;"><i class="icon-archive va-middle-mr-1"></i><span data-i18n="btn_close_lot">Close Lot</span></button>
     `;
 
+    // TEST_BATCH_CARD_PLAN.md §3: pinned card for a roast_batches row still
+    // awaiting QC approval. Coffee name/machine/depreciation are resolved
+    // the exact same way as the Batch Log table (js/roasting.js, the
+    // sortedBatches.forEach loop) on purpose — two independent lookups for
+    // the same batch could otherwise silently disagree.
+    function buildTestBatchCard(batch) {
+        let coffeeName = '';
+        if (batch.coffee_type === 'Single') {
+            const gb = (greenbeans || []).find(g => g.id === batch.single_coffee_id);
+            coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
+        } else {
+            const r = (recipes || []).find(rec => rec.id === batch.blend_recipe_id);
+            coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+        }
+        const mach = (machines || []).find(m => m.id === batch.machine_id);
+        const machineName = mach ? mach.name : 'Unknown';
+        const outputG = (parseFloat(batch.output_weight_kg || 0) * 1000).toFixed(0);
+        const depVal = (100 - parseFloat(batch.yield_percentage || 0)).toFixed(1);
+
+        const notesHtml = batch.notes
+            ? `<div style="font-size:0.78rem; font-style:italic; color:var(--text-secondary); background:var(--bg-app); border:1px solid var(--border); border-radius:6px; padding:6px 9px;">${batch.notes}</div>`
+            : '';
+
+        // Card stays visible to everyone (so the whole team can see a batch
+        // is waiting), but the two approve actions only render for whoever
+        // holds the permission — same gate as the Batch Log table's own
+        // Approve button (js/app.js, .btn-approve-test-batch wiring).
+        const actionsHtml = hasPermission('roasting_batch_approve') ? `
+            <div style="display:flex; flex-direction:column; gap:6px; margin-top:auto;">
+                <button type="button" class="btn btn-primary btn-rtp-approve-test" data-id="${batch.id}" data-i18n="btn_approve_test_card">Approve</button>
+                <button type="button" class="btn btn-secondary btn-rtp-approve-combine-test" data-id="${batch.id}" data-i18n="btn_approve_combine_test">Approve &amp; Combine</button>
+            </div>
+        ` : '';
+
+        return `
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+                <div>
+                    <div style="font-weight: 700; font-size: 1rem;">${coffeeName}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">${machineName}</div>
+                </div>
+                <span class="badge-test-batch" style="font-size:0.7rem; font-weight:700; text-transform:uppercase; border-radius:9999px; padding:3px 10px; white-space:nowrap;" data-i18n="badge_test_pending">Test &middot; Pending</span>
+            </div>
+            ${notesHtml}
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.78rem;">
+                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_batch_code">Batch Code</span><br><code>${batch.batch_code || '-'}</code></div>
+                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_roast_date">Roast Date</span><br>${batch.roast_date || '-'}</div>
+                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_output">Output</span><br>${outputG} g</div>
+                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_depreciation">Depreciation</span><br>${depVal}%</div>
+            </div>
+            ${actionsHtml}
+        `;
+    }
+
     // One roast date in this coffee+machine group — unchanged from before the
     // grouping, so a coffee that's only been roasted once costs no extra click.
     function buildSingleCard(bulk) {
@@ -402,6 +470,24 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
             </div>
         `;
     }
+
+    // Pinned Test cards render first (DOM order = grid visual order) and
+    // deliberately never enter RTP_FILTER_DATA below — they're a
+    // notification that needs action, not stock being browsed, so they stay
+    // visible regardless of whatever coffee/machine/date filter is active.
+    pendingTestBatches.forEach(batch => {
+        const card = document.createElement('div');
+        card.className = 'card card-test-batch';
+        card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px;';
+        card.innerHTML = buildTestBatchCard(batch);
+        container.appendChild(card);
+    });
+    container.querySelectorAll('.btn-rtp-approve-test').forEach(btn => {
+        btn.addEventListener('click', () => approveTestBatch(parseInt(btn.getAttribute('data-id'))));
+    });
+    container.querySelectorAll('.btn-rtp-approve-combine-test').forEach(btn => {
+        btn.addEventListener('click', () => openApproveAndCombineModal(parseInt(btn.getAttribute('data-id'))));
+    });
 
     // Filter metadata, one entry per rendered card — kept in a module-level
     // array (not re-derived from the DOM) so the filter bar can re-evaluate

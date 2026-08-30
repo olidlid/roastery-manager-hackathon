@@ -1493,6 +1493,35 @@ tbody tr:hover {
     color: #f472b6;
 }
 
+/* TEST_BATCH_CARD_PLAN.md: pinned Ready to Pack card for a roast_batches row
+   still awaiting QC approval (roast_type='Test', qc_status='Pending'). Teal
+   is the next hue not already used by badge-single (cyan), badge-blend
+   (purple), badge-pre-blend (green), badge-post-blend/roasted (amber), or
+   badge-repack (rose) — a border-left accent (not just a background tint)
+   mirrors the plan's "notification, not a stock browse" intent for this
+   one card type. */
+.badge-test-batch {
+    background: rgba(15, 118, 110, 0.12) !important;
+    color: #0f766e !important; /* high contrast teal for light mode */
+}
+
+[data-theme="dark"] .badge-test-batch {
+    background: rgba(45, 212, 191, 0.15) !important;
+    color: #2dd4bf !important; /* bright glowing teal for dark mode */
+}
+
+.card-test-batch {
+    background: rgba(15, 118, 110, 0.06);
+    border: 1px solid rgba(15, 118, 110, 0.35) !important;
+    border-left: 4px solid #0f766e !important;
+}
+
+[data-theme="dark"] .card-test-batch {
+    background: rgba(45, 212, 191, 0.08);
+    border-color: rgba(45, 212, 191, 0.35) !important;
+    border-left-color: #2dd4bf !important;
+}
+
 .modal-repack-header {
     border-bottom-color: rgba(190, 24, 93, 0.35) !important;
 }
