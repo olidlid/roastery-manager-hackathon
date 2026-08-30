@@ -981,6 +981,40 @@ tbody tr:hover {
     }
 }
 
+/* Sales Order modal (SALES_ORDER_REDESIGN_PLAN.md) — same two-column shape
+   as .sr-grid/.sr-panel/.sr-cart-scroll above, kept as its own class family
+   on purpose so a future change to Stock Release's layout doesn't silently
+   ripple into this modal (and vice versa). */
+.so-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 18px;
+}
+
+.so-panel {
+    background-color: var(--bg-app);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+}
+
+.so-cart-scroll {
+    overflow-y: auto;
+    max-height: 260px;
+    min-height: 120px;
+}
+
+@media (max-width: 1000px) {
+    .so-grid {
+        grid-template-columns: 1fr;
+    }
+    .so-cart-scroll {
+        max-height: 200px;
+    }
+}
+
 /* ==========================================================================
    RECIPE POTENTIAL CARDS
    ========================================================================== */
@@ -1494,12 +1528,16 @@ tbody tr:hover {
 }
 
 /* TEST_BATCH_CARD_PLAN.md: pinned Ready to Pack card for a roast_batches row
-   still awaiting QC approval (roast_type='Test', qc_status='Pending'). Teal
-   is the next hue not already used by badge-single (cyan), badge-blend
-   (purple), badge-pre-blend (green), badge-post-blend/roasted (amber), or
-   badge-repack (rose) — a border-left accent (not just a background tint)
-   mirrors the plan's "notification, not a stock browse" intent for this
-   one card type. */
+   still awaiting QC approval (roast_type='Test', qc_status='Pending'). The
+   plan originally picked blue for this, but by the time this was built,
+   SALES_ORDER_REDESIGN_PLAN.md had already claimed blue for .badge-potential
+   (below) on a concurrent branch — reusing it here would make two unrelated
+   "needs attention" concepts read as the same color. Teal is the next hue
+   not already used by badge-single (cyan), badge-blend (purple),
+   badge-pre-blend (green), badge-post-blend/roasted (amber), badge-repack
+   (rose), or badge-potential (blue) — a border-left accent (not just a
+   background tint) mirrors the plan's "notification, not a stock browse"
+   intent for this one card type. */
 .badge-test-batch {
     background: rgba(15, 118, 110, 0.12) !important;
     color: #0f766e !important; /* high contrast teal for light mode */
@@ -1520,6 +1558,46 @@ tbody tr:hover {
     background: rgba(45, 212, 191, 0.08);
     border-color: rgba(45, 212, 191, 0.35) !important;
     border-left-color: #2dd4bf !important;
+}
+
+/* Sales Order redesign (SALES_ORDER_REDESIGN_PLAN.md): the Potential
+   Production button/modal accent. Blue is the one hue not already claimed
+   by badge-single (cyan), badge-blend (purple), badge-pre-blend (green),
+   badge-post-blend/roasted (amber), or badge-repack (rose) — kept distinct
+   so it never reads as one of those, and stays clear of --primary (a warm
+   forest green, see :root), so it doesn't compete with the app's own
+   primary-action color. */
+.badge-potential {
+    background: rgba(29, 78, 216, 0.12) !important;
+    color: #1d4ed8 !important; /* high contrast blue for light mode */
+}
+
+[data-theme="dark"] .badge-potential {
+    background: rgba(96, 165, 250, 0.15) !important;
+    color: #60a5fa !important; /* bright glowing blue for dark mode */
+}
+
+/* Solid variant for the trigger button itself (same family as .btn-danger's
+   solid fill, not the tinted badge above — the button needs to read as an
+   action, not a status label). */
+.btn-potential {
+    background-color: #1d4ed8;
+    border-color: #1d4ed8;
+    color: #fff;
+}
+
+.btn-potential:hover {
+    background-color: #1e40af;
+}
+
+[data-theme="dark"] .btn-potential {
+    background-color: #3b5fd9;
+    border-color: #3b5fd9;
+    color: #fff;
+}
+
+[data-theme="dark"] .btn-potential:hover {
+    background-color: #2f4fc0;
 }
 
 .modal-repack-header {

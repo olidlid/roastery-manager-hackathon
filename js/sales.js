@@ -1378,7 +1378,9 @@ async function approveSalesOrder(orderId) {
     // decided at packing/dispatch, not here"); non-trade-name items stay
     // machine-partitioned. Post-blend/custom-blend bulk is excluded — a
     // different, ad-hoc product identity, same filter openCustomBlendModal's
-    // bulkOptions and the sales order form's perMachineBulkKg both use.
+    // bulkOptions uses. (The sales order form itself no longer computes any
+    // bulk numbers at all as of SALES_ORDER_REDESIGN_PLAN.md Fase 3 — bulk
+    // is this function's call alone.)
     function findMatchingBulk(item) {
         const type = item.coffee_type;
         const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
@@ -1402,8 +1404,8 @@ async function approveSalesOrder(orderId) {
     // packed) of `neededBags` across `matchingBulk`, oldest production_date
     // first, skipping kg already spoken for elsewhere. `claimedSoFarByBulkId`
     // is mutated in place so later calls in the same pass see earlier ones'
-    // claims — same running-allocation pattern getBulkAllocations() uses in
-    // the sales order form.
+    // claims — same running-allocation pattern getAllocations() uses for
+    // packed stock in the sales order form.
     function drawBulkFifoBags(matchingBulk, neededBags, sizeG, reservedElsewhereByBulkId, claimedSoFarByBulkId) {
         const sorted = [...matchingBulk].sort((a, b) => (a.production_date || '').localeCompare(b.production_date || '') || a.id - b.id);
         const draws = [];
@@ -2002,9 +2004,7 @@ async function openSalesRequestModal(orderId = null) {
         { data: roastBatches },
         { data: machines },
         { data: packagingSizes },
-        { data: codeDefinitions },
-        { data: bulkList },
-        { data: bulkReservations }
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
@@ -2016,9 +2016,7 @@ async function openSalesRequestModal(orderId = null) {
         fetchData('roast_batches'),
         fetchData('machines'),
         fetchData('packaging_sizes'),
-        fetchData('code_definitions'),
-        fetchData('bulk_roasted_coffee'),
-        fetchData('bulk_reservations')
+        fetchData('code_definitions')
     ]);
 
     // Trade-name grouping (V2): Sales only orders by code_definitions.name —
@@ -2140,85 +2138,15 @@ async function openSalesRequestModal(orderId = null) {
         perMachinePackedStocks[k] = Math.max(0, perMachinePackedStocks[k] - (committedPackedMapByMachine[k] || 0));
     });
 
-    // ── Build bulk (already-roasted, not-yet-packed) stock snapshot, per
-    // coffee+machine in KG — not size-partitioned like packed stock,
-    // since bulk hasn't been portioned into bag sizes yet (see V2 "3-tier
-    // stock" work: sales previously only saw packed stock + raw green bean
-    // potential, with the entire already-roasted bulk pool invisible —
-    // orders that could be fulfilled same-day by packing existing bulk were
-    // silently sent through the full roasting queue instead). Post-blend/
-    // custom-blend bulk is a different, ad-hoc product identity (no
-    // single_coffee_id/blend_recipe_id in the ad-hoc case) and is excluded,
-    // same filter openCustomBlendModal's bulkOptions already uses.
-    const perMachineBulkKg = {}; // {type}-{coffeeId}-{machineId} -> kg
-    (bulkList || []).forEach(b => {
-        if (b.is_post_blend) return;
-        const avail = parseFloat(b.bulk_available) || 0;
-        if (avail <= 0.005) return;
-        const cId = b.coffee_type === 'Single' ? b.single_coffee_id : b.blend_recipe_id;
-        if (!cId || !b.machine_id) return;
-        const key = `${b.coffee_type}-${cId}-${b.machine_id}`;
-        perMachineBulkKg[key] = (perMachineBulkKg[key] || 0) + avail;
-    });
-
-    // Subtract kg already reserved for OTHER orders (bulk_reservations,
-    // created at approval time — see approveSalesOrder) so a second order
-    // can't be shown/offered the same bulk a first order already claimed.
-    // This order's own reservations (when editing an already-approved
-    // order) are excluded, same "don't self-block" rule committedPackedMap
-    // above already applies via the `orderId` check.
-    const bulkById = {};
-    (bulkList || []).forEach(b => { bulkById[b.id] = b; });
-    (bulkReservations || []).forEach(res => {
-        const resItem = (requestOrderItems || []).find(i => i.id === res.request_order_item_id);
-        if (orderId !== null && resItem && resItem.request_order_id === orderId) return;
-        const b = bulkById[res.bulk_roasted_coffee_id];
-        if (!b) return;
-        const cId = b.coffee_type === 'Single' ? b.single_coffee_id : b.blend_recipe_id;
-        if (!cId || !b.machine_id) return;
-        const key = `${b.coffee_type}-${cId}-${b.machine_id}`;
-        if (perMachineBulkKg[key] !== undefined) {
-            perMachineBulkKg[key] = Math.max(0, perMachineBulkKg[key] - (parseFloat(res.kg) || 0));
-        }
-    });
-
-    // ── Layer 3: Calculate Greenbean Allocations from OTHER rows ────────────
-    function getGreenbeanAllocations(excludeRow = null) {
-        const gbAlloc = {};
-        const rows = document.getElementById('sales-items-list').querySelectorAll('.sales-item-row');
-        rows.forEach(row => {
-            if (row === excludeRow) return;
-            const sel = row.querySelector('.item-select');
-            const qtyEl = row.querySelector('.item-qty');
-            const sizeEl = row.querySelector('.item-size');
-            if (!sel || !sel.value) return;
-            const qty = parseInt(qtyEl.value) || 0;
-            if (qty <= 0) return;
-            
-            const sizeG = parseInt(sizeEl.value) || 250;
-            const requiredKg = (qty * sizeG) / 1000 / 0.85;
-
-            const [type, idStr] = sel.value.split('-');
-            const coffeeId = idStr.startsWith('CODE:') ? idStr : parseInt(idStr);
-
-            if (type === 'Single') {
-                gbAlloc[coffeeId] = (gbAlloc[coffeeId] || 0) + requiredKg;
-            } else if (String(coffeeId).startsWith('CODE:')) {
-                // Blend trade-name: no single recipe is committed to yet
-                // (that's decided at packing/dispatch), so every recipe
-                // sharing the code gets its own ratio-based allocation
-                // reserved — matches the same "any of them could be the one
-                // chosen" symmetry getPotentialBags' MAX-across-recipes
-                // capacity check below relies on.
-                const code = String(coffeeId).slice(5);
-                (recipes || []).filter(rec => rec.code === code).forEach(r => allocateForRecipe(r, requiredKg, gbAlloc));
-            } else {
-                const r = (recipes || []).find(rec => rec.id === coffeeId);
-                if (r) allocateForRecipe(r, requiredKg, gbAlloc);
-            }
-        });
-        return gbAlloc;
-    }
+    // Bulk (already-roasted, not-yet-packed) stock is intentionally NOT
+    // shown or computed anywhere in this modal (SALES_ORDER_REDESIGN_PLAN.md
+    // Fase 3, §3.3) — bulk allocation is the leader's call alone, decided at
+    // approval time (approveSalesOrder's "Fulfill from Bulk" / bulk_reservations),
+    // where the leader can see actual physical stock that may differ from
+    // what the system shows. What sales sees here is only ever the two-way
+    // split "from packed stock" vs "to production" — the "to production"
+    // number is therefore a MAXIMUM: the leader may still cover part of it
+    // from bulk, which is a disclosed, deliberate discrepancy, not a bug.
 
     function allocateForRecipe(r, requiredKg, gbAlloc) {
         const ings = (ingredients || []).filter(i => parseInt(i.blend_recipe_id) === r.id);
@@ -2227,6 +2155,27 @@ async function openSalesRequestModal(orderId = null) {
             const ratio = parseFloat(ing.percentage) / 100;
             gbAlloc[gbId] = (gbAlloc[gbId] || 0) + (requiredKg * ratio);
         });
+    }
+
+    // Fase 5 (§4): which single recipe stands in for a blend trade-name code
+    // when computing potential production — used by BOTH getPotentialBags
+    // below (the fulfillment bar in this modal) and the Potential Production
+    // modal (openPotentialProductionModal), so the two can never disagree.
+    // Sorted by created_at desc, id desc as the tiebreak (both columns exist
+    // — supabase_schema.sql:172-182). Deliberately NOT the recipe with the
+    // most raw material (the old behavior, Math.max across every recipe
+    // sharing the code) — whichever recipe is actually newest is assumed to
+    // be the one production uses, even if that means a lower number here
+    // than what's physically still makeable via an older recipe.
+    function getLatestRecipeForCode(code) {
+        const matching = (recipes || []).filter(rec => rec.code === code);
+        if (matching.length === 0) return null;
+        return matching.slice().sort((a, b) => {
+            const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+            const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+            if (tb !== ta) return tb - ta;
+            return (b.id || 0) - (a.id || 0);
+        })[0];
     }
 
     function getPotentialBags(type, coffeeId, sizeG, gbAllocFromOtherRows = {}) {
@@ -2241,16 +2190,12 @@ async function openSalesRequestModal(orderId = null) {
             const claimed = gbAllocFromOtherRows[coffeeId] || 0;
             maxGbKg = Math.max(0, avail - claimed);
         } else if (String(coffeeId).startsWith('CODE:')) {
-            // Blend trade-name: unlike Single (where origins under one code
-            // are fungible raw material and their kg simply SUMS), a bag is
-            // made from ONE recipe's fixed ratio — you can't combine two
-            // different formulas into one batch. Capacity is therefore the
-            // MAX across recipes sharing the code (whichever one is
-            // eventually chosen only needs itself to have enough stock), not
-            // their sum.
+            // Blend trade-name: capacity comes from whichever recipe sharing
+            // this code is newest (getLatestRecipeForCode), not the MAX
+            // across all of them — see the comment on that function.
             const code = String(coffeeId).slice(5);
-            const matchingRecipes = (recipes || []).filter(rec => rec.code === code);
-            maxGbKg = matchingRecipes.reduce((best, r) => Math.max(best, maxGbKgForRecipe(r, gbAllocFromOtherRows)), 0);
+            const latestRecipe = getLatestRecipeForCode(code);
+            maxGbKg = latestRecipe ? maxGbKgForRecipe(latestRecipe, gbAllocFromOtherRows) : 0;
         } else {
             const r = (recipes || []).find(rec => rec.id === coffeeId);
             if (r) maxGbKg = maxGbKgForRecipe(r, gbAllocFromOtherRows);
@@ -2272,6 +2217,130 @@ async function openSalesRequestModal(orderId = null) {
             if (ratio > 0) minLimit = Math.min(minLimit, avail / ratio);
         });
         return minLimit === Infinity ? 0 : minLimit;
+    }
+
+    // ── Fase 5 (§5.6): Potential Production modal ────────────────────────────
+    // A stacked overlay (same pattern as openAddCustomerShortcutModal — its
+    // own container/z-index, NOT openModal's shared #modal-container, which
+    // would blow away whatever the operator has already filled in on the
+    // sales order form behind it). Nested inside openSalesRequestModal on
+    // purpose: it reuses codeGroups/blendCodeGroups/recipes/greenbeans/
+    // ingredients/machines/perMachinePackedStocks/visibleSizes and the
+    // getPotentialBags/getLatestRecipeForCode/maxGbKgForRecipe functions
+    // directly from this closure — the only way to GUARANTEE this modal's
+    // numbers always match the fulfillment bar on the assembler screen
+    // (§4's explicit requirement) is for both to run off one shared snapshot
+    // and one shared calculation, not two independently-fetched copies.
+    function openPotentialProductionModal() {
+        let container = document.getElementById('potential-production-modal-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'potential-production-modal-container';
+            container.className = 'overlay';
+            container.style.zIndex = '2000';
+            document.body.appendChild(container);
+        }
+
+        // Unify Single + Blend trade-name codes into one row list. Global
+        // numbers only (§5.6: "stok packed global") — deliberately NOT net
+        // of this order's in-progress cart, unlike the Available Stock card
+        // on the assembler screen, since this modal is a browse-everything
+        // view, not tied to one coffee/machine/size selection.
+        const rows = [];
+        Object.entries(codeGroups).forEach(([code, grp]) => {
+            const gbKg = grp.ids.reduce((s, gid) => {
+                const g = (greenbeans || []).find(x => x.id === gid);
+                return s + (g ? parseFloat(g.stock_kg) || 0 : 0);
+            }, 0);
+            rows.push({ type: 'Single', code, name: grp.name, ids: grp.ids, gbKg, recipeNote: null });
+        });
+        Object.entries(blendCodeGroups).forEach(([code, grp]) => {
+            const latestRecipe = getLatestRecipeForCode(code);
+            const gbKg = latestRecipe ? maxGbKgForRecipe(latestRecipe, {}) : 0;
+            const recipeNote = latestRecipe
+                ? `${latestRecipe.name}${latestRecipe.created_at ? ' · ' + latestRecipe.created_at.slice(0, 10) : ''}`
+                : null;
+            rows.push({ type: 'Blend', code, name: grp.name, ids: grp.ids, gbKg, recipeNote });
+        });
+        rows.sort((a, b) => a.name.localeCompare(b.name));
+
+        const machineList = machines || [];
+
+        const machineHeaderRow = machineList.map(m =>
+            `<th colspan="${visibleSizes.length}" style="text-align:center; padding:5px 6px; font-size:0.72rem; color:var(--text-secondary); font-weight:700; border-left:1px solid var(--border); white-space:nowrap;">${m.name}</th>`
+        ).join('');
+        const sizeHeaderRow = machineList.map(m =>
+            visibleSizes.map((s, i) => `<th style="text-align:right; padding:4px 6px; font-size:0.68rem; color:var(--text-muted); font-weight:600; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${s.label}</th>`).join('')
+        ).join('');
+
+        const blendBadgeLbl = window.t ? window.t('lbl_so_pp_blend_badge') : 'blend';
+        const bodyRows = rows.map(row => {
+            const badge = row.type === 'Blend'
+                ? `<span class="badge badge-blend" style="font-size:0.62rem; padding:1px 6px; margin-left:6px;">${blendBadgeLbl}</span>`
+                : '';
+            const recipeNoteHtml = row.recipeNote
+                ? `<div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">${row.recipeNote}</div>`
+                : '';
+            const sizeCells = machineList.map(m =>
+                visibleSizes.map((s, i) => {
+                    const sz = parseFloat(s.gram);
+                    const stock = row.ids.reduce((sum, gid) => sum + (perMachinePackedStocks[`${row.type}-${gid}-${sz}-${m.id}`] || 0), 0);
+                    return `<td style="text-align:right; padding:4px 6px; font-size:0.78rem; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${stock}</td>`;
+                }).join('')
+            ).join('');
+            const yieldKg = row.gbKg * 0.85;
+            return `
+                <tr>
+                    <td style="padding:5px 8px; white-space:nowrap;">
+                        <span style="font-family:monospace; color:var(--primary); font-weight:700; font-size:0.78rem;">${row.code}</span>
+                        <span style="font-size:0.82rem; font-weight:700; margin-left:6px;">${row.name}</span>${badge}
+                        ${recipeNoteHtml}
+                    </td>
+                    ${sizeCells}
+                    <td style="text-align:right; padding:5px 8px; font-size:0.78rem; border-left:1px solid var(--border);">${row.gbKg.toFixed(1)}</td>
+                    <td style="text-align:right; padding:5px 8px; font-size:0.78rem; font-weight:700; color:var(--primary);">${yieldKg.toFixed(1)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        const titleLbl = window.t ? window.t('lbl_potential_production') : 'Potential Production';
+        const coffeeColLbl = window.t ? window.t('lbl_so_pp_coffee') : 'Coffee';
+        const greenbeanKgLbl = window.t ? window.t('lbl_so_pp_greenbean_kg') : 'Green bean (kg)';
+        const yieldKgLbl = window.t ? window.t('lbl_so_pp_yield_kg') : 'Yield (kg)';
+        const footerNoteLbl = window.t ? window.t('hint_so_pp_footer') : 'Machine columns show packed stock ready to ship. Potential is green bean stock × 85% yield; for a blend trade name, the newest recipe sharing that code is used, capped by its scarcest ingredient.';
+
+        container.innerHTML = `
+            <div class="overlay-card" style="max-width: 1100px; width: 95vw;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 16px;">
+                    <h3 style="font-size: 1.15rem; font-weight: 700;">${titleLbl}</h3>
+                    <button type="button" id="btn-close-potential-production" style="background: transparent; border: 0; cursor: pointer; color: var(--text-muted); font-size: 1.5rem; line-height: 1;">&times;</button>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th rowspan="2" style="text-align:left; padding:5px 8px; font-size:0.72rem; color:var(--text-muted); font-weight:600; vertical-align:bottom;">${coffeeColLbl}</th>
+                                ${machineHeaderRow}
+                                <th colspan="2" style="text-align:center; padding:5px 6px; font-size:0.72rem; color:var(--text-secondary); font-weight:700; border-left:1px solid var(--border);">${titleLbl}</th>
+                            </tr>
+                            <tr>
+                                ${sizeHeaderRow}
+                                <th style="text-align:right; padding:4px 8px; font-size:0.68rem; color:var(--text-muted); font-weight:600; border-left:1px solid var(--border);">${greenbeanKgLbl}</th>
+                                <th style="text-align:right; padding:4px 8px; font-size:0.68rem; color:var(--text-muted); font-weight:600;">${yieldKgLbl}</th>
+                            </tr>
+                        </thead>
+                        <tbody>${bodyRows}</tbody>
+                    </table>
+                </div>
+                <div style="font-size:0.7rem; color:var(--text-muted); margin-top:12px; line-height:1.5;">
+                    ${footerNoteLbl}
+                </div>
+            </div>
+        `;
+        container.classList.remove('hidden');
+
+        const close = () => container.classList.add('hidden');
+        document.getElementById('btn-close-potential-production').addEventListener('click', close);
     }
 
     // ── Generate dropdowns ───────────────────────────────────────────────────
@@ -2310,52 +2379,129 @@ async function openSalesRequestModal(orderId = null) {
     const { data: customersList } = await fetchData('customers');
     const customerOptionsHtml = buildCustomerOptionsHtml(customersList, existingOrder?.customer_id ?? null);
 
+    // SALES_ORDER_REDESIGN_PLAN.md Fase 0/1: two-column layout (.so-grid,
+    // added css/styles.css alongside Stock Release's .sr-grid) — left column
+    // assembles ONE item at a time into the cart on the right, instead of a
+    // vertical stack of repeated item rows. '95vw' (not a fixed px width)
+    // is intentional per the plan: "hampir memenuhi layar" on any monitor
+    // size, capped by .overlay-card's own max-height/overflow already in
+    // place for tall modals.
     const html = `
         <form id="modal-request-form" novalidate>
-            <div class="form-group">
-                <label class="form-label" data-i18n="lbl_req_order_no">Order Number</label>
-                <input type="text" id="m-req-orderno" class="form-control" readonly placeholder="Auto Generated" data-i18n-placeholder="ph_req_auto_gen" value="${existingOrder ? existingOrder.order_number : ''}">
-            </div>
-            <!-- Sales agent is the logged-in user, filled automatically. Kept as a
-                 hidden field so order-number generation and submit still read it. -->
-            <input type="hidden" id="m-req-sales" value="${existingOrder ? existingOrder.sales_name : (currentUser ? currentUser.name : '')}">
-            <div class="form-group mt-25" >
-                <label class="form-label">Customer</label>
-                <div style="display: flex; gap: 8px; align-items: stretch;">
-                    <select id="m-req-customer" class="form-control" required style="flex: 1;">
-                        <option value="" disabled selected>-- Select Customer --</option>
-                        ${customerOptionsHtml}
-                    </select>
-                    <button type="button" id="btn-req-add-customer" class="btn btn-secondary" style="flex: 0 0 auto; white-space: nowrap;" title="Add new customer">+ Add Customer</button>
+            <div id="so-step-form" class="so-grid">
+                <div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label" data-i18n="lbl_req_order_no">Order Number</label>
+                            <input type="text" id="m-req-orderno" class="form-control" readonly placeholder="Auto Generated" data-i18n-placeholder="ph_req_auto_gen" value="${existingOrder ? existingOrder.order_number : ''}">
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label" data-i18n="lbl_req_agent">Sales Agent Name</label>
+                            <div style="display: flex; gap: 6px; align-items: stretch;">
+                                <input type="text" id="m-req-sales" class="form-control" readonly style="flex:1; min-width:0;" value="${existingOrder ? existingOrder.sales_name : (currentUser ? currentUser.name : '')}">
+                                <button type="button" id="btn-potential-production" class="btn btn-potential" style="flex: 0 0 auto; white-space: nowrap; padding: 0 10px;" title="Potential Production" data-i18n="btn_so_potential">Potential</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group mt-3">
+                        <label class="form-label" data-i18n="lbl_req_customer">Customer</label>
+                        <div style="display: flex; gap: 8px; align-items: stretch;">
+                            <select id="m-req-customer" class="form-control" required style="flex: 1;">
+                                <option value="" disabled selected>-- Select Customer --</option>
+                                ${customerOptionsHtml}
+                            </select>
+                            <button type="button" id="btn-req-add-customer" class="btn btn-secondary" style="flex: 0 0 auto; white-space: nowrap;" title="Add new customer" data-i18n="btn_req_add_customer">Add New</button>
+                        </div>
+                    </div>
+
+                    <div id="so-assembler-block">
+                        <div style="display:flex; align-items:center; gap:10px; margin: 18px 0 12px;">
+                            <div style="flex:1; height:1px; background:var(--border);"></div>
+                            <span id="so-left-heading" style="font-size:0.72rem; color:var(--text-muted);" data-i18n="lbl_so_add_item_heading">Add item</span>
+                            <div style="flex:1; height:1px; background:var(--border);"></div>
+                        </div>
+
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <div class="form-group" style="margin-bottom:0;">
+                                <label class="form-label label-xs-nowrap" data-i18n="lbl_req_coffee_sel">Coffee Selection</label>
+                                <select id="so-item-coffee" class="form-control">
+                                    ${coffeeOptionsHtml}
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin-bottom:0;">
+                                <label class="form-label label-xs-nowrap" data-i18n="lbl_req_machine">Machine</label>
+                                <select id="so-item-machine" class="form-control">
+                                    ${machineOptionsHtml}
+                                </select>
+                            </div>
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 110px; gap: 10px; margin-top:10px;">
+                            <div class="form-group" style="margin-bottom:0;">
+                                <label class="form-label label-xs-nowrap" data-i18n="lbl_req_size">Bag Weight Size</label>
+                                <select id="so-item-size" class="form-control">
+                                    ${sizeOptionsHtml}
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin-bottom:0;">
+                                <label class="form-label label-xs-nowrap" data-i18n="lbl_req_qty">Order Quantity (Bags)</label>
+                                <input type="number" id="so-item-qty" class="form-control" min="1" value="1">
+                            </div>
+                        </div>
+
+                        <div id="so-item-info-box" style="width: 100%; margin-top: 10px; font-size: 0.75rem; color: var(--text-secondary); background: rgba(0,0,0,0.2); padding: 8px 10px; border-radius: 6px; display: none; line-height: 1.2;"></div>
+
+                        <div style="display:flex; gap:8px; margin-top: 12px;">
+                            <button type="button" id="btn-so-add-item" class="btn btn-secondary" style="flex:1;" data-i18n="btn_so_add_to_list">
+                                + Add to list
+                            </button>
+                            <button type="button" id="btn-so-cancel-edit" class="btn btn-secondary" style="flex: 0 0 auto; display:none;" data-i18n="btn_cancel">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="so-locked-notice" class="hidden" style="margin-top: 18px; padding: 14px 16px; border-radius: 10px; background: rgba(29,78,216,0.08); border: 1px solid rgba(29,78,216,0.3); display:flex; gap:10px; align-items:flex-start;">
+                        <div>
+                            <div style="font-weight:700; font-size:0.85rem; color:#1d4ed8;" data-i18n="lbl_so_locked_title">Order locked</div>
+                            <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:2px;" data-i18n="lbl_so_locked_desc">This order is already Preparing/Approved — items can't be added or removed. Adjust quantities directly in the cart on the right.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="so-panel">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                        <span style="font-size:0.85rem; font-weight:700;" data-i18n="lbl_req_items_list">Order Items</span>
+                        <span id="sales-cart-count" style="font-size:0.7rem; color:var(--primary); background:var(--primary-glow); border-radius:20px; padding:2px 9px;"></span>
+                    </div>
+                    <div id="sales-cart-list" class="so-cart-scroll"></div>
+
+                    <div class="form-group" style="margin:12px 0 0;">
+                        <label class="form-label" data-i18n="lbl_req_notes">Order Notes / Customer Info</label>
+                        <input type="text" id="m-req-notes" class="form-control" placeholder="e.g. Customer Coffee Shop Gayo" data-i18n-placeholder="ph_req_notes" value="${existingOrder ? (existingOrder.notes || '') : ''}">
+                    </div>
+
+                    <div style="display:flex; align-items:baseline; justify-content:space-between; border-top:1px solid var(--border); padding-top:10px; margin-top:12px;">
+                        <span style="font-size:0.8rem; color:var(--text-secondary);" data-i18n="lbl_so_cart_total">Total</span>
+                        <span id="so-cart-total" style="font-size:1.5rem; font-weight:700; color:var(--primary);">0</span>
+                    </div>
+
+                    <div style="display:flex; gap:8px; margin-top:14px;">
+                        <button type="button" class="btn btn-secondary" style="flex:1;" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                        <button type="submit" class="btn btn-primary" style="flex:1.5;" data-i18n="${orderId !== null ? 'btn_so_review_changes' : 'btn_so_review_order'}">${orderId !== null ? 'Review Changes' : 'Review Order'}</button>
+                    </div>
                 </div>
             </div>
-            
-            <div class="form-group mt-3" >
-                <label class="form-label" data-i18n="lbl_req_items_list">Order Items</label>
-                <div id="sales-items-list" style="max-height: 45vh; overflow-y: auto; padding-right: 12px; margin-right: -4px;">
-                    <!-- Dynamic Rows -->
-                </div>
-                <button type="button" id="btn-add-sales-item" class="btn btn-secondary btn-sm" style="margin-top: 10px; width: 100%;">
-                    + <span data-i18n="btn_add_another_item">Add Another Item</span>
-                </button>
-            </div>
 
-            <div class="form-group">
-                <label class="form-label" data-i18n="lbl_req_notes">Order Notes / Customer Info</label>
-                <input type="text" id="m-req-notes" class="form-control" placeholder="e.g. Customer Coffee Shop Gayo" data-i18n-placeholder="ph_req_notes" value="${existingOrder ? (existingOrder.notes || '') : ''}">
-            </div>
-
-            <div class="modal-footer-actions">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
-                <button type="submit" class="btn btn-primary">${orderId !== null ? 'Save Edit' : 'Submit Request'}</button>
-            </div>
+            <div id="so-step-confirm" class="hidden" style="max-width:640px; margin:0 auto;"></div>
         </form>
     `;
 
-    const titleStr = orderId !== null ? 'Edit Sales Request' : 'Submit Sales Request Order';
-    openModal(titleStr, html, '800px');
+    const titleStr = orderId !== null
+        ? (window.t ? window.t('modal_edit_sales_req') : 'Edit Sales Request')
+        : (window.t ? window.t('modal_submit_req') : 'Submit Sales Request Order');
+    openModal(titleStr, html, '95vw');
 
-    const itemsList = document.getElementById('sales-items-list');
     const agentInput = document.getElementById('m-req-sales');
     const orderNoInput = document.getElementById('m-req-orderno');
     const customerSelect = document.getElementById('m-req-customer');
@@ -2377,9 +2523,14 @@ async function openSalesRequestModal(orderId = null) {
         });
     });
 
+    document.getElementById('btn-potential-production').addEventListener('click', () => {
+        openPotentialProductionModal();
+    });
+
     // ── Order Number Generation ──────────────────────────────────────────────
-    // The sales agent is now the logged-in user (hidden, prefilled) rather than a
-    // typed field, so generate the order number once on open instead of on input.
+    // The sales agent is now the logged-in user (readonly, prefilled) rather
+    // than a typed field, so generate the order number once on open instead
+    // of on input.
     if (!existingOrder) {
         const name = agentInput.value.trim();
         if (name) {
@@ -2407,353 +2558,540 @@ async function openSalesRequestModal(orderId = null) {
         }
     }
 
-    // ── Reactive Stock Allocation (Layer 2 & 3) ─────────────────────────────
+    // ── Cart model (SALES_ORDER_REDESIGN_PLAN.md Fase 1) ─────────────────────
+    // Replaces the old one-<div>-per-item DOM row list (addSalesItemRow).
+    // Each entry stores its own coffee/machine/size/qty plus the stock
+    // numbers computed for it (packedStock/potentialBags) —
+    // computed synchronously, not read off a DOM dataset a 500ms-debounced
+    // pass wrote. That debounce was a real latent bug: submitting within
+    // 500ms of typing a qty read an unset dataset value as 0 and could wrongly
+    // treat a fully-stocked order as short (§3.1). The debounce is kept only
+    // for the LEFT FORM's own live preview redraw further down — Add to list
+    // and Submit both always read/compute synchronously, never off a timer.
+    const isApprovedEdit = existingOrder && (existingOrder.status === 'Preparing' || existingOrder.status === 'Approved');
+    let cartIdSeq = 1;
+    const cart = new Map();
+    // Fase 2 — non-null while the left form is editing an existing (unlocked)
+    // cart entry instead of assembling a new one. Save then overwrites that
+    // entry in place (Map.set on an existing key keeps its original
+    // position, so the cart's on-screen order never reshuffles from an edit).
+    let editingCartId = null;
+
+    const selCoffee = document.getElementById('so-item-coffee');
+    const selMachine = document.getElementById('so-item-machine');
+    const selSize = document.getElementById('so-item-size');
+    const inpQty = document.getElementById('so-item-qty');
+    const infoBox = document.getElementById('so-item-info-box');
+    const btnAddItem = document.getElementById('btn-so-add-item');
+    const btnCancelEdit = document.getElementById('btn-so-cancel-edit');
+    const cartListEl = document.getElementById('sales-cart-list');
+    const cartCountEl = document.getElementById('sales-cart-count');
+    const cartTotalEl = document.getElementById('so-cart-total');
+    const leftHeadingEl = document.getElementById('so-left-heading');
+    const stepForm = document.getElementById('so-step-form');
+    const stepConfirm = document.getElementById('so-step-confirm');
+
+    // ── Reactive Stock Allocation (Layer 2 & 3), now reading the cart ───────
     function getAllocations() {
         // Keyed by coffee+size+machine — packed stock from different
         // machines is not interchangeable (same rule as the 5 lookups fixed
         // 2026-07-15 in approveSalesOrder/loadPackingRequestsSection/etc.),
-        // so two rows in the same not-yet-submitted order for the same
-        // coffee+size but different machines must NOT share one reservation
-        // pool. Rows with no machine picked yet fall under a shared 'none'
-        // bucket, which simply won't match any real per-machine stock key.
+        // so two cart entries for the same coffee+size but different
+        // machines must NOT share one reservation pool. An entry with no
+        // machine picked falls under a shared 'none' bucket, which simply
+        // won't match any real per-machine stock key.
         const alloc = {};
-        itemsList.querySelectorAll('.sales-item-row').forEach(row => {
-            const sel = row.querySelector('.item-select');
-            const sizeEl = row.querySelector('.item-size');
-            const qtyEl = row.querySelector('.item-qty');
-            const machineEl = row.querySelector('.item-machine');
-            if (!sel.value) return;
-            const qty = parseInt(qtyEl.value) || 0;
-            if (qty <= 0) return;
-            const machineId = machineEl && machineEl.value ? machineEl.value : 'none';
-            const key = `${sel.value}-${sizeEl.value}-${machineId}`;
-            alloc[key] = (alloc[key] || 0) + qty;
+        cart.forEach((entry) => {
+            if (!entry.coffeeVal || entry.qty <= 0) return;
+            const machineKey = entry.machineId || 'none';
+            const key = `${entry.coffeeVal}-${entry.sizeG}-${machineKey}`;
+            alloc[key] = (alloc[key] || 0) + entry.qty;
         });
         return alloc;
     }
 
-    // Same idea as getAllocations() above, but keyed by coffee+machine ONLY
-    // (in kg) — bulk hasn't been portioned into bag sizes yet, so two rows
-    // for the same coffee+machine at different sizes still compete for the
-    // same kg pool, unlike packed stock which is already split by size.
-    function getBulkAllocations() {
-        const alloc = {};
-        itemsList.querySelectorAll('.sales-item-row').forEach(row => {
-            const sel = row.querySelector('.item-select');
-            const sizeEl = row.querySelector('.item-size');
-            const qtyEl = row.querySelector('.item-qty');
-            const machineEl = row.querySelector('.item-machine');
-            if (!sel.value) return;
-            const qty = parseInt(qtyEl.value) || 0;
-            if (qty <= 0) return;
-            const machineId = machineEl && machineEl.value ? machineEl.value : 'none';
-            const sizeG = parseInt(sizeEl.value) || 250;
-            const kg = (qty * sizeG) / 1000;
-            const key = `${sel.value}-${machineId}`;
-            alloc[key] = (alloc[key] || 0) + kg;
-        });
-        return alloc;
-    }
-
-    let checkStockTimer = null;
-
-    function updateAllRowsStockDisplays() {
-        // Show loading state for all active info boxes
-        itemsList.querySelectorAll('.sales-item-row').forEach(row => {
-            const sel = row.querySelector('.item-select');
-            const infoBox = row.querySelector('.item-info-box');
-            if (sel.value) {
-                infoBox.style.display = 'block';
-                const checkingText = window.t ? window.t('lbl_stock_checking') : 'Stock Checking...';
-                infoBox.innerHTML = `<span style="display:inline-block; animation: spin 1s linear infinite; margin-right: 5px;">⏳</span> ${checkingText}`;
+    // Greenbean claims from every OTHER cart entry — excludeCartId lets a
+    // committed entry exclude its own claim when recomputing itself, same
+    // as the old excludeRow param; the in-progress left-form preview passes
+    // null (nothing to exclude, it isn't in the cart yet).
+    function getGreenbeanAllocations(excludeCartId = null) {
+        const gbAlloc = {};
+        cart.forEach((entry, cartId) => {
+            if (cartId === excludeCartId) return;
+            if (!entry.coffeeVal || entry.qty <= 0) return;
+            const requiredKg = (entry.qty * entry.sizeG) / 1000 / 0.85;
+            const [type, idStr] = entry.coffeeVal.split('-');
+            const coffeeId = idStr.startsWith('CODE:') ? idStr : parseInt(idStr);
+            if (type === 'Single') {
+                gbAlloc[coffeeId] = (gbAlloc[coffeeId] || 0) + requiredKg;
+            } else if (String(coffeeId).startsWith('CODE:')) {
+                const code = String(coffeeId).slice(5);
+                (recipes || []).filter(rec => rec.code === code).forEach(r => allocateForRecipe(r, requiredKg, gbAlloc));
             } else {
-                infoBox.style.display = 'none';
+                const r = (recipes || []).find(rec => rec.id === coffeeId);
+                if (r) allocateForRecipe(r, requiredKg, gbAlloc);
             }
         });
-
-        if (checkStockTimer) clearTimeout(checkStockTimer);
-        
-        checkStockTimer = setTimeout(() => {
-            const totalAlloc = getAllocations();
-            const totalBulkAlloc = getBulkAllocations();
-
-            itemsList.querySelectorAll('.sales-item-row').forEach(currentRow => {
-                const sel = currentRow.querySelector('.item-select');
-                const machineEl = currentRow.querySelector('.item-machine');
-                const sizeEl = currentRow.querySelector('.item-size');
-                const qtyEl = currentRow.querySelector('.item-qty');
-                const infoBox = currentRow.querySelector('.item-info-box');
-                const warnDiv = currentRow.querySelector('.item-qty-warn');
-
-                if (!sel.value) { infoBox.style.display = 'none'; return; }
-
-                const [type, idStr] = sel.value.split('-');
-                const isGroup = idStr.startsWith('CODE:');
-                const coffeeId = isGroup ? idStr : parseInt(idStr);
-                // Trade-name product (V2): no single origin/recipe to break
-                // stock down by, but still per-machine — each machine's
-                // number is the SUM of every origin (Single) or recipe
-                // (Blend) sharing the code that landed on that machine,
-                // instead of one coffee id's own stock. Packed stock from
-                // different recipes sharing a trade name is directly poolable
-                // (they're already-finished bags, unlike raw ingredient
-                // stock — see getPotentialBags for why THAT side uses MAX
-                // instead of SUM for Blend).
-                const groupIds = isGroup
-                    ? (type === 'Single'
-                        ? (greenbeans || []).filter(g => g.code === idStr.slice(5)).map(g => g.id)
-                        : (recipes || []).filter(r => r.code === idStr.slice(5)).map(r => r.id))
-                    : [];
-                const sizeG = parseInt(sizeEl.value);
-                const currentQty = parseInt(qtyEl.value) || 0;
-                const selectedMachineId = machineEl.value ? parseInt(machineEl.value) : null;
-
-                // 1. Build per-machine stock cards for ALL machines
-                let machineCardsHtml = '<div style="display: flex; gap: 6px; flex-wrap: wrap;">';
-                (machines || []).forEach(m => {
-                    const isActiveMachine = selectedMachineId === m.id;
-                    const borderColor = isActiveMachine ? 'var(--primary)' : 'rgba(255,255,255,0.1)';
-                    const bgColor = isActiveMachine ? 'rgba(45,106,79,0.12)' : 'transparent';
-                    const nameColor = isActiveMachine ? 'var(--primary)' : 'var(--text-secondary)';
-
-                    let sizesHtml = '';
-                    visibleSizes.forEach(s => {
-                        const sz = parseFloat(s.gram);
-                        const rawMachStock = isGroup
-                            ? groupIds.reduce((sum, gid) => sum + (perMachinePackedStocks[`${type}-${gid}-${sz}-${m.id}`] || 0), 0)
-                            : (perMachinePackedStocks[`${type}-${coffeeId}-${sz}-${m.id}`] || 0);
-                        // Subtract what OTHER rows in this same unsubmitted order
-                        // already reserved for this exact coffee+size+machine, so
-                        // two lines can't both show the full stock and jointly
-                        // overcommit it (reported live 2026-07-16: two rows for the
-                        // same coffee+size+machine both showed the full 3 in stock
-                        // even after the first row already claimed 2 of it).
-                        const allocKey = `${sel.value}-${sz}-${m.id}`;
-                        const totalAllocForKey = totalAlloc[allocKey] || 0;
-                        const allocByThisRowForKey = (isActiveMachine && sz === sizeG) ? currentQty : 0;
-                        const otherAllocForKey = Math.max(0, totalAllocForKey - allocByThisRowForKey);
-                        const machStock = Math.max(0, rawMachStock - otherAllocForKey);
-                        const isSelected = (sz === sizeG);
-                        const highlight = isSelected ? 'font-weight:700; color: var(--text-primary);' : 'color: var(--text-muted);';
-                        sizesHtml += `<span style="${highlight} font-size: 0.75rem; margin-right: 8px;">${s.label}: <strong>${machStock}</strong></span>`;
-                    });
-
-                    machineCardsHtml += `
-                        <div style="border: 1px solid ${borderColor}; border-radius: 4px; padding: 4px 8px; background: ${bgColor}; min-width: 80px; flex: 1;">
-                            <div style="font-size: 0.72rem; font-weight: 700; color: ${nameColor}; margin-bottom: 1px; white-space: nowrap; line-height: 1.2;">${isActiveMachine ? '▸ ' : ''}${m.name}</div>
-                            <div style="display: flex; gap: 2px; flex-wrap: wrap; line-height: 1.2;">${sizesHtml}</div>
-                        </div>
-                    `;
-                });
-                machineCardsHtml += '</div>';
-
-                // Calculate aggregate for validation (subtract other rows'
-                // allocations) — machine-partitioned, same reasoning as the
-                // display cards above: a row with no machine selected yet has
-                // no real per-machine stock to draw from, so it's 0 until a
-                // machine is picked.
-                let currentSizeAvailPacked = 0;
-                {
-                    const stockKey = `${sel.value}-${sizeG}-${selectedMachineId || 'none'}`;
-                    const totalAllocForThisSize = totalAlloc[stockKey] || 0;
-                    const allocByThisRow = currentQty;
-                    const otherAlloc = Math.max(0, totalAllocForThisSize - allocByThisRow);
-                    const totalPacked = selectedMachineId
-                        ? (isGroup
-                            ? groupIds.reduce((sum, gid) => sum + (perMachinePackedStocks[`${type}-${gid}-${sizeG}-${selectedMachineId}`] || 0), 0)
-                            : (perMachinePackedStocks[`${type}-${coffeeId}-${sizeG}-${selectedMachineId}`] || 0))
-                        : 0;
-                    currentSizeAvailPacked = Math.max(0, totalPacked - otherAlloc);
-                }
-
-                // 2. Bulk (already-roasted, tinggal packing) — pooled by kg
-                // per coffee+machine (not size-partitioned, since bulk isn't
-                // portioned into bag sizes until it's actually packed).
-                let currentBulkBags = 0;
-                let availBulkKg = 0;
-                {
-                    const bulkKey = `${sel.value}-${selectedMachineId || 'none'}`;
-                    const totalBulkAllocForKey = totalBulkAlloc[bulkKey] || 0;
-                    const thisRowBulkKg = (currentQty * sizeG) / 1000;
-                    const otherBulkAlloc = Math.max(0, totalBulkAllocForKey - thisRowBulkKg);
-                    const totalBulkKg = selectedMachineId
-                        ? (isGroup
-                            ? groupIds.reduce((sum, gid) => sum + (perMachineBulkKg[`${type}-${gid}-${selectedMachineId}`] || 0), 0)
-                            : (perMachineBulkKg[`${type}-${coffeeId}-${selectedMachineId}`] || 0))
-                        : 0;
-                    availBulkKg = Math.max(0, totalBulkKg - otherBulkAlloc);
-                    currentBulkBags = Math.floor((availBulkKg * 1000) / sizeG);
-                }
-
-                // 3. Potential production in KG (raw green bean, needs roasting)
-                const gbAllocFromOtherRows = getGreenbeanAllocations(currentRow);
-                const potentialBags = getPotentialBags(type, coffeeId, sizeG, gbAllocFromOtherRows);
-
-                // Three-tier coverage of THIS row's own requested qty, in the
-                // same waterfall order the leader sees again at approval:
-                // packed first, then bulk, then roasting. Lets sales see
-                // whether an order will need production before it's even
-                // submitted, instead of only finding out at approval.
-                const tierPacked = Math.min(currentQty, currentSizeAvailPacked);
-                const tierBulk = Math.min(Math.max(currentQty - currentSizeAvailPacked, 0), currentBulkBags);
-                const tierRoast = Math.min(Math.max(currentQty - currentSizeAvailPacked - currentBulkBags, 0), potentialBags);
-                const tierShort = Math.max(currentQty - currentSizeAvailPacked - currentBulkBags - potentialBags, 0);
-                const barTotal = Math.max(currentQty, 1);
-
-                let barHtml = '<div style="display:flex; height:7px; border-radius:4px; overflow:hidden; margin-top:6px; background:rgba(255,255,255,0.08);">';
-                if (tierPacked > 0) barHtml += `<div style="background:#1D9E75; width:${(tierPacked / barTotal * 100).toFixed(1)}%;"></div>`;
-                if (tierBulk > 0) barHtml += `<div style="background:#EF9F27; width:${(tierBulk / barTotal * 100).toFixed(1)}%;"></div>`;
-                if (tierRoast > 0) barHtml += `<div style="background:#8a8a8a; width:${(tierRoast / barTotal * 100).toFixed(1)}%;"></div>`;
-                if (tierShort > 0) barHtml += `<div style="background:#E24B4A; width:${(tierShort / barTotal * 100).toFixed(1)}%;"></div>`;
-                barHtml += '</div>';
-
-                const readyLbl = window.t ? window.t('lbl_tier_ready') : 'ready';
-                const bulkLbl = window.t ? window.t('lbl_tier_bulk') : 'from bulk';
-                const roastLbl = window.t ? window.t('lbl_tier_roast') : 'needs roasting';
-                const shortLbl = window.t ? window.t('lbl_tier_short') : 'short by';
-
-                const parts = [];
-                if (tierPacked > 0) parts.push(`<span style="color:#5DCAA5; font-weight:700;">${tierPacked}</span> ${readyLbl}`);
-                if (tierBulk > 0) parts.push(`<span style="color:#EF9F27; font-weight:700;">${tierBulk}</span> ${bulkLbl} <span style="color:var(--text-muted);">(${availBulkKg.toFixed(1)}kg)</span>`);
-                if (tierRoast > 0) parts.push(`<span style="color:#b0b0b0; font-weight:700;">${tierRoast}</span> ${roastLbl}`);
-                let tierLine = parts.length ? parts.join(' &middot; ') : '';
-                if (tierShort > 0) {
-                    tierLine += `${tierLine ? ' &middot; ' : ''}<span style="color:#E24B4A; font-weight:700;">${tierShort} ${shortLbl}</span>`;
-                }
-
-                infoBox.innerHTML = `
-                    ${machineCardsHtml}
-                    <div style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 0.75rem; line-height: 1.2;">${tierLine}</div>
-                    ${barHtml}
-                `;
-
-                // Store for submit validation
-                currentRow.dataset.packedStock = currentSizeAvailPacked;
-                currentRow.dataset.bulkBags = currentBulkBags;
-                currentRow.dataset.potentialBags = potentialBags;
-
-            });
-        }, 500); // 500ms animation
+        return gbAlloc;
     }
 
-    function addSalesItemRow(initialItemData = null) {
-        const row = document.createElement('div');
-        row.className = 'sales-item-row';
-        row.style = 'display: flex; flex-direction: column; margin-bottom: 20px; position: relative;';
+    // Packed -> raw-green-bean (production) waterfall, parameterized so it
+    // runs against either a committed cart entry (during a full recompute)
+    // or the in-progress left-form selection (for the live preview, before
+    // it's added). Returns both the info-box HTML and the raw numbers
+    // stored on cart entries. Bulk is deliberately absent (Fase 3, §3.3) —
+    // see the note above the fetch this function's inputs come from.
+    function computeSelectionTiers(coffeeVal, machineId, sizeG, qty, totalAlloc, gbAllocFromOtherRows) {
+        if (!coffeeVal || !sizeG) return null;
+        const [type, idStr] = coffeeVal.split('-');
+        const isGroup = idStr.startsWith('CODE:');
+        const coffeeId = isGroup ? idStr : parseInt(idStr);
+        // Trade-name product (V2): no single origin/recipe to break stock
+        // down by, but still per-machine — each machine's number is the SUM
+        // of every origin (Single) or recipe (Blend) sharing the code that
+        // landed on that machine, instead of one coffee id's own stock.
+        const groupIds = isGroup
+            ? (type === 'Single'
+                ? (greenbeans || []).filter(g => g.code === idStr.slice(5)).map(g => g.id)
+                : (recipes || []).filter(r => r.code === idStr.slice(5)).map(r => r.id))
+            : [];
+        const selectedMachineId = machineId || null;
+        const currentQty = qty || 0;
 
-        row.innerHTML = `
-            <div style="display: flex; gap: 10px; align-items: flex-end; width: 100%;">
-                <div style="flex: 2 1 160px; min-width: 0;">
-                    <label class="form-label label-xs-nowrap"  data-i18n="lbl_req_coffee_sel">Coffee</label>
-                    <select class="form-control item-select" required>
-                        ${coffeeOptionsHtml}
-                    </select>
-                </div>
-                <div style="flex: 1.5 1 130px; min-width: 0;">
-                    <label class="form-label label-xs-nowrap" >Machine</label>
-                    <select class="form-control item-machine" required>
-                        ${machineOptionsHtml}
-                    </select>
-                </div>
-                <div style="flex: 0 0 75px;">
-                    <label class="form-label label-xs-nowrap"  data-i18n="lbl_req_size">Size</label>
-                    <select class="form-control item-size" required>
-                        ${sizeOptionsHtml}
-                    </select>
-                </div>
-                <div style="flex: 0 0 65px;">
-                    <label class="form-label label-xs-nowrap"  data-i18n="lbl_req_qty">Qty</label>
-                    <input type="number" class="form-control item-qty" min="1" value="1" required>
-                </div>
-                <button type="button" class="btn btn-danger btn-remove-row" style="padding: 0; width: 34px; height: 34px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">&times;</button>
+        // 1. "Available stock" table (§5.3) — one row per machine, one
+        // column per active bag size, closed with a Total row. Numbers are
+        // already net of what OTHER cart entries claim for that exact
+        // coffee+size+machine, so two entries can't both show the full
+        // stock and jointly overcommit it (reported live 2026-07-16: two
+        // rows for the same coffee+size+machine both showed the full 3 in
+        // stock even after the first already claimed 2 of it).
+        const coffeeName = coffeeLabelFor(coffeeVal);
+        const totalsBySize = {};
+        let tableRowsHtml = '';
+        (machines || []).forEach(m => {
+            const isActiveMachine = selectedMachineId === m.id;
+            tableRowsHtml += `<tr style="${isActiveMachine ? 'background: var(--primary-glow);' : ''}">`;
+            tableRowsHtml += `<td style="padding:3px 6px; white-space:nowrap; font-size:0.72rem; ${isActiveMachine ? 'color:var(--primary); font-weight:700;' : 'color:var(--text-secondary);'}">${isActiveMachine ? '▸ ' : ''}${m.name}</td>`;
+            visibleSizes.forEach(s => {
+                const sz = parseFloat(s.gram);
+                const rawMachStock = isGroup
+                    ? groupIds.reduce((sum, gid) => sum + (perMachinePackedStocks[`${type}-${gid}-${sz}-${m.id}`] || 0), 0)
+                    : (perMachinePackedStocks[`${type}-${coffeeId}-${sz}-${m.id}`] || 0);
+                const allocKey = `${coffeeVal}-${sz}-${m.id}`;
+                const totalAllocForKey = totalAlloc[allocKey] || 0;
+                const allocByThisForKey = (isActiveMachine && sz === sizeG) ? currentQty : 0;
+                const otherAllocForKey = Math.max(0, totalAllocForKey - allocByThisForKey);
+                const machStock = Math.max(0, rawMachStock - otherAllocForKey);
+                totalsBySize[sz] = (totalsBySize[sz] || 0) + machStock;
+                const isSelectedCell = isActiveMachine && sz === sizeG;
+                const cellStyle = isSelectedCell ? 'color:var(--primary); font-weight:700;' : 'color:var(--text-primary);';
+                tableRowsHtml += `<td style="text-align:right; padding:3px 6px; font-size:0.72rem; ${cellStyle}">${machStock}</td>`;
+            });
+            tableRowsHtml += `</tr>`;
+        });
+        const totalLbl = window.t ? window.t('lbl_so_cart_total') : 'Total';
+        let totalRowHtml = `<tr style="border-top:1px solid var(--border);"><td style="padding:3px 6px; font-size:0.72rem; font-weight:700;">${totalLbl}</td>`;
+        visibleSizes.forEach(s => {
+            const sz = parseFloat(s.gram);
+            totalRowHtml += `<td style="text-align:right; padding:3px 6px; font-size:0.72rem; font-weight:700;">${totalsBySize[sz] || 0}</td>`;
+        });
+        totalRowHtml += `</tr>`;
+        const availableStockLbl = window.t ? window.t('lbl_so_available_stock') : 'Available stock';
+        const machineLbl = window.t ? window.t('lbl_req_machine') : 'Machine';
+        const tableHtml = `
+            <div style="font-size:0.72rem; font-weight:700; color:var(--text-secondary); margin-bottom:4px;">${availableStockLbl} &mdash; ${coffeeName}</div>
+            <div style="overflow-x:auto;">
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left; padding:3px 6px; font-size:0.68rem; color:var(--text-muted); font-weight:600; white-space:nowrap;">${machineLbl}</th>
+                            ${visibleSizes.map(s => `<th style="text-align:right; padding:3px 6px; font-size:0.68rem; color:var(--text-muted); font-weight:600;">${s.label}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>${tableRowsHtml}${totalRowHtml}</tbody>
+                </table>
             </div>
-            <div class="item-info-box" style="width: 100%; margin-top: 5px; font-size: 0.75rem; color: var(--text-secondary); background: rgba(0,0,0,0.2); padding: 5px 8px; border-radius: 5px; display: none; line-height: 1.2;"></div>
         `;
 
-        itemsList.appendChild(row);
-
-        const sel = row.querySelector('.item-select');
-        const machineEl = row.querySelector('.item-machine');
-        const sizeEl = row.querySelector('.item-size');
-        const qtyEl = row.querySelector('.item-qty');
-
-        if (initialItemData) {
-            const coffeeVal = initialItemData.coffee_code
-                ? `${initialItemData.coffee_type}-CODE:${initialItemData.coffee_code}`
-                : `${initialItemData.coffee_type}-${initialItemData.single_coffee_id || initialItemData.blend_recipe_id}`;
-            sel.value = coffeeVal;
-            if (initialItemData.machine_id) machineEl.value = initialItemData.machine_id;
-            sizeEl.value = initialItemData.bag_size_g;
-            qtyEl.value = initialItemData.quantity_requested;
-            
-            // Store original item id for plan sync
-            row.dataset.originalItemId = initialItemData.id;
+        // Aggregate for the selected machine+size specifically (subtract
+        // other entries' allocations) — machine-partitioned: no machine
+        // picked yet means no real per-machine stock to draw from, so it's
+        // 0 until one is picked.
+        let currentSizeAvailPacked = 0;
+        {
+            const stockKey = `${coffeeVal}-${sizeG}-${selectedMachineId || 'none'}`;
+            const totalAllocForThisSize = totalAlloc[stockKey] || 0;
+            const allocByThis = currentQty;
+            const otherAlloc = Math.max(0, totalAllocForThisSize - allocByThis);
+            const totalPacked = selectedMachineId
+                ? (isGroup
+                    ? groupIds.reduce((sum, gid) => sum + (perMachinePackedStocks[`${type}-${gid}-${sizeG}-${selectedMachineId}`] || 0), 0)
+                    : (perMachinePackedStocks[`${type}-${coffeeId}-${sizeG}-${selectedMachineId}`] || 0))
+                : 0;
+            currentSizeAvailPacked = Math.max(0, totalPacked - otherAlloc);
         }
 
-        // If editing approved/preparing order: lock all fields except qty
-        const isApprovedEdit = existingOrder && (existingOrder.status === 'Preparing' || existingOrder.status === 'Approved');
-        if (isApprovedEdit && initialItemData) {
-            sel.disabled = true;
-            sel.style.opacity = '0.6';
-            machineEl.disabled = true;
-            machineEl.style.opacity = '0.6';
-            sizeEl.disabled = true;
-            sizeEl.style.opacity = '0.6';
-            row.querySelector('.btn-remove-row').style.display = 'none';
+        // 2. Potential production in bags (raw green bean, needs roasting)
+        const potentialBags = getPotentialBags(type, coffeeId, sizeG, gbAllocFromOtherRows);
+
+        // Two-tier coverage of THIS selection's own qty: packed first, then
+        // production. What leaves this modal as "to production" is a
+        // MAXIMUM — the leader may still cover part of it from bulk at
+        // approval, which this modal never sees (see note above the fetch).
+        const tierPacked = Math.min(currentQty, currentSizeAvailPacked);
+        const tierRoast = Math.min(Math.max(currentQty - currentSizeAvailPacked, 0), potentialBags);
+        const tierShort = Math.max(currentQty - currentSizeAvailPacked - potentialBags, 0);
+        const barTotal = Math.max(currentQty, 1);
+
+        let barHtml = '<div style="display:flex; height:7px; border-radius:4px; overflow:hidden; margin-top:6px; background:rgba(255,255,255,0.08);">';
+        if (tierPacked > 0) barHtml += `<div style="background:#1D9E75; width:${(tierPacked / barTotal * 100).toFixed(1)}%;"></div>`;
+        if (tierRoast > 0) barHtml += `<div style="background:#EF9F27; width:${(tierRoast / barTotal * 100).toFixed(1)}%;"></div>`;
+        if (tierShort > 0) barHtml += `<div style="background:#E24B4A; width:${(tierShort / barTotal * 100).toFixed(1)}%;"></div>`;
+        barHtml += '</div>';
+
+        const readyLbl = window.t ? window.t('lbl_tier_ready') : 'ready';
+        const roastLbl = window.t ? window.t('lbl_tier_roast') : 'needs roasting';
+        const shortLbl = window.t ? window.t('lbl_tier_short') : 'short by';
+
+        const parts = [];
+        if (tierPacked > 0) parts.push(`<span style="color:#5DCAA5; font-weight:700;">${tierPacked}</span> ${readyLbl}`);
+        if (tierRoast > 0) parts.push(`<span style="color:#EF9F27; font-weight:700;">${tierRoast}</span> ${roastLbl}`);
+        let tierLine = parts.length ? parts.join(' &middot; ') : '';
+        if (tierShort > 0) {
+            tierLine += `${tierLine ? ' &middot; ' : ''}<span style="color:#E24B4A; font-weight:700;">${tierShort} ${shortLbl}</span>`;
         }
 
-        // Remove handler
-        row.querySelector('.btn-remove-row').addEventListener('click', () => {
-            if (itemsList.querySelectorAll('.sales-item-row').length > 1) {
-                row.remove();
-                updateAllRowsStockDisplays();
-            } else {
-                alert(window.t('alert_min_one_item') || 'At least one item is required.');
+        const html = `
+            ${tableHtml}
+            <div style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 0.75rem; line-height: 1.2;">${tierLine}</div>
+            ${barHtml}
+        `;
+
+        return { html, packedStock: currentSizeAvailPacked, potentialBags };
+    }
+
+    // Recomputes packedStock/potentialBags for EVERY cart entry — called
+    // after any add/remove/qty-edit, mirroring the old debounced all-rows
+    // recompute so an earlier entry's numbers never go stale once a later
+    // entry claims some of the same stock. This is what makes the stored
+    // numbers safe to read synchronously at submit time.
+    function recomputeCartStock() {
+        const totalAlloc = getAllocations();
+        cart.forEach((entry, cartId) => {
+            const gbAlloc = getGreenbeanAllocations(cartId);
+            const result = computeSelectionTiers(entry.coffeeVal, entry.machineId, entry.sizeG, entry.qty, totalAlloc, gbAlloc);
+            if (result) {
+                entry.packedStock = result.packedStock;
+                entry.potentialBags = result.potentialBags;
             }
         });
-
-        // Reactive listeners
-        sel.addEventListener('change', updateAllRowsStockDisplays);
-        machineEl.addEventListener('change', updateAllRowsStockDisplays);
-        sizeEl.addEventListener('change', updateAllRowsStockDisplays);
-        qtyEl.addEventListener('input', updateAllRowsStockDisplays);
-
-        if (typeof window.translatePage === 'function') window.translatePage();
     }
 
-    // Populate rows
+    let previewTimer = null;
+    function schedulePreview() {
+        if (!selCoffee.value) {
+            infoBox.style.display = 'none';
+            if (previewTimer) clearTimeout(previewTimer);
+            return;
+        }
+        infoBox.style.display = 'block';
+        const checkingText = window.t ? window.t('lbl_stock_checking') : 'Stock Checking...';
+        infoBox.innerHTML = `<span style="display:inline-block; animation: spin 1s linear infinite; margin-right: 5px;">⏳</span> ${checkingText}`;
+        if (previewTimer) clearTimeout(previewTimer);
+        previewTimer = setTimeout(renderPreviewNow, 500);
+    }
+
+    // Purely visual — the debounce only controls how often this redraws
+    // while the operator is still typing. Add to list (below) always
+    // computes synchronously, so what gets stored on a cart entry can never
+    // race this timer.
+    function renderPreviewNow() {
+        const coffeeVal = selCoffee.value;
+        if (!coffeeVal) { infoBox.style.display = 'none'; return; }
+        const machineId = selMachine.value ? parseInt(selMachine.value) : null;
+        const sizeG = parseInt(selSize.value) || 0;
+        const qty = parseInt(inpQty.value) || 0;
+        const totalAlloc = getAllocations();
+        const gbAlloc = getGreenbeanAllocations(null);
+        const result = computeSelectionTiers(coffeeVal, machineId, sizeG, qty, totalAlloc, gbAlloc);
+        if (result) {
+            infoBox.style.display = 'block';
+            infoBox.innerHTML = result.html;
+        }
+    }
+
+    selCoffee.addEventListener('change', schedulePreview);
+    selMachine.addEventListener('change', schedulePreview);
+    selSize.addEventListener('change', schedulePreview);
+    inpQty.addEventListener('input', schedulePreview);
+
+    function coffeeLabelFor(coffeeVal) {
+        const [type, idStr] = coffeeVal.split('-');
+        if (idStr.startsWith('CODE:')) {
+            const code = idStr.slice(5);
+            const grp = type === 'Single' ? codeGroups[code] : blendCodeGroups[code];
+            return grp ? grp.name : `Code ${code}`;
+        }
+        const id = parseInt(idStr);
+        if (type === 'Single') {
+            const g = (greenbeans || []).find(x => x.id === id);
+            return g ? g.name : 'Single Origin';
+        }
+        const r = (recipes || []).find(x => x.id === id);
+        return r ? r.name : 'Blend Recipe';
+    }
+
+    function machineLabelFor(machineId) {
+        if (!machineId) return '-';
+        const m = (machines || []).find(x => x.id === machineId);
+        return m ? m.name : '-';
+    }
+
+    function renderCart() {
+        cartCountEl.textContent = cart.size;
+
+        if (cart.size === 0) {
+            const emptyLbl = window.t ? window.t('lbl_so_cart_empty') : 'No items yet — assemble one on the left and click Add to list.';
+            cartListEl.innerHTML = `<div style="padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.82rem;">${emptyLbl}</div>`;
+            cartTotalEl.textContent = '0';
+            return;
+        }
+
+        const editLbl = window.t ? window.t('btn_so_cart_edit') : 'Edit';
+        const editingLbl = window.t ? window.t('lbl_so_cart_editing') : 'Editing…';
+
+        let html = '';
+        let totalQty = 0;
+        cart.forEach((entry) => {
+            totalQty += entry.qty;
+            const name = coffeeLabelFor(entry.coffeeVal);
+            const machineName = machineLabelFor(entry.machineId);
+            const shortfall = Math.max(0, entry.qty - entry.packedStock);
+            const isShort = shortfall > 0;
+            const isEditing = entry.cartId === editingCartId;
+            const borderStyle = isEditing ? 'border:1px solid var(--primary); box-shadow: 0 0 0 1px var(--primary);' : 'border:1px solid var(--border);';
+            const bgStyle = isEditing ? 'background: var(--primary-glow);' : (isShort ? 'background: rgba(239,158,39,0.08);' : '');
+            html += `
+                <div style="${borderStyle} border-radius:8px; padding:8px 10px; margin-bottom:8px; ${bgStyle}">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                        <div style="font-size:0.85rem; font-weight:700; line-height:1.3;">${name}</div>
+                        ${entry.locked ? '' : `
+                            <div style="display:flex; align-items:center; gap:6px; flex:0 0 auto;">
+                                <button type="button" class="btn-cart-edit" data-cart-id="${entry.cartId}" style="background:transparent; border:0; cursor:pointer; color:${isEditing ? 'var(--primary)' : 'var(--text-muted)'}; font-size:0.7rem; font-weight:700; padding:0;">${isEditing ? editingLbl : editLbl}</button>
+                                <button type="button" class="btn-cart-remove" data-cart-id="${entry.cartId}" style="background:transparent; border:0; cursor:pointer; color:var(--text-muted); font-size:1.1rem; line-height:1; padding:0;">&times;</button>
+                            </div>
+                        `}
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                        <span style="font-size:0.72rem; color:var(--text-muted);">${machineName} &middot; ${entry.sizeG}g</span>
+                        ${entry.locked
+                            ? `<input type="number" class="form-control cart-qty-input" data-cart-id="${entry.cartId}" value="${entry.qty}" min="0" style="width:70px; height:28px; text-align:center;">`
+                            : `<span style="font-size:0.85rem; font-weight:700;">${entry.qty}</span>`}
+                    </div>
+                    ${isShort ? `<div style="font-size:0.68rem; color:#EF9F27; margin-top:4px;">${shortfall} ${window.t ? window.t('lbl_tier_roast') : 'needs roasting'}</div>` : ''}
+                </div>
+            `;
+        });
+        cartListEl.innerHTML = html;
+        cartTotalEl.textContent = totalQty;
+
+        cartListEl.querySelectorAll('.btn-cart-remove').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const cartId = parseInt(btn.getAttribute('data-cart-id'));
+                // Removing the entry currently being edited would leave Save
+                // pointing at a deleted key — back out of edit mode first so
+                // the left form doesn't silently resurrect it.
+                if (cartId === editingCartId) exitEditMode();
+                cart.delete(cartId);
+                recomputeCartStock();
+                renderCart();
+            });
+        });
+        cartListEl.querySelectorAll('.btn-cart-edit').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const cartId = parseInt(btn.getAttribute('data-cart-id'));
+                enterEditMode(cartId);
+            });
+        });
+        cartListEl.querySelectorAll('.cart-qty-input').forEach(inp => {
+            inp.addEventListener('input', () => {
+                const cartId = parseInt(inp.getAttribute('data-cart-id'));
+                const entry = cart.get(cartId);
+                if (!entry) return;
+                entry.qty = parseInt(inp.value) || 0;
+                recomputeCartStock();
+                // Don't re-render the whole cart on every keystroke (would
+                // steal focus from the input mid-type) — just refresh the total.
+                let sum = 0;
+                cart.forEach(e => sum += e.qty);
+                cartTotalEl.textContent = sum;
+            });
+        });
+    }
+
+    // ── Edit-from-cart (SALES_ORDER_REDESIGN_PLAN.md Fase 2) ─────────────────
+    // Only reachable for unlocked entries (see renderCart — the Edit button
+    // is omitted entirely for locked ones, which already have their own
+    // direct qty-input editing from Fase 1).
+    function enterEditMode(cartId) {
+        const entry = cart.get(cartId);
+        if (!entry) return;
+        editingCartId = cartId;
+
+        selCoffee.value = entry.coffeeVal;
+        selMachine.value = entry.machineId || '';
+        selSize.value = entry.sizeG;
+        inpQty.value = entry.qty;
+
+        if (leftHeadingEl) leftHeadingEl.textContent = window.t ? window.t('lbl_so_edit_item_heading') : 'Edit item';
+        btnAddItem.textContent = window.t ? window.t('btn_so_save_changes') : 'Save changes';
+        btnCancelEdit.style.display = '';
+
+        renderPreviewNow();
+        renderCart(); // re-render so the card being edited gets marked
+    }
+
+    function exitEditMode() {
+        editingCartId = null;
+        selCoffee.value = '';
+        selMachine.value = '';
+        selSize.selectedIndex = 0;
+        inpQty.value = 1;
+        infoBox.style.display = 'none';
+
+        if (leftHeadingEl) leftHeadingEl.textContent = window.t ? window.t('lbl_so_add_item_heading') : 'Add item';
+        btnAddItem.textContent = window.t ? window.t('btn_so_add_to_list') : '+ Add to list';
+        btnCancelEdit.style.display = 'none';
+    }
+
+    if (btnCancelEdit) {
+        btnCancelEdit.addEventListener('click', () => {
+            exitEditMode();
+            renderCart(); // drop the "being edited" highlight
+        });
+    }
+
+    btnAddItem.addEventListener('click', () => {
+        const coffeeVal = selCoffee.value;
+        const machineId = selMachine.value ? parseInt(selMachine.value) : null;
+        const sizeG = parseInt(selSize.value) || 0;
+        const qty = parseInt(inpQty.value) || 0;
+
+        if (!coffeeVal || !machineId || !sizeG || qty <= 0) {
+            alert(window.t ? window.t('alert_field_required') : 'Please complete Coffee, Machine, Size, and Qty before adding.');
+            return;
+        }
+
+        // Fase 2: editing an existing cart entry — overwrite it in place
+        // (Map.set on an existing key doesn't move its position, so the
+        // card stays where it was) instead of adding a new one, and never
+        // merge into some other entry even if the edited values now match
+        // it — that would silently drop a card the operator can still see
+        // and didn't ask to remove.
+        if (editingCartId !== null) {
+            const entry = cart.get(editingCartId);
+            if (entry) {
+                entry.coffeeVal = coffeeVal;
+                entry.machineId = machineId;
+                entry.sizeG = sizeG;
+                entry.qty = qty;
+            }
+            exitEditMode();
+            recomputeCartStock();
+            renderCart();
+            return;
+        }
+
+        // Merge with an existing entry sharing the same coffee+machine+size
+        // — UNLESS this order is locked (Preparing/Approved edit), where
+        // merging would silently fold two distinct request_order_items into
+        // one cart entry and break the originalItemId -> roasting_plans
+        // mapping (§3.4). Locked orders never reach this handler anyway
+        // (Add to list is hidden for them, see below), but the guard is kept
+        // here too so the merge behavior can never depend on UI visibility.
+        let target = null;
+        if (!isApprovedEdit) {
+            cart.forEach((entry) => {
+                if (entry.coffeeVal === coffeeVal && (entry.machineId || null) === machineId && entry.sizeG === sizeG) {
+                    target = entry;
+                }
+            });
+        }
+
+        if (target) {
+            target.qty += qty;
+        } else {
+            const cartId = cartIdSeq++;
+            cart.set(cartId, { cartId, coffeeVal, machineId, sizeG, qty, packedStock: 0, potentialBags: 0, originalItemId: null, locked: false });
+        }
+
+        selCoffee.value = '';
+        selMachine.value = '';
+        selSize.selectedIndex = 0;
+        inpQty.value = 1;
+        infoBox.style.display = 'none';
+
+        recomputeCartStock();
+        renderCart();
+    });
+
+    // Populate cart from existing items (edit mode). A Pending-Approval edit
+    // leaves entries fully editable/removable (isApprovedEdit is false, so
+    // locked stays false); a Preparing/Approved edit marks them locked —
+    // only their qty can change, matching the old per-row disabled-fields
+    // behavior. Full redesign of the locked layout (hiding the picker
+    // column outright) is SALES_ORDER_REDESIGN_PLAN.md Fase 6.
     if (existingItems && existingItems.length > 0) {
-        existingItems.forEach(item => addSalesItemRow(item));
-        updateAllRowsStockDisplays();
-    } else {
-        addSalesItemRow();
+        existingItems.forEach(item => {
+            const coffeeVal = item.coffee_code
+                ? `${item.coffee_type}-CODE:${item.coffee_code}`
+                : `${item.coffee_type}-${item.single_coffee_id || item.blend_recipe_id}`;
+            const cartId = cartIdSeq++;
+            cart.set(cartId, {
+                cartId,
+                coffeeVal,
+                machineId: item.machine_id || null,
+                sizeG: parseInt(item.bag_size_g),
+                qty: parseInt(item.quantity_requested) || 0,
+                packedStock: 0, potentialBags: 0,
+                originalItemId: item.id,
+                locked: isApprovedEdit
+            });
+        });
+        recomputeCartStock();
     }
+    renderCart();
 
-    // Hide "Add Another Item" button and lock header fields for approved/preparing orders
-    const isApprovedEdit = existingOrder && (existingOrder.status === 'Preparing' || existingOrder.status === 'Approved');
+    // Fase 6: for a Preparing/Approved order, the whole item-assembler block
+    // (coffee/machine/size/qty picker, Available Stock card, Add to
+    // list/Cancel) is hidden outright — there is nothing it could do here,
+    // since items can only be edited (qty) or left alone, never added, and
+    // the cart already disables its own remove buttons for locked entries
+    // (see renderCart). This replaces the old field-by-field disabled+dimmed
+    // treatment the assembler fields never actually had before this phase.
+    // Order Number/Sales/Notes stay visible (still disabled/dimmed) — they're
+    // header context, not part of the item assembler.
     if (isApprovedEdit) {
-        const addBtn = document.getElementById('btn-add-sales-item');
-        if (addBtn) addBtn.style.display = 'none';
-        
-        // Lock header fields - leader can only edit qty
+        const assemblerBlock = document.getElementById('so-assembler-block');
+        if (assemblerBlock) assemblerBlock.classList.add('hidden');
+        const lockedNotice = document.getElementById('so-locked-notice');
+        if (lockedNotice) lockedNotice.classList.remove('hidden');
         if (agentInput) { agentInput.disabled = true; agentInput.style.opacity = '0.6'; }
         if (orderNoInput) { orderNoInput.disabled = true; orderNoInput.style.opacity = '0.6'; }
         const notesInput = document.getElementById('m-req-notes');
         if (notesInput) { notesInput.disabled = true; notesInput.style.opacity = '0.6'; }
     }
 
-    document.getElementById('btn-add-sales-item').addEventListener('click', () => {
-        addSalesItemRow();
-    });
-
     document.getElementById('modal-request-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        
-        // Validation for empty required fields
+
+        // Validation for empty required fields OUTSIDE the cart (Customer,
+        // Order Number) — item-level validation now happens at Add to list
+        // time, and cart emptiness is checked separately below.
         let isValid = true;
         const form = e.target;
         form.querySelectorAll('.custom-empty-warn').forEach(w => w.remove());
-        
+
         form.querySelectorAll('[required]').forEach(el => {
             if (!el.value || el.value.trim() === '') {
                 isValid = false;
@@ -2769,29 +3107,35 @@ async function openSalesRequestModal(orderId = null) {
             }
         });
         if (!isValid) return;
-        
-        const rows = document.querySelectorAll('.sales-item-row');
-        let needsRoastingQueue = false;
-        let blocked = false;
-        
-        for (const r of rows) {
-            const packed = parseInt(r.dataset.packedStock) || 0;
-            const bulk = parseInt(r.dataset.bulkBags) || 0;
-            const potential = parseInt(r.dataset.potentialBags) || 0;
-            const qty = parseInt(r.querySelector('.item-qty').value);
 
-            // Bulk (already-roasted, tinggal packing) counts as "already
-            // available" alongside packed — only the shortfall past packed
-            // AND bulk actually needs a roasting queue entry.
-            if (qty > packed + bulk) {
-                if (qty <= (packed + bulk + potential)) {
-                    needsRoastingQueue = true;
-                } else {
-                    blocked = true;
-                }
-            }
+        if (cart.size === 0) {
+            alert(window.t ? (window.t('alert_min_one_item') || 'At least one item is required.') : 'At least one item is required.');
+            return;
         }
-        
+
+        // Recompute one last time against the final cart state — cheap, and
+        // guarantees the validation below never reads numbers that predate
+        // a qty edit made after the last add/remove.
+        recomputeCartStock();
+
+        // Fase 3 (§3.3): bulk is out of this check entirely — it's the
+        // leader's call alone, decided at approval. Sales only ever asks
+        // "can this possibly be fulfilled from packed stock plus what
+        // production could still make" (qty > packed + potential). The old
+        // separate "packed short but production covers it, send to
+        // production queue?" prompt (prompt_roasting_queue) is removed —
+        // that question was asked of the wrong person (sales doesn't decide
+        // this) and the Available Stock card + fulfillment bar shown while
+        // assembling the item already surfaces the same information more
+        // clearly than a confirm dialog would.
+        let blocked = false;
+        cart.forEach((entry) => {
+            const packed = entry.packedStock || 0;
+            const potential = entry.potentialBags || 0;
+            const qty = entry.qty;
+            if (qty > packed + potential) blocked = true;
+        });
+
         if (blocked) {
             const forceProceed = await showWarningModal(
                 window.t ? window.t('alert_stock_absolutely_insufficient') : "Total available stock and potential production are insufficient for one or more items. Do you still want to continue?",
@@ -2799,12 +3143,141 @@ async function openSalesRequestModal(orderId = null) {
             );
             if (!forceProceed) return;
         }
-        
-        if (needsRoastingQueue) {
-            const proceed = await showWarningModal(window.t ? window.t('prompt_roasting_queue') : "Packed stock is insufficient for some items. Do you want the remainder to enter the production queue?");
-            if (!proceed) return;
-        }
 
+        // Fase 4: this button no longer writes anything itself — it swaps
+        // the assembler out for a read-only review of exactly what is about
+        // to be sent for approval. Both steps live inside the same <form>,
+        // so the cart Map and every listener on it survive going Back.
+        showConfirmStep();
+    });
+
+    // §5.5 — mirrors Stock Release's own two-step pattern (js/packing.js
+    // showConfirmStep/submitStockRelease) so this modal and that one read as
+    // one family: swap the assembler for a review screen, disable the
+    // confirm button while the actual write is in flight so a double-click
+    // can't submit the order twice, and let Back restore the assembler
+    // without touching the cart. Deliberately never mentions bulk or "the
+    // leader's decision" (§5.5) — sales only ever sees packed vs production,
+    // same as the assembler screen behind it.
+    function showConfirmStep() {
+        const t = (key, fallback) => window.t ? window.t(key) : fallback;
+        const custSel = document.getElementById('m-req-customer');
+        const customerText = custSel && custSel.selectedIndex >= 0 ? custSel.options[custSel.selectedIndex].text : '';
+        const dash = '<span style="color:var(--text-muted);">—</span>';
+        const metaRow = (label, value) => `
+            <div>
+                <div style="font-size:0.7rem; color:var(--text-muted);">${label}</div>
+                <div style="font-size:0.88rem; overflow-wrap:anywhere;">${value || dash}</div>
+            </div>`;
+
+        const fromStockLbl = t('lbl_so_from_stock', 'from stock');
+        const toProductionLbl = t('lbl_so_to_production', 'to production');
+
+        const cartEntries = Array.from(cart.values());
+        let packedTotal = 0;
+        let productionTotal = 0;
+        const productionKgByMachine = {}; // machineId -> kg
+
+        const itemRowsHtml = cartEntries.map((entry, idx) => {
+            const name = coffeeLabelFor(entry.coffeeVal);
+            const machineName = machineLabelFor(entry.machineId);
+            const packedPortion = Math.min(entry.qty, entry.packedStock || 0);
+            const productionPortion = Math.max(0, entry.qty - packedPortion);
+            packedTotal += packedPortion;
+            productionTotal += productionPortion;
+            if (productionPortion > 0 && entry.machineId) {
+                const kg = (productionPortion * entry.sizeG) / 1000;
+                productionKgByMachine[entry.machineId] = (productionKgByMachine[entry.machineId] || 0) + kg;
+            }
+            const sourceLine = productionPortion > 0
+                ? (packedPortion > 0
+                    ? `<span style="color:#5DCAA5; font-weight:700;">${packedPortion}</span> ${fromStockLbl} &middot; <span style="color:#EF9F27; font-weight:700;">${productionPortion}</span> ${toProductionLbl}`
+                    : `<span style="color:#EF9F27; font-weight:700;">${productionPortion}</span> ${toProductionLbl}`)
+                : `<span style="color:#5DCAA5; font-weight:700;">${fromStockLbl}</span>`;
+            return `
+                <div style="display:flex; align-items:center; gap:12px; padding:10px 12px; ${idx > 0 ? 'border-top:1px solid var(--border);' : ''}">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:0.85rem; font-weight:700; overflow-wrap:anywhere;">${name}</div>
+                        <div style="font-size:0.72rem; color:var(--text-muted); margin-top:1px;">${machineName} &middot; ${entry.sizeG}g</div>
+                        <div style="font-size:0.72rem; margin-top:3px;">${sourceLine}</div>
+                    </div>
+                    <span style="font-weight:700; font-size:0.95rem; white-space:nowrap;">${entry.qty}</span>
+                </div>
+            `;
+        }).join('');
+
+        const machineFallback = t('lbl_req_machine', 'Machine');
+        const productionRowsHtml = Object.entries(productionKgByMachine).map(([mid, kg]) => {
+            const m = (machines || []).find(x => x.id === parseInt(mid));
+            return `<div style="display:flex; justify-content:space-between; font-size:0.82rem; padding:3px 0;"><span>${m ? m.name : machineFallback}</span><span style="font-weight:700;">&asymp; ${kg.toFixed(1)}kg</span></div>`;
+        }).join('');
+        const sentToProductionLbl = t('lbl_so_sent_to_production', 'Sent to production');
+        const productionBlockHtml = productionTotal > 0 ? `
+            <div style="background: rgba(239,158,39,0.08); border:1px solid rgba(239,158,39,0.3); border-radius:10px; padding:10px 14px; margin-bottom:14px;">
+                <div style="font-size:0.8rem; font-weight:700; color:#EF9F27; margin-bottom:6px;">${sentToProductionLbl}</div>
+                ${productionRowsHtml}
+            </div>
+        ` : '';
+
+        const totalQty = packedTotal + productionTotal;
+
+        stepConfirm.innerHTML = `
+            <div style="display:flex; align-items:flex-start; gap:10px; background:var(--primary-glow); border:1px solid var(--border-focus); border-radius:10px; padding:12px 14px; margin-bottom:16px;">
+                <div>
+                    <div style="font-weight:700; font-size:0.92rem;">${t('title_so_confirm', 'Confirm Sales Request')}</div>
+                    <div style="font-size:0.78rem; color:var(--text-secondary);">${t('hint_so_confirm', 'Review the details below. The order will be sent for leader approval.')}</div>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border); margin-bottom:14px;">
+                ${metaRow(t('lbl_req_order_no', 'Order Number'), orderNoInput.value)}
+                ${metaRow(t('lbl_so_meta_date', 'Date'), existingOrder ? existingOrder.order_date : new Date().toISOString().split('T')[0])}
+                ${metaRow(t('lbl_so_meta_sales', 'Sales'), agentInput.value)}
+                ${metaRow(t('lbl_req_customer', 'Customer'), customerText)}
+            </div>
+
+            <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:14px;">
+                ${itemRowsHtml}
+            </div>
+
+            ${productionBlockHtml}
+
+            <div style="display:flex; flex-direction:column; gap:4px; border-top:1px solid var(--border); padding-top:10px; margin-bottom:6px;">
+                <div style="display:flex; justify-content:space-between; font-size:0.82rem;"><span style="color:var(--text-secondary);">${t('lbl_so_taken_from_stock', 'Taken from packed stock')}</span><span style="font-weight:700;">${packedTotal}</span></div>
+                <div style="display:flex; justify-content:space-between; font-size:0.82rem;"><span style="color:var(--text-secondary);">${sentToProductionLbl}</span><span style="font-weight:700;">${productionTotal}</span></div>
+                <div style="display:flex; align-items:baseline; justify-content:space-between; margin-top:6px;">
+                    <span style="font-size:0.8rem; color:var(--text-secondary);">${t('lbl_so_total_order', 'Total order')}</span>
+                    <span style="font-size:1.5rem; font-weight:700; color:var(--primary);">${totalQty}</span>
+                </div>
+            </div>
+
+            <div style="display:flex; gap:8px; margin-top:16px;">
+                <button type="button" id="so-btn-back" class="btn btn-secondary" style="flex:1;">${t('btn_so_back', 'Back')}</button>
+                <button type="button" id="so-btn-confirm-submit" class="btn btn-primary" style="flex:1.5;">${orderId !== null ? t('btn_so_save_edit', 'Save Edit') : t('btn_submit_req', 'Submit Request')}</button>
+            </div>
+        `;
+
+        stepForm.classList.add('hidden');
+        stepConfirm.classList.remove('hidden');
+
+        document.getElementById('so-btn-back').addEventListener('click', () => {
+            stepConfirm.classList.add('hidden');
+            stepForm.classList.remove('hidden');
+        });
+        document.getElementById('so-btn-confirm-submit').addEventListener('click', async (ev) => {
+            // Guards a double-click from writing the order twice — the whole
+            // submit path is async and the button stays clickable until the
+            // modal closes.
+            ev.target.disabled = true;
+            await doSubmitOrder();
+            ev.target.disabled = false;
+        });
+    }
+
+    // The actual write path — unchanged field-for-field from before Fase 4,
+    // just extracted out of the submit handler so the confirm-step button
+    // can call it directly instead of it running inline on form submit.
+    async function doSubmitOrder() {
         const salesName = agentInput.value.trim();
         let agentCode = 'AG';
         const existingAgent = (agents || []).find(a => a.name.toLowerCase() === salesName.toLowerCase());
@@ -2813,7 +3286,7 @@ async function openSalesRequestModal(orderId = null) {
             agentCode = parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase() : salesName.substring(0, 2).toUpperCase();
             await saveData('sales_agents', { name: salesName, code: agentCode });
         }
-        
+
         // 1. Save Request Order header
         const orderRecord = {
             id: orderId || undefined,
@@ -2831,30 +3304,27 @@ async function openSalesRequestModal(orderId = null) {
             return;
         }
 
+        const cartEntries = Array.from(cart.values());
+
         // If editing approved/preparing order: update qty in-place and sync plans
-        const isApprovedEdit = existingOrder && (existingOrder.status === 'Preparing' || existingOrder.status === 'Approved');
-        
         if (orderId !== null && isApprovedEdit) {
-            // Update qty on existing items and sync linked plans
             const { data: allPlans } = await fetchData('roasting_plans');
-            
-            for (const r of rows) {
-                const originalItemId = parseInt(r.dataset.originalItemId);
-                const newQty = parseInt(r.querySelector('.item-qty').value);
-                
-                // Find the existing item
+
+            for (const entry of cartEntries) {
+                const originalItemId = entry.originalItemId;
+                const newQty = entry.qty;
+
                 const oldItem = (requestOrderItems || []).find(i => i.id === originalItemId);
                 if (!oldItem) continue;
-                
-                const oldQty = oldItem.quantity_requested;
+
                 oldItem.quantity_requested = newQty;
-                
+
                 // Recalculate pending qty (new total minus already allocated)
                 const allocated = oldItem.quantity_allocated || 0;
                 oldItem.quantity_pending = Math.max(0, newQty - allocated);
-                
+
                 await saveData('request_order_items', oldItem);
-                
+
                 // Update linked plan target if exists
                 const linkedPlan = (allPlans || []).find(p => p.request_order_item_id === originalItemId);
                 if (linkedPlan) {
@@ -2862,13 +3332,12 @@ async function openSalesRequestModal(orderId = null) {
                     const weightKg = (pendingQty * parseInt(oldItem.bag_size_g)) / 1000;
                     const targetRoast = weightKg / 0.85;
                     linkedPlan.target_roasted_kg = parseFloat(targetRoast.toFixed(2));
-                    
-                    // Check if plan is now completed
+
                     const fulfilled = parseFloat(linkedPlan.fulfilled_roasted_kg || 0);
                     if (fulfilled >= linkedPlan.target_roasted_kg && linkedPlan.target_roasted_kg > 0) {
                         linkedPlan.status = 'Completed';
                     }
-                    
+
                     await saveData('roasting_plans', linkedPlan);
                     await syncPlanStatusToOrderItem(linkedPlan);
                 }
@@ -2879,14 +3348,10 @@ async function openSalesRequestModal(orderId = null) {
             for (const item of oldItems) {
                 await deleteData('request_order_items', item.id);
             }
-            
-            // Save new items
-            for (const r of rows) {
-                const val = r.querySelector('.item-select').value;
-                const [type, idStr] = val.split('-');
+
+            for (const entry of cartEntries) {
+                const [type, idStr] = entry.coffeeVal.split('-');
                 const isGroup = idStr.startsWith('CODE:');
-                const qty = parseInt(r.querySelector('.item-qty').value);
-                const machId = r.querySelector('.item-machine').value ? parseInt(r.querySelector('.item-machine').value) : null;
 
                 const itemRecord = {
                     request_order_id: savedOrder.id,
@@ -2894,11 +3359,11 @@ async function openSalesRequestModal(orderId = null) {
                     single_coffee_id: (type === 'Single' && !isGroup) ? parseInt(idStr) : null,
                     blend_recipe_id: (type === 'Blend' && !isGroup) ? parseInt(idStr) : null,
                     coffee_code: isGroup ? idStr.slice(5) : null,
-                    machine_id: machId,
-                    bag_size_g: parseInt(r.querySelector('.item-size').value),
-                    quantity_requested: qty,
+                    machine_id: entry.machineId,
+                    bag_size_g: entry.sizeG,
+                    quantity_requested: entry.qty,
                     quantity_allocated: 0,
-                    quantity_pending: qty,
+                    quantity_pending: entry.qty,
                     item_status: existingOrder ? existingOrder.status : 'Pending Approval'
                 };
                 const { error: itemErr } = await saveData('request_order_items', itemRecord);
@@ -2909,12 +3374,9 @@ async function openSalesRequestModal(orderId = null) {
             }
         } else {
             // New order: save items
-            for (const r of rows) {
-                const val = r.querySelector('.item-select').value;
-                const [type, idStr] = val.split('-');
+            for (const entry of cartEntries) {
+                const [type, idStr] = entry.coffeeVal.split('-');
                 const isGroup = idStr.startsWith('CODE:');
-                const qty = parseInt(r.querySelector('.item-qty').value);
-                const machId = r.querySelector('.item-machine').value ? parseInt(r.querySelector('.item-machine').value) : null;
 
                 const itemRecord = {
                     request_order_id: savedOrder.id,
@@ -2922,11 +3384,11 @@ async function openSalesRequestModal(orderId = null) {
                     single_coffee_id: (type === 'Single' && !isGroup) ? parseInt(idStr) : null,
                     blend_recipe_id: (type === 'Blend' && !isGroup) ? parseInt(idStr) : null,
                     coffee_code: isGroup ? idStr.slice(5) : null,
-                    machine_id: machId,
-                    bag_size_g: parseInt(r.querySelector('.item-size').value),
-                    quantity_requested: qty,
+                    machine_id: entry.machineId,
+                    bag_size_g: entry.sizeG,
+                    quantity_requested: entry.qty,
                     quantity_allocated: 0,
-                    quantity_pending: qty,
+                    quantity_pending: entry.qty,
                     item_status: 'Pending Approval'
                 };
                 const { error: itemErr } = await saveData('request_order_items', itemRecord);
@@ -2940,7 +3402,7 @@ async function openSalesRequestModal(orderId = null) {
         modalContainer.classList.add('hidden');
         loadHandoverSection();
         scheduleDashboardRefresh();
-    });
+    }
 }
 
 async function deleteSalesOrder(orderId) {
