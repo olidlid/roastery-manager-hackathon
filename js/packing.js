@@ -365,7 +365,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         const depVal = (100 - parseFloat(batch.yield_percentage || 0)).toFixed(1);
 
         const notesHtml = batch.notes
-            ? `<div style="font-size:0.78rem; font-style:italic; color:var(--text-secondary); background:var(--bg-app); border:1px solid var(--border); border-radius:6px; padding:6px 9px;">${batch.notes}</div>`
+            ? `<div style="font-size:0.76rem; font-style:italic; color:var(--text-secondary); background:var(--bg-app); border:1px solid var(--border); border-radius:6px; padding:5px 8px;">${batch.notes}</div>`
             : '';
 
         // Card stays visible to everyone (so the whole team can see a batch
@@ -378,9 +378,9 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         // above the buttons (found live 2026-08-30). This card reads better
         // staying compact than aligning its buttons to the row's bottom.
         const actionsHtml = hasPermission('roasting_batch_approve') ? `
-            <div style="display:flex; flex-direction:column; gap:6px;">
-                <button type="button" class="btn btn-primary btn-rtp-approve-test" data-id="${batch.id}" data-i18n="btn_approve_test_card">Approve</button>
-                <button type="button" class="btn btn-secondary btn-rtp-approve-combine-test" data-id="${batch.id}" data-i18n="btn_approve_combine_test">Approve &amp; Combine</button>
+            <div style="display:flex; flex-direction:column; gap:5px;">
+                <button type="button" class="btn btn-primary btn-sm btn-rtp-approve-test" data-id="${batch.id}" data-i18n="btn_approve_test_card">Approve</button>
+                <button type="button" class="btn btn-secondary btn-sm btn-rtp-approve-combine-test" data-id="${batch.id}" data-i18n="btn_approve_combine_test">Approve &amp; Combine</button>
             </div>
         ` : '';
 
@@ -393,11 +393,11 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
                 <span class="badge-test-batch" style="font-size:0.7rem; font-weight:700; text-transform:uppercase; border-radius:9999px; padding:3px 10px; white-space:nowrap;" data-i18n="badge_test_pending">Test &middot; Pending</span>
             </div>
             ${notesHtml}
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.78rem;">
-                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_batch_code">Batch Code</span><br><code>${batch.batch_code || '-'}</code></div>
-                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_roast_date">Roast Date</span><br>${batch.roast_date || '-'}</div>
-                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_output">Output</span><br>${outputG} g</div>
-                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_depreciation">Depreciation</span><br>${depVal}%</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 10px; font-size:0.78rem;">
+                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_batch_code">Batch Code</span> <code>${batch.batch_code || '-'}</code></div>
+                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_roast_date">Roast Date</span> ${batch.roast_date || '-'}</div>
+                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_output">Output</span> ${outputG} g</div>
+                <div><span style="color:var(--text-muted);" data-i18n="lbl_test_depreciation">Depreciation</span> ${depVal}%</div>
             </div>
             ${actionsHtml}
         `;
@@ -487,7 +487,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         // often shares a row with a taller bulk card; stretching to match
         // left a big empty gap at the bottom (found live 2026-08-30). This
         // card's height should always be just its own content.
-        card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px; align-self: start;';
+        card.style.cssText = 'padding: 14px; display: flex; flex-direction: column; gap: 8px; align-self: start;';
         card.innerHTML = buildTestBatchCard(batch);
         container.appendChild(card);
     });
