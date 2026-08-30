@@ -372,8 +372,13 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
         // is waiting), but the two approve actions only render for whoever
         // holds the permission — same gate as the Batch Log table's own
         // Approve button (js/app.js, .btn-approve-test-batch wiring).
+        // No margin-top:auto here on purpose (unlike buildSingleCard's
+        // actionButtons) — this card's grid row often sits next to a taller
+        // bulk card, and stretch-to-row-height + auto-margin left a big gap
+        // above the buttons (found live 2026-08-30). This card reads better
+        // staying compact than aligning its buttons to the row's bottom.
         const actionsHtml = hasPermission('roasting_batch_approve') ? `
-            <div style="display:flex; flex-direction:column; gap:6px; margin-top:auto;">
+            <div style="display:flex; flex-direction:column; gap:6px;">
                 <button type="button" class="btn btn-primary btn-rtp-approve-test" data-id="${batch.id}" data-i18n="btn_approve_test_card">Approve</button>
                 <button type="button" class="btn btn-secondary btn-rtp-approve-combine-test" data-id="${batch.id}" data-i18n="btn_approve_combine_test">Approve &amp; Combine</button>
             </div>
@@ -478,7 +483,11 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     pendingTestBatches.forEach(batch => {
         const card = document.createElement('div');
         card.className = 'card card-test-batch';
-        card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px;';
+        // align-self: start (not the grid's default stretch) — this card
+        // often shares a row with a taller bulk card; stretching to match
+        // left a big empty gap at the bottom (found live 2026-08-30). This
+        // card's height should always be just its own content.
+        card.style.cssText = 'padding: 16px; display: flex; flex-direction: column; gap: 10px; align-self: start;';
         card.innerHTML = buildTestBatchCard(batch);
         container.appendChild(card);
     });
