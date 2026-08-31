@@ -500,7 +500,19 @@ CREATE TABLE IF NOT EXISTS public.stock_takes (
     started_by    TEXT,
     posted_at     TIMESTAMPTZ,
     counted_items INTEGER DEFAULT 0,
-    skipped_items INTEGER DEFAULT 0
+    skipped_items INTEGER DEFAULT 0,
+    -- Added 2026-08-31: separates the opname PROCESS by inventory category
+    -- (user request — previously one "New Stock Take" always counted green
+    -- bean + bulk + packed together in one sheet, forcing all three to be
+    -- done in the same sitting). Valid values: 'greenbean' | 'bulk' |
+    -- 'packed'. NULL on every row created before this migration — those
+    -- legacy takes really did cover all three categories at once, so the
+    -- History table shows them as "All" rather than guessing one category.
+    -- stock_takes_one_active_uniq below is intentionally UNCHANGED: still
+    -- only one active take at a time regardless of category (explicit user
+    -- decision — "di waktu yang berbeda", not concurrent), so no freeze-
+    -- trigger or uniqueness changes were needed for this feature.
+    category TEXT
 );
 
 -- At most one active (status IN ('counting','posting')) stock take at a

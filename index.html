@@ -1926,9 +1926,15 @@
                         <!-- History (default view) -->
                         <div id="stockopname-history">
                             <div class="card" style="overflow-x:auto;">
-                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-wrap:wrap;">
                                     <h3 class="card-title" style="margin-bottom:0;" data-i18n="stockopname_history_title">Stock Opname History</h3>
-                                    <div style="display:flex; gap:8px;">
+                                    <div style="display:flex; gap:8px; align-items:center;">
+                                        <select id="stockopname-category-filter" class="form-control" style="width:auto; padding:6px 10px; font-size:0.82rem;">
+                                            <option value="" data-i18n="stockopname_filter_all_categories">All Categories</option>
+                                            <option value="greenbean" data-i18n="cat_greenbean">Green Bean</option>
+                                            <option value="bulk" data-i18n="cat_bulk">Bulk Roasted</option>
+                                            <option value="packed" data-i18n="cat_packed">Packed</option>
+                                        </select>
                                         <button type="button" id="btn-stockopname-print" class="btn btn-secondary btn-sm" style="display:inline-flex; align-items:center; gap:6px;">
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
                                             <span data-i18n="btn_print_count_form">Print Count Form</span>
@@ -1941,6 +1947,7 @@
                                         <thead>
                                             <tr>
                                                 <th data-i18n="col_date">Date</th>
+                                                <th data-i18n="col_category">Category</th>
                                                 <th data-i18n="col_status">Status</th>
                                                 <th data-i18n="col_performed_by">Performed By</th>
                                                 <th style="text-align:center;" data-i18n="col_items">Items</th>
@@ -2710,7 +2717,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=57"></script>
+    <script src="js/translations.js?v=58"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
@@ -2722,6 +2729,6 @@
     <script src="js/sales.js?v=44"></script>
     <script src="js/settings.js?v=23"></script>
     <script src="js/tracking.js?v=8"></script>
-    <script src="js/app.js?v=106"></script>
+    <script src="js/app.js?v=107"></script>
 </body>
 </html>

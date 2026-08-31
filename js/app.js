@@ -3825,7 +3825,13 @@ function resolveBulkCoffeeCode(row, greenbeans, recipes) {
 // Build the list of countable units. Green bean is one row per coffee; bulk and
 // packed are aggregated to what a human physically counts (per coffee, per
 // coffee+size) so a single actual count can map onto several system rows.
-async function buildStockTakeGroups() {
+// `onlyCategory` (added for per-category Stock Opname, user request
+// 2026-08-31) restricts the result to one of 'greenbean'/'bulk'/'packed' —
+// left null this still returns everything, which resumeStockTake() relies
+// on (it matches saved stock_take_items back to groups by (category, label)
+// key, so handing it every category's groups even for a single-category
+// take is harmless — items from other categories just never match anything).
+async function buildStockTakeGroups(onlyCategory = null) {
     const [
         { data: greenbeans },
         { data: bulk },
@@ -3914,7 +3920,7 @@ async function buildStockTakeGroups() {
         });
     });
 
-    return groups;
+    return onlyCategory ? groups.filter(g => g.category === onlyCategory) : groups;
 }
 
 function stockCategoryLabel(cat) {
@@ -3954,8 +3960,21 @@ async function loadStockOpnameReport(startDate, endDate) {
         finalizeBtn.disabled = !canPerform;
         finalizeBtn.title = canPerform ? '' : 'No permission to finalize a stock opname';
     }
+    // Print Count Form is a blank paper form for a stock take that hasn't
+    // started yet, so it asks the category the same way starting a new take
+    // does — printing all three categories on one form would defeat the
+    // point of separating the counting process by category.
     const printBtn = document.getElementById('btn-stockopname-print');
-    if (printBtn) printBtn.onclick = printStockCountForm;
+    if (printBtn) printBtn.onclick = () => openStockOpnameCategoryPickerModal((cat) => printStockCountForm(cat));
+
+    const categoryFilter = document.getElementById('stockopname-category-filter');
+    if (categoryFilter) {
+        categoryFilter.onchange = () => {
+            const startInput = document.getElementById('rep-filter-start');
+            const endInput = document.getElementById('rep-filter-end');
+            loadStockOpnameReport(startInput ? startInput.value : '', endInput ? endInput.value : '');
+        };
+    }
 
     // Stock Opname Phase 1: an opname already 'counting' (or stuck
     // 'posting' — Phase 6 will handle that transition; for now it's
@@ -3980,11 +3999,17 @@ async function loadStockOpnameReport(startDate, endDate) {
         fetchData('stock_takes'),
         fetchData('stock_take_items')
     ]);
+    const categoryFilterVal = categoryFilter ? categoryFilter.value : '';
     const filtered = (takes || []).filter(t => {
         const d = t.take_date || t.created_at?.split('T')[0];
-        if (!d) return true;
-        if (startDate && d < startDate) return false;
-        if (endDate && d > endDate) return false;
+        if (d) {
+            if (startDate && d < startDate) return false;
+            if (endDate && d > endDate) return false;
+        }
+        // Legacy takes (category NULL, from before this feature) covered
+        // all three at once — they only drop out of a specific category
+        // filter, never out of "All Categories".
+        if (categoryFilterVal && t.category !== categoryFilterVal) return false;
         return true;
     }).sort((a, b) => (b.take_date || '').localeCompare(a.take_date || '') || b.id - a.id);
 
@@ -4000,7 +4025,7 @@ async function loadStockOpnameReport(startDate, endDate) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-empty-state">${window.t ? (window.t('stockopname_empty') || 'No stock takes recorded yet.') : 'No stock takes recorded yet.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="table-empty-state">${window.t ? (window.t('stockopname_empty') || 'No stock takes recorded yet.') : 'No stock takes recorded yet.'}</td></tr>`;
         return;
     }
     filtered.forEach(t => {
@@ -4011,9 +4036,14 @@ async function loadStockOpnameReport(startDate, endDate) {
         const statusKey = t.status === 'cancelled' ? 'stockopname_status_cancelled' : 'stockopname_status_posted';
         const statusFallback = t.status === 'cancelled' ? 'Cancelled' : 'Posted';
         const statusColor = t.status === 'cancelled' ? 'var(--text-muted)' : 'var(--success)';
+        // NULL = a take from before categories were separated — it really
+        // did cover all three at once, so it's labeled "All" rather than
+        // guessing one category.
+        const categoryLabel = t.category ? stockCategoryLabel(t.category) : (window.t ? (window.t('stockopname_category_all') || 'All') : 'All');
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td><strong>${t.take_date || '-'}</strong></td>
+            <td>${categoryLabel}</td>
             <td><span style="font-size:0.72rem; font-weight:700; color:${statusColor};">${window.t ? (window.t(statusKey) || statusFallback) : statusFallback}</span></td>
             <td>${t.performed_by || '-'}</td>
             <td class="text-center">${t.total_items || 0} <span style="color:var(--text-muted);">(${t.skipped_items || 0} ${window.t ? (window.t('stockopname_col_skipped') || 'not counted') : 'not counted'})</span></td>
@@ -4044,28 +4074,100 @@ function computeStockTakeAccuracy(items) {
     return { matched, total: topLevel.length, pct: (matched / topLevel.length) * 100 };
 }
 
+// User request 2026-08-31 (separating the opname PROCESS per category):
+// stock_takes_one_active_uniq still allows only one active take at a time
+// regardless of category (explicit decision — "di waktu yang berbeda", not
+// concurrent), so this is a picker in front of the SAME single-take flow,
+// not a way to run three at once. Stacked overlay (its own #overlay div),
+// same pattern as openApproveAndCombineModal, so it never collides with
+// whatever else might be open.
+function openStockOpnameCategoryPickerModal(onChoose) {
+    let container = document.getElementById('stockopname-category-modal-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'stockopname-category-modal-container';
+        container.className = 'overlay';
+        container.style.zIndex = '2000';
+        document.body.appendChild(container);
+    }
+
+    const categories = [
+        { key: 'greenbean', icon: '🌱' },
+        { key: 'bulk', icon: '☕' },
+        { key: 'packed', icon: '📦' }
+    ];
+    container.innerHTML = `
+        <div class="overlay-card" style="max-width: 420px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px;">
+                <h3 style="font-size:1.1rem; font-weight:700;" data-i18n="stockopname_pick_category_title">Which stock do you want to count?</h3>
+                <button type="button" id="btn-close-stockopname-category" style="background:transparent; border:0; cursor:pointer; color:var(--text-muted); font-size:1.5rem; line-height:1;">&times;</button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+                ${categories.map(c => `
+                    <button type="button" class="btn btn-secondary btn-stockopname-pick-category" data-category="${c.key}" style="justify-content:flex-start; gap:10px; padding:12px 14px; font-size:0.95rem;">
+                        <span style="font-size:1.2rem;">${c.icon}</span> ${stockCategoryLabel(c.key)}
+                    </button>
+                `).join('')}
+            </div>
+        </div>
+    `;
+    container.classList.remove('hidden');
+
+    const close = () => container.classList.add('hidden');
+    document.getElementById('btn-close-stockopname-category').addEventListener('click', close);
+    container.querySelectorAll('.btn-stockopname-pick-category').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const cat = btn.getAttribute('data-category');
+            close();
+            onChoose(cat);
+        });
+    });
+    if (window.translatePage) window.translatePage();
+}
+
 // Starts a brand new stock take, OR — if one is already open — resumes it
 // instead. Two people clicking "New Stock Take" close together must not
 // both succeed: stock_takes_one_active_uniq (Phase 0) rejects a second
 // 'counting'/'posting' row, and the check below avoids even attempting
 // that in the common case.
-async function startStockTake() {
+// `category` is null on the very first call (from the button) — resuming
+// an already-open take short-circuits before it's ever needed; starting a
+// genuinely new one opens the category picker and re-invokes this function
+// with the user's choice.
+async function startStockTake(category = null) {
     _stockOpnamePackedLotsCache = null;
-    const tbody = document.getElementById('stockopname-count-body');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:16px;">Loading…</td></tr>`;
 
     const { data: existingTakes } = await fetchData('stock_takes');
     const openTake = (existingTakes || []).find(t => t.status === 'counting' || t.status === 'posting');
     if (openTake) {
+        const tbody = document.getElementById('stockopname-count-body');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:16px;">Loading…</td></tr>`;
         await resumeStockTake(openTake);
         return;
     }
 
-    const groups = await buildStockTakeGroups();
+    if (!category) {
+        openStockOpnameCategoryPickerModal((chosen) => startStockTake(chosen));
+        return;
+    }
+
+    const tbody = document.getElementById('stockopname-count-body');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:16px;">Loading…</td></tr>`;
+
+    const groups = await buildStockTakeGroups(category);
+    if (groups.length === 0) {
+        if (tbody) tbody.innerHTML = '';
+        await showWarningModal(
+            window.t ? (window.t('stockopname_category_empty') || 'There is no stock in this category to count yet.') : 'There is no stock in this category to count yet.',
+            false
+        );
+        return;
+    }
 
     const { data: newTake, error: startErr } = await saveData('stock_takes', {
         take_date: new Date().toISOString().split('T')[0],
         status: 'counting',
+        category,
         started_at: new Date().toISOString(),
         started_by: (currentUser && currentUser.name) || null,
         performed_by: (currentUser && currentUser.name) || null
@@ -4305,8 +4407,18 @@ function renderStockTakeSheet() {
     // the header, regardless of whether anything currently needs detailing
     // — idempotent onclick assignment, same convention loadStockOpnameReport
     // already uses for the Start/Cancel/Finalize buttons.
+    // Green bean has nothing to "find" — buildStockTakeGroups always
+    // includes every green_coffee row regardless of stock level, unlike
+    // bulk/packed which skip zero-stock rows, so a green-bean-only take
+    // (per-category Stock Opname, user request 2026-08-31) hides this
+    // button entirely rather than opening a modal whose category dropdown
+    // only ever offered bulk/packed anyway.
+    const activeTakeCategory = (currentStockTakeGroups && currentStockTakeGroups.length) ? currentStockTakeGroups[0].category : null;
     const addFoundBtn = document.getElementById('btn-stockopname-add-found');
-    if (addFoundBtn) addFoundBtn.onclick = openAddFoundItemModal;
+    if (addFoundBtn) {
+        addFoundBtn.onclick = openAddFoundItemModal;
+        addFoundBtn.classList.toggle('hidden', activeTakeCategory === 'greenbean');
+    }
     const printStage2Btn = document.getElementById('btn-stockopname-print-stage2');
     if (printStage2Btn) printStage2Btn.onclick = printStockCountFormStage2;
     const printStage2BarBtn = document.getElementById('btn-stockopname-print-stage2-bar');
@@ -5057,13 +5169,26 @@ async function openAddFoundItemModal() {
     const machineOptions = (machines || []).map(m => `<option value="${m.id}">${m.name}</option>`).join('');
     const sizeOptions = activeSizes.map(s => `<option value="${s.gram}">${s.gram >= 1000 ? (s.gram / 1000) + 'kg' : s.gram + 'g'}</option>`).join('');
 
+    // A category-scoped take (per-category Stock Opname, user request
+    // 2026-08-31) only offers ITS OWN category here — a found item added
+    // under a different category than the active take's own would create a
+    // stock_take_items row that disagrees with stock_takes.category. Falls
+    // back to both options for a legacy mixed take (activeTakeCategory
+    // null/'greenbean' — greenbean never reaches this modal at all, see the
+    // hidden button above, so 'greenbean' here only means "no active take
+    // groups yet", not a real choice to lock to).
+    const activeTakeCategory = (currentStockTakeGroups && currentStockTakeGroups.length) ? currentStockTakeGroups[0].category : null;
+    const categoryOptionsHtml = (activeTakeCategory === 'bulk' || activeTakeCategory === 'packed')
+        ? `<option value="${activeTakeCategory}">${stockCategoryLabel(activeTakeCategory)}</option>`
+        : `<option value="bulk">${window.t ? (window.t('cat_bulk') || 'Bulk Roasted') : 'Bulk Roasted'}</option>
+           <option value="packed">${window.t ? (window.t('cat_packed') || 'Packed') : 'Packed'}</option>`;
+
     const html = `
         <form id="modal-found-item-form" novalidate>
             <div class="form-group">
                 <label class="form-label">${window.t ? (window.t('col_category') || 'Category') : 'Category'}</label>
-                <select id="fi-category" class="form-control" required>
-                    <option value="bulk">${window.t ? (window.t('cat_bulk') || 'Bulk Roasted') : 'Bulk Roasted'}</option>
-                    <option value="packed">${window.t ? (window.t('cat_packed') || 'Packed') : 'Packed'}</option>
+                <select id="fi-category" class="form-control" required ${(activeTakeCategory === 'bulk' || activeTakeCategory === 'packed') ? 'disabled' : ''}>
+                    ${categoryOptionsHtml}
                 </select>
             </div>
             <div class="form-group mt-3">
@@ -5590,9 +5715,12 @@ async function viewStockTake(takeId) {
         ? ` <span style="margin-left:10px;">· ${window.t ? (window.t('stockopname_col_accuracy') || 'Accuracy') : 'Accuracy'}: <strong>${accuracy.pct.toFixed(0)}%</strong> (${accuracy.matched}/${accuracy.total})</span>`
         : '';
 
+    const categoryLabel = take
+        ? (take.category ? stockCategoryLabel(take.category) : (window.t ? (window.t('stockopname_category_all') || 'All') : 'All'))
+        : '';
     const html = `
         <div style="margin-bottom:12px; font-size:0.85rem; color:var(--text-secondary);">
-            <strong>${take ? (take.take_date || '') : ''}</strong> — ${take ? (take.performed_by || '') : ''}${accuracySummary}
+            <strong>${take ? (take.take_date || '') : ''}</strong> — ${categoryLabel} — ${take ? (take.performed_by || '') : ''}${accuracySummary}
             ${take && take.notes ? `<br>${take.notes}` : ''}
         </div>
         <div style="max-height:60vh; overflow-y:auto;">
@@ -5615,8 +5743,12 @@ async function viewStockTake(takeId) {
 
 // Print a blank counting form (one page per category) for the team to fill in
 // physically before typing the numbers back into the system.
-async function printStockCountForm() {
-    const groups = await buildStockTakeGroups();
+// `category` (added for per-category Stock Opname, user request 2026-08-31)
+// prints just that one category's page instead of all three — called from
+// the History toolbar's category picker. Left null this still prints all
+// three pages, kept as a fallback rather than removed.
+async function printStockCountForm(category = null) {
+    const groups = await buildStockTakeGroups(category);
     const cs = companySettings;
     // Fill each A4 page: aim for a fixed total number of rows so the table reaches
     // the bottom. Empty rows top up whatever the data rows don't cover; if the data
@@ -5698,7 +5830,9 @@ async function printStockCountForm() {
         </div>`;
     }
 
-    const pages = renderPage('greenbean', false) + renderPage('bulk', false) + renderPage('packed', true);
+    const pages = category
+        ? renderPage(category, true)
+        : renderPage('greenbean', false) + renderPage('bulk', false) + renderPage('packed', true);
 
     const printContent = `<!DOCTYPE html>
 <html>
