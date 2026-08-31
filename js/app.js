@@ -3944,7 +3944,14 @@ async function loadStockOpnameReport(startDate, endDate) {
     const canPerform = hasPermission('reports_stockopname_perform');
     const newBtn = document.getElementById('btn-stockopname-new');
     if (newBtn) {
-        newBtn.onclick = startStockTake;
+        // NOT `newBtn.onclick = startStockTake` — the browser calls an
+        // onclick handler with the click's Event object as the first
+        // argument, which would land in startStockTake's `category`
+        // parameter and be treated as an (invalid, truthy) category,
+        // skipping the picker entirely (found live 2026-08-31, right after
+        // per-category Stock Opname shipped — every direct click silently
+        // built zero groups instead of opening the picker).
+        newBtn.onclick = () => startStockTake();
         newBtn.disabled = !canPerform;
         newBtn.title = canPerform ? '' : 'No permission to start a stock opname';
     }
