@@ -592,7 +592,14 @@ CREATE TABLE IF NOT EXISTS public.green_coffee_lot_adjustments (
     kg NUMERIC NOT NULL DEFAULT 0,
     adjustment_date DATE NOT NULL DEFAULT CURRENT_DATE,
     adjusted_by TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Added 2026-08-30: tags which caller wrote this decrease, so the Stock
+    -- History ledger (js/greenbean.js renderStockHistoryTab) can show a
+    -- "Stock Opname" tag on rows the stock take posted, distinct from a
+    -- plain manual edit (which leaves both columns NULL). Same ref_table/
+    -- ref_id shape as bulk_stock_movements/packed_stock_movements.
+    ref_table TEXT,
+    ref_id INTEGER
 );
 
 -- V2 Stock History ledger: per-lot record of which green_coffee_lots an

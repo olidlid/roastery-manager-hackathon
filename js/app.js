@@ -4536,7 +4536,14 @@ async function applyStockGroupAdjustmentToLots(group, actual, stockTakeId) {
                     green_coffee_lot_id: d.lotId,
                     kg: d.kg,
                     adjustment_date: new Date().toISOString().split('T')[0],
-                    adjusted_by: (currentUser && currentUser.name) || null
+                    adjusted_by: (currentUser && currentUser.name) || null,
+                    // Tags this row as stock-opname-sourced so the Stock
+                    // History ledger (js/greenbean.js renderStockHistoryTab)
+                    // can show a "Stock Opname" tag distinct from a plain
+                    // manual edit (js/greenbean.js's own write leaves these
+                    // NULL) — added 2026-08-30, ref_table/ref_id columns.
+                    ref_table: 'stock_takes',
+                    ref_id: stockTakeId
                 });
             }
             return shortfallKg < 1e-9;

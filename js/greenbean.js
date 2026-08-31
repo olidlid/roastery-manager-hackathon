@@ -1013,16 +1013,25 @@ async function renderStockHistoryTab(coffeeId, container) {
     // reading like a normal delivery.
     myLots.forEach(l => {
         const isOpening = (l.lot_code || '').includes('-OPENING-');
+        // Stock Opname's increase path (js/app.js applyStockGroupAdjustmentToLots)
+        // creates a lot the same way any arrival/manual-adjustment does, tagged
+        // only via this supplier string — no separate ref_table/ref_id here
+        // since createGreenCoffeeLot has no such param, unlike the decrease
+        // path below which needed one added to green_coffee_lot_adjustments.
+        const isStockOpname = l.supplier === 'Stock Take Adjustment';
         ledger.push({
             date: l.arrival_date || (l.created_at || '').split('T')[0],
             lotCode: l.lot_code,
             type: 'in',
             kg: parseFloat(l.quantity_kg) || 0,
+            isStockOpname,
             detail: isOpening
                 ? (window.t ? window.t('lbl_opening_balance') : 'Opening balance')
-                : (l.supplier === 'Manual Stock Adjustment'
-                    ? (window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment')
-                    : `${window.t ? window.t('lbl_supplier_prefix') : 'Supplier'}: ${l.supplier || '-'}`),
+                : isStockOpname
+                    ? (window.t ? window.t('lbl_stock_opname_adjustment') : 'Stock opname adjustment')
+                    : (l.supplier === 'Manual Stock Adjustment'
+                        ? (window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment')
+                        : `${window.t ? window.t('lbl_supplier_prefix') : 'Supplier'}: ${l.supplier || '-'}`),
             sortKey: l.id
         });
     });
@@ -1078,12 +1087,19 @@ async function renderStockHistoryTab(coffeeId, container) {
     });
 
     (adjustments || []).filter(d => myLotIds.has(d.green_coffee_lot_id)).forEach(d => {
+        // ref_table/ref_id (added 2026-08-30) tags a decrease written by
+        // Stock Opname's posting flow (js/app.js applyStockGroupAdjustmentToLots)
+        // — a plain manual edit (js/greenbean.js) leaves both NULL.
+        const isStockOpname = d.ref_table === 'stock_takes';
         ledger.push({
             date: d.adjustment_date,
             lotCode: lotCodeOf(d.green_coffee_lot_id),
             type: 'out',
             kg: parseFloat(d.kg) || 0,
-            detail: window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment',
+            isStockOpname,
+            detail: isStockOpname
+                ? (window.t ? window.t('lbl_stock_opname_adjustment') : 'Stock opname adjustment')
+                : (window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment'),
             sortKey: d.id
         });
     });
@@ -1144,7 +1160,9 @@ async function renderStockHistoryTab(coffeeId, container) {
                 <td style="${nowrap}"><span class="${badge.cls}" style="font-size:0.72rem; padding:2px 9px; border-radius:9999px; font-weight:700; ${badge.style}">${badge.label}</span></td>
                 <td class="${amountCls}" style="${nowrap} ${amountStyle}">${r.type === 'in' ? '+' : '-'}${r.kg.toFixed(1)}</td>
                 <td style="${nowrap}">${r.balance.toFixed(1)}</td>
-                <td style="${nowrap}">${r.detail}</td>
+                <td style="${nowrap}">${r.isStockOpname
+                    ? `<span style="font-size:0.7rem; font-weight:700; padding:2px 9px; border-radius:9999px; background:rgba(144,180,216,0.18); color:var(--info); white-space:nowrap;" data-i18n="lbl_stock_opname_adjustment">${window.t ? window.t('lbl_stock_opname_adjustment') : 'Stock Opname'}</span>`
+                    : r.detail}</td>
             </tr>
         `;
         }).join('');
