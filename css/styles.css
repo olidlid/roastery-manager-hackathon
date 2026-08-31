@@ -1006,6 +1006,30 @@ tbody tr:hover {
     min-height: 120px;
 }
 
+/* Edit-from-cart state (js/sales.js enterEditMode/exitEditMode) — frames the
+   whole "Edit item" assembler panel in the same primary color used for the
+   card being edited in the cart, so it's obvious at a glance the form is no
+   longer building a new line. Border color doubles as the transition target
+   so toggling the class animates in/out instead of snapping. */
+#so-assembler-block {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    transition: border-color 0.15s ease, background-color 0.15s ease, padding 0.15s ease;
+}
+#so-assembler-block.so-editing-mode {
+    border-color: var(--primary);
+    background: var(--primary-glow);
+    padding: 12px;
+}
+#so-assembler-block.so-editing-mode .so-heading-line {
+    background: var(--primary);
+    opacity: 0.5;
+}
+#so-assembler-block.so-editing-mode #so-left-heading {
+    color: var(--primary);
+    font-weight: 700;
+}
+
 @media (max-width: 1000px) {
     .so-grid {
         grid-template-columns: 1fr;
@@ -1598,6 +1622,31 @@ tbody tr:hover {
 
 [data-theme="dark"] .btn-potential:hover {
     background-color: #2f4fc0;
+}
+
+/* Add New (customer shortcut) button in the Sales Request Order modal —
+   same solid-fill pattern as .btn-potential, purple family shared with
+   .badge-blend so it reads as its own distinct action rather than the plain
+   grey .btn-secondary it used to be (user request 2026-08-31: give it a
+   color so the What's New screenshot has something to point at). */
+.btn-add-customer {
+    background-color: #6d28d9;
+    border-color: #6d28d9;
+    color: #fff;
+}
+
+.btn-add-customer:hover {
+    background-color: #5b21b6;
+}
+
+[data-theme="dark"] .btn-add-customer {
+    background-color: #8b5cf6;
+    border-color: #8b5cf6;
+    color: #fff;
+}
+
+[data-theme="dark"] .btn-add-customer:hover {
+    background-color: #7c3aed;
 }
 
 .modal-repack-header {

@@ -407,7 +407,7 @@ window.translations = {
         ph_req_notes: "e.g. Customer Coffee Shop Gayo",
 
         // Sales Request Modal — cart model (SALES_ORDER_REDESIGN_PLAN.md)
-        btn_so_potential: "Potential",
+        btn_so_potential: "Stock Check",
         lbl_so_add_item_heading: "Add item",
         lbl_so_edit_item_heading: "Edit item",
         btn_so_add_to_list: "+ Add to list",
@@ -432,12 +432,17 @@ window.translations = {
         lbl_so_total_order: "Total order",
         btn_so_back: "Back",
         btn_so_save_edit: "Save Edit",
+        lbl_so_pp_code: "Code",
         lbl_so_pp_coffee: "Coffee",
+        lbl_so_pp_total: "Total",
         lbl_so_pp_greenbean_kg: "Green bean (kg)",
         lbl_so_pp_yield_kg: "Yield (kg)",
         lbl_so_pp_blend_badge: "blend",
-        hint_so_pp_footer: "Machine columns show packed stock ready to ship. Potential is green bean stock × 85% yield; for a blend trade name, the newest recipe sharing that code is used, capped by its scarcest ingredient.",
-        
+        hint_so_pp_footer: "Machine columns show packed stock ready to ship. Potential is green bean stock × 85% yield.",
+        hint_so_select_machine_first: "Select a machine to see the fulfillment breakdown.",
+        hint_so_qty_exceeds_potential: "This quantity may exceed what current green bean stock can produce.",
+        hint_so_cart_click_edit: "Click a card to edit it",
+
         // Approval Workflow
         badge_auto_roast: "Auto-Roast Required",
         modal_approve_order: "Approve Order",
@@ -801,7 +806,23 @@ window.translations = {
         guide_box_rule3: "Saving in Excel: Save back as CSV UTF-8 (Comma delimited) (*.csv) to preserve Arabic characters.",
         guide_box_footer_prefix: "The full guide is available in",
         guide_box_footer_suffix: "in the project directory.",
-        msg_no_roast_mtd: "No roasting output this month"
+        msg_no_roast_mtd: "No roasting output this month",
+
+        // What's New popup (WHATS_NEW_POPUP_PLAN.md)
+        whatsnew_title: "What's new",
+        whatsnew_before: "Before",
+        whatsnew_after: "After",
+        whatsnew_back: "Back",
+        whatsnew_skip: "Skip",
+        whatsnew_next: "Next",
+        whatsnew_done: "Done",
+        whatsnew_optout_label: "Don't show update notices again",
+        whatsnew_optout_hint: "Including future updates. You can turn this back on from Setting › What's new.",
+        sett_whatsnew_title: "What's New",
+        sett_whatsnew_subtitle: "Review recent updates, or turn notices back on",
+        sett_whatsnew_desc: "A short popup shows what changed each time the app is updated, the first time you open Item Request afterward.",
+        sett_whatsnew_btn_show: "Show What's New",
+        sett_whatsnew_optout_checkbox: "Don't show update notices"
     },
     ar: {
         // Navigation & Sidebar
@@ -1210,7 +1231,7 @@ window.translations = {
         ph_req_notes: "مثال: مقهى العميل جايو",
 
         // Sales Request Modal — cart model (SALES_ORDER_REDESIGN_PLAN.md)
-        btn_so_potential: "الإمكانية",
+        btn_so_potential: "فحص المخزون",
         lbl_so_add_item_heading: "إضافة عنصر",
         lbl_so_edit_item_heading: "تعديل العنصر",
         btn_so_add_to_list: "+ إضافة إلى القائمة",
@@ -1235,12 +1256,17 @@ window.translations = {
         lbl_so_total_order: "إجمالي الطلب",
         btn_so_back: "رجوع",
         btn_so_save_edit: "حفظ التعديل",
+        lbl_so_pp_code: "الرمز",
         lbl_so_pp_coffee: "القهوة",
+        lbl_so_pp_total: "الإجمالي",
         lbl_so_pp_greenbean_kg: "البن الأخضر (كجم)",
         lbl_so_pp_yield_kg: "الإنتاج المتوقع (كجم)",
         lbl_so_pp_blend_badge: "خلطة",
-        hint_so_pp_footer: "أعمدة الآلات تُظهر المخزون المعبأ الجاهز للشحن. الإمكانية تُحسب من مخزون البن الأخضر × نسبة إنتاج 85%؛ للخلطات ذات الاسم التجاري، تُستخدم أحدث تركيبة تشترك في نفس الكود، محدودة بأقل مكوّن توفراً.",
-        
+        hint_so_pp_footer: "أعمدة الآلات تُظهر المخزون المعبأ الجاهز للشحن. الإمكانية تُحسب من مخزون البن الأخضر × نسبة إنتاج 85%.",
+        hint_so_select_machine_first: "اختر ماكينة لرؤية تفاصيل التغطية.",
+        hint_so_qty_exceeds_potential: "قد تتجاوز هذه الكمية ما يمكن إنتاجه من مخزون البن الأخضر الحالي.",
+        hint_so_cart_click_edit: "اضغط على البطاقة للتعديل",
+
         // Approval Workflow
         badge_auto_roast: "مطلوب تحميص تلقائي",
         modal_approve_order: "الموافقة على الطلب",
@@ -1603,6 +1629,22 @@ window.translations = {
         guide_box_rule3: "الحفظ في Excel: احفظ الملف بصيغة CSV UTF-8 (بفاصلة محددة) (*.csv) للحفاظ على الحروف العربية.",
         guide_box_footer_prefix: "الدليل الكامل متوفر في ملف",
         guide_box_footer_suffix: "في مجلد المشروع.",
-        msg_no_roast_mtd: "لا يوجد إنتاج تحميص هذا الشهر"
+        msg_no_roast_mtd: "لا يوجد إنتاج تحميص هذا الشهر",
+
+        // What's New popup (WHATS_NEW_POPUP_PLAN.md)
+        whatsnew_title: "ما الجديد",
+        whatsnew_before: "قبل",
+        whatsnew_after: "بعد",
+        whatsnew_back: "رجوع",
+        whatsnew_skip: "تخطي",
+        whatsnew_next: "التالي",
+        whatsnew_done: "تم",
+        whatsnew_optout_label: "عدم إظهار إشعارات التحديث مرة أخرى",
+        whatsnew_optout_hint: "بما في ذلك التحديثات القادمة. يمكنك إعادة تفعيلها من الإعدادات › ما الجديد.",
+        sett_whatsnew_title: "ما الجديد",
+        sett_whatsnew_subtitle: "مراجعة آخر التحديثات، أو إعادة تفعيل الإشعارات",
+        sett_whatsnew_desc: "تظهر نافذة قصيرة توضح ما تغيّر في كل مرة يتم فيها تحديث التطبيق، عند أول فتح لصفحة طلب المواد بعد ذلك.",
+        sett_whatsnew_btn_show: "إظهار ما الجديد",
+        sett_whatsnew_optout_checkbox: "عدم إظهار إشعارات التحديث"
     }
 };

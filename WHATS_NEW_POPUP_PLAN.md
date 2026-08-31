@@ -157,12 +157,7 @@ Folder per tanggal rilis supaya gambar rilis lama tidak tertimpa saat rilis beri
 
 **Ukuran berkas.** Lebar sumber cukup ~1200px, kompres hingga di bawah ~150KB per gambar. Repo ini sudah punya PNG ~45KB sebagai pembanding. Gambar ikut ter-commit selamanya, jadi jangan memasukkan tangkapan layar mentah beresolusi penuh.
 
-> **Keputusan yang perlu diambil saat mengerjakan: tangkapan layar tema terang atau gelap?** Aplikasi ini punya mode terang dan gelap. Tangkapan layar mode terang akan terlihat mencolok di atas kartu bertema gelap, dan sebaliknya. Tiga pilihan, tidak ada yang gratis:
-> 1. **Satu set saja** (paling sederhana) — terima saja bahwa di salah satu tema gambarnya terlihat kontras. Redam dengan memberi bingkai netral di sekeliling gambar.
-> 2. **Dua set**, dipilih saat render berdasarkan tema aktif — tampilan paling rapi, tapi setiap rilis harus menyiapkan dua kali lipat gambar dan ukurannya berlipat.
-> 3. **Tanpa tangkapan layar mentah** — pakai gambar ilustrasi yang memang netral terhadap tema.
->
-> Rekomendasi: pilihan 1 dengan bingkai, kecuali nanti terasa mengganggu.
+> **Keputusan (2026-08-29): tema terang saja.** Semua tangkapan layar before/after diambil dalam mode terang, apa pun tema yang sedang aktif di browser user saat popup tampil. Diredam dengan bingkai netral (`border` + `border-radius`, §5.1 di atas) supaya tetap terlihat rapi di atas kartu bertema gelap. Tidak perlu menyiapkan dua set gambar per rilis.
 
 **RTL.** Dalam mode Arab, urutan Sebelum/Sesudah akan terbalik mengikuti arah baca — itu benar dan diinginkan. Yang perlu dipastikan hanya labelnya ikut berpindah bersama gambarnya, bukan tertukar.
 

@@ -1990,6 +1990,11 @@ function getItemStatusBadge(itemStatus) {
 // Add// Add sales request modal
 document.getElementById('btn-create-request').addEventListener('click', async () => {
     await openSalesRequestModal();
+    // What's New trigger point (moved here from sec-handover navigation per
+    // user request 2026-08-31) — fire-and-forget, same idiom as
+    // checkStockFreezeBanner, must not block the order modal if it fails.
+    // Its own re-show policy (daily cap + 1-week expiry) lives in js/app.js.
+    if (window.checkWhatsNewPopup) checkWhatsNewPopup();
 });
 
 async function openSalesRequestModal(orderId = null) {
@@ -2270,44 +2275,67 @@ async function openSalesRequestModal(orderId = null) {
             `<th colspan="${visibleSizes.length}" style="text-align:center; padding:5px 6px; font-size:0.72rem; color:var(--text-secondary); font-weight:700; border-left:1px solid var(--border); white-space:nowrap;">${m.name}</th>`
         ).join('');
         const sizeHeaderRow = machineList.map(m =>
-            visibleSizes.map((s, i) => `<th style="text-align:right; padding:4px 6px; font-size:0.68rem; color:var(--text-muted); font-weight:600; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${s.label}</th>`).join('')
+            visibleSizes.map((s, i) => `<th style="text-align:center; padding:4px 6px; font-size:0.68rem; color:var(--text-muted); font-weight:600; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${s.label}</th>`).join('')
+        ).join('');
+
+        // Total column group — packed stock summed across every machine,
+        // per size. Sits right after the per-machine columns and before the
+        // Potential Production group, so "how much do I have altogether"
+        // doesn't require the reader to add the machine columns up by hand.
+        const totalColLbl = window.t ? window.t('lbl_so_pp_total') : 'Total';
+        const totalHeaderCell = `<th colspan="${visibleSizes.length}" style="text-align:center; padding:5px 6px; font-size:0.72rem; color:var(--text-secondary); font-weight:700; border-left:1px solid var(--border); white-space:nowrap;">${totalColLbl}</th>`;
+        const totalSizeHeaderRow = visibleSizes.map((s, i) =>
+            `<th style="text-align:center; padding:4px 6px; font-size:0.68rem; color:var(--text-muted); font-weight:600; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${s.label}</th>`
         ).join('');
 
         const blendBadgeLbl = window.t ? window.t('lbl_so_pp_blend_badge') : 'blend';
-        const bodyRows = rows.map(row => {
+        const bodyRows = rows.map((row, rowIdx) => {
+            // Zebra striping — a hue-neutral wash so it reads in both themes
+            // without a dedicated token (user request 2026-08-31).
+            const rowBg = rowIdx % 2 === 1 ? 'background: rgba(127,127,127,0.06);' : '';
             const badge = row.type === 'Blend'
                 ? `<span class="badge badge-blend" style="font-size:0.62rem; padding:1px 6px; margin-left:6px;">${blendBadgeLbl}</span>`
                 : '';
-            const recipeNoteHtml = row.recipeNote
-                ? `<div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">${row.recipeNote}</div>`
-                : '';
+            // The underlying recipe name/date (row.recipeNote, still used to
+            // pick maxGbKgForRecipe above) is deliberately NOT shown here per
+            // user request 2026-08-31 — sales only needs the trade name and
+            // code, not which internal recipe backs a blend right now.
             const sizeCells = machineList.map(m =>
                 visibleSizes.map((s, i) => {
                     const sz = parseFloat(s.gram);
                     const stock = row.ids.reduce((sum, gid) => sum + (perMachinePackedStocks[`${row.type}-${gid}-${sz}-${m.id}`] || 0), 0);
-                    return `<td style="text-align:right; padding:4px 6px; font-size:0.78rem; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${stock}</td>`;
+                    return `<td style="text-align:center; padding:4px 6px; font-size:0.78rem; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${stock}</td>`;
                 }).join('')
             ).join('');
+            // Same per-size stock lookup as sizeCells above, just summed
+            // across every machine instead of scoped to one.
+            const totalCells = visibleSizes.map((s, i) => {
+                const sz = parseFloat(s.gram);
+                const total = machineList.reduce((sum, m) =>
+                    sum + row.ids.reduce((s2, gid) => s2 + (perMachinePackedStocks[`${row.type}-${gid}-${sz}-${m.id}`] || 0), 0), 0);
+                return `<td style="text-align:center; padding:4px 6px; font-size:0.78rem; font-weight:700; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${total}</td>`;
+            }).join('');
             const yieldKg = row.gbKg * 0.85;
             return `
-                <tr>
+                <tr style="${rowBg}">
+                    <td style="text-align:center; padding:5px 8px; font-family:monospace; color:var(--primary); font-weight:700; font-size:0.78rem; white-space:nowrap;">${row.code}</td>
                     <td style="padding:5px 8px; white-space:nowrap;">
-                        <span style="font-family:monospace; color:var(--primary); font-weight:700; font-size:0.78rem;">${row.code}</span>
-                        <span style="font-size:0.82rem; font-weight:700; margin-left:6px;">${row.name}</span>${badge}
-                        ${recipeNoteHtml}
+                        <span style="font-size:0.82rem; font-weight:700;">${row.name}</span>${badge}
                     </td>
                     ${sizeCells}
-                    <td style="text-align:right; padding:5px 8px; font-size:0.78rem; border-left:1px solid var(--border);">${row.gbKg.toFixed(1)}</td>
-                    <td style="text-align:right; padding:5px 8px; font-size:0.78rem; font-weight:700; color:var(--primary);">${yieldKg.toFixed(1)}</td>
+                    ${totalCells}
+                    <td style="text-align:center; padding:5px 8px; font-size:0.78rem; border-left:1px solid var(--border);">${row.gbKg.toFixed(1)}</td>
+                    <td style="text-align:center; padding:5px 8px; font-size:0.78rem; font-weight:700; color:var(--primary);">${yieldKg.toFixed(1)}</td>
                 </tr>
             `;
         }).join('');
 
         const titleLbl = window.t ? window.t('lbl_potential_production') : 'Potential Production';
+        const codeColLbl = window.t ? window.t('lbl_so_pp_code') : 'Code';
         const coffeeColLbl = window.t ? window.t('lbl_so_pp_coffee') : 'Coffee';
         const greenbeanKgLbl = window.t ? window.t('lbl_so_pp_greenbean_kg') : 'Green bean (kg)';
         const yieldKgLbl = window.t ? window.t('lbl_so_pp_yield_kg') : 'Yield (kg)';
-        const footerNoteLbl = window.t ? window.t('hint_so_pp_footer') : 'Machine columns show packed stock ready to ship. Potential is green bean stock × 85% yield; for a blend trade name, the newest recipe sharing that code is used, capped by its scarcest ingredient.';
+        const footerNoteLbl = window.t ? window.t('hint_so_pp_footer') : 'Machine columns show packed stock ready to ship. Potential is green bean stock × 85% yield.';
 
         container.innerHTML = `
             <div class="overlay-card" style="max-width: 1100px; width: 95vw;">
@@ -2319,14 +2347,17 @@ async function openSalesRequestModal(orderId = null) {
                     <table style="width:100%; border-collapse:collapse;">
                         <thead>
                             <tr>
+                                <th rowspan="2" style="text-align:center; padding:5px 8px; font-size:0.72rem; color:var(--text-muted); font-weight:600; vertical-align:bottom;">${codeColLbl}</th>
                                 <th rowspan="2" style="text-align:left; padding:5px 8px; font-size:0.72rem; color:var(--text-muted); font-weight:600; vertical-align:bottom;">${coffeeColLbl}</th>
                                 ${machineHeaderRow}
+                                ${totalHeaderCell}
                                 <th colspan="2" style="text-align:center; padding:5px 6px; font-size:0.72rem; color:var(--text-secondary); font-weight:700; border-left:1px solid var(--border);">${titleLbl}</th>
                             </tr>
                             <tr>
                                 ${sizeHeaderRow}
-                                <th style="text-align:right; padding:4px 8px; font-size:0.68rem; color:var(--text-muted); font-weight:600; border-left:1px solid var(--border);">${greenbeanKgLbl}</th>
-                                <th style="text-align:right; padding:4px 8px; font-size:0.68rem; color:var(--text-muted); font-weight:600;">${yieldKgLbl}</th>
+                                ${totalSizeHeaderRow}
+                                <th style="text-align:center; padding:4px 8px; font-size:0.68rem; color:var(--text-muted); font-weight:600; border-left:1px solid var(--border);">${greenbeanKgLbl}</th>
+                                <th style="text-align:center; padding:4px 8px; font-size:0.68rem; color:var(--text-muted); font-weight:600;">${yieldKgLbl}</th>
                             </tr>
                         </thead>
                         <tbody>${bodyRows}</tbody>
@@ -2399,7 +2430,7 @@ async function openSalesRequestModal(orderId = null) {
                             <label class="form-label" data-i18n="lbl_req_agent">Sales Agent Name</label>
                             <div style="display: flex; gap: 6px; align-items: stretch;">
                                 <input type="text" id="m-req-sales" class="form-control" readonly style="flex:1; min-width:0;" value="${existingOrder ? existingOrder.sales_name : (currentUser ? currentUser.name : '')}">
-                                <button type="button" id="btn-potential-production" class="btn btn-potential" style="flex: 0 0 auto; white-space: nowrap; padding: 0 10px;" title="Potential Production" data-i18n="btn_so_potential">Potential</button>
+                                <button type="button" id="btn-potential-production" class="btn btn-potential" style="flex: 0 0 auto; white-space: nowrap; padding: 0 10px;" title="Potential Production" data-i18n="btn_so_potential">Stock Check</button>
                             </div>
                         </div>
                     </div>
@@ -2411,15 +2442,15 @@ async function openSalesRequestModal(orderId = null) {
                                 <option value="" disabled selected>-- Select Customer --</option>
                                 ${customerOptionsHtml}
                             </select>
-                            <button type="button" id="btn-req-add-customer" class="btn btn-secondary" style="flex: 0 0 auto; white-space: nowrap;" title="Add new customer" data-i18n="btn_req_add_customer">Add New</button>
+                            <button type="button" id="btn-req-add-customer" class="btn btn-add-customer" style="flex: 0 0 auto; white-space: nowrap;" title="Add new customer" data-i18n="btn_req_add_customer">Add New</button>
                         </div>
                     </div>
 
                     <div id="so-assembler-block">
                         <div style="display:flex; align-items:center; gap:10px; margin: 18px 0 12px;">
-                            <div style="flex:1; height:1px; background:var(--border);"></div>
-                            <span id="so-left-heading" style="font-size:0.72rem; color:var(--text-muted);" data-i18n="lbl_so_add_item_heading">Add item</span>
-                            <div style="flex:1; height:1px; background:var(--border);"></div>
+                            <div class="so-heading-line" style="flex:1; height:1px; background:var(--border);"></div>
+                            <span id="so-left-heading" style="font-size:0.72rem; color:var(--text-muted); display:flex; align-items:center; gap:5px;" data-i18n="lbl_so_add_item_heading">Add item</span>
+                            <div class="so-heading-line" style="flex:1; height:1px; background:var(--border);"></div>
                         </div>
 
                         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
@@ -2474,6 +2505,7 @@ async function openSalesRequestModal(orderId = null) {
                         <span style="font-size:0.85rem; font-weight:700;" data-i18n="lbl_req_items_list">Order Items</span>
                         <span id="sales-cart-count" style="font-size:0.7rem; color:var(--primary); background:var(--primary-glow); border-radius:20px; padding:2px 9px;"></span>
                     </div>
+                    <div id="so-cart-edit-hint"></div>
                     <div id="sales-cart-list" class="so-cart-scroll"></div>
 
                     <div class="form-group" style="margin:12px 0 0;">
@@ -2587,7 +2619,32 @@ async function openSalesRequestModal(orderId = null) {
     const cartListEl = document.getElementById('sales-cart-list');
     const cartCountEl = document.getElementById('sales-cart-count');
     const cartTotalEl = document.getElementById('so-cart-total');
+    const cartEditHintEl = document.getElementById('so-cart-edit-hint');
+
+    // "Click a card to edit it" bubble — shown for 15s after every successful
+    // Add to list (cart cards no longer carry their own Edit button, see
+    // renderCart; user feedback 2026-08-31), dismissible early via its own ×.
+    let cartEditHintTimer = null;
+    function showCartEditHint() {
+        if (!cartEditHintEl) return;
+        if (cartEditHintTimer) clearTimeout(cartEditHintTimer);
+        const msg = window.t ? window.t('hint_so_cart_click_edit') : 'Click a card to edit it';
+        cartEditHintEl.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; background:var(--primary-glow); border:1px solid var(--primary); border-radius:8px; padding:7px 10px; margin-bottom:8px; font-size:0.75rem; color:var(--text-secondary);">
+                <span>💡 ${msg}</span>
+                <button type="button" id="so-cart-edit-hint-close" style="background:transparent; border:0; cursor:pointer; color:var(--text-muted); font-size:1rem; line-height:1; padding:0; flex:0 0 auto;">&times;</button>
+            </div>
+        `;
+        const closeBtn = document.getElementById('so-cart-edit-hint-close');
+        if (closeBtn) closeBtn.addEventListener('click', hideCartEditHint);
+        cartEditHintTimer = setTimeout(hideCartEditHint, 15000);
+    }
+    function hideCartEditHint() {
+        if (cartEditHintTimer) { clearTimeout(cartEditHintTimer); cartEditHintTimer = null; }
+        if (cartEditHintEl) cartEditHintEl.innerHTML = '';
+    }
     const leftHeadingEl = document.getElementById('so-left-heading');
+    const assemblerBlockEl = document.getElementById('so-assembler-block');
     const stepForm = document.getElementById('so-step-form');
     const stepConfirm = document.getElementById('so-step-confirm');
 
@@ -2761,13 +2818,29 @@ async function openSalesRequestModal(orderId = null) {
             tierLine += `${tierLine ? ' &middot; ' : ''}<span style="color:#E24B4A; font-weight:700;">${tierShort} ${shortLbl}</span>`;
         }
 
+        // The fulfillment tier line + bar assume a specific machine's packed
+        // stock (currentSizeAvailPacked is forced to 0 above when none is
+        // picked yet) — showing "needs roasting" before a machine is chosen
+        // would be reading a number that isn't real yet. Show a plain hint
+        // instead until Machine has a value (found via user feedback
+        // 2026-08-31: the bar was rendering with no machine selected).
+        let tierSectionHtml;
+        if (selectedMachineId) {
+            tierSectionHtml = `
+                <div style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 0.75rem; line-height: 1.2;">${tierLine}</div>
+                ${barHtml}
+            `;
+        } else {
+            const selectMachineHintLbl = window.t ? window.t('hint_so_select_machine_first') : 'Select a machine to see the fulfillment breakdown.';
+            tierSectionHtml = `<div style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 0.72rem; color: var(--text-muted); font-style: italic;">${selectMachineHintLbl}</div>`;
+        }
+
         const html = `
             ${tableHtml}
-            <div style="margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 0.75rem; line-height: 1.2;">${tierLine}</div>
-            ${barHtml}
+            ${tierSectionHtml}
         `;
 
-        return { html, packedStock: currentSizeAvailPacked, potentialBags };
+        return { html, packedStock: currentSizeAvailPacked, potentialBags, tierShort };
     }
 
     // Recomputes packedStock/potentialBags for EVERY cart entry — called
@@ -2801,13 +2874,36 @@ async function openSalesRequestModal(orderId = null) {
         previewTimer = setTimeout(renderPreviewNow, 500);
     }
 
+    // Small red bubble under the Qty field warning that even production
+    // (not just packed stock) can't cover the typed quantity — i.e. current
+    // green bean stock is likely insufficient. Separate from the tier
+    // line/bar inside the info box below: that one can be scrolled past,
+    // this sits right where the operator is typing (user feedback
+    // 2026-08-31).
+    function showQtyShortBubble() {
+        let bubble = document.getElementById('so-qty-short-warn');
+        if (!bubble) {
+            inpQty.parentElement.style.position = 'relative';
+            bubble = document.createElement('div');
+            bubble.id = 'so-qty-short-warn';
+            bubble.style = 'position:absolute; bottom:-38px; right:0; width:220px; background:var(--danger); color:#fff; padding:5px 8px; border-radius:4px; font-size:0.68rem; font-weight:600; line-height:1.35; z-index:10; box-shadow:0 2px 5px rgba(0,0,0,0.25);';
+            inpQty.parentElement.appendChild(bubble);
+        }
+        const msg = window.t ? window.t('hint_so_qty_exceeds_potential') : 'This quantity may exceed what current green bean stock can produce.';
+        bubble.innerHTML = `⚠️ ${msg}`;
+    }
+    function hideQtyShortBubble() {
+        const bubble = document.getElementById('so-qty-short-warn');
+        if (bubble) bubble.remove();
+    }
+
     // Purely visual — the debounce only controls how often this redraws
     // while the operator is still typing. Add to list (below) always
     // computes synchronously, so what gets stored on a cart entry can never
     // race this timer.
     function renderPreviewNow() {
         const coffeeVal = selCoffee.value;
-        if (!coffeeVal) { infoBox.style.display = 'none'; return; }
+        if (!coffeeVal) { infoBox.style.display = 'none'; hideQtyShortBubble(); return; }
         const machineId = selMachine.value ? parseInt(selMachine.value) : null;
         const sizeG = parseInt(selSize.value) || 0;
         const qty = parseInt(inpQty.value) || 0;
@@ -2817,6 +2913,10 @@ async function openSalesRequestModal(orderId = null) {
         if (result) {
             infoBox.style.display = 'block';
             infoBox.innerHTML = result.html;
+            // Same "no machine yet" gate as the tier bar itself — packedStock
+            // is forced to 0 without one, so tierShort isn't a real number.
+            if (machineId && result.tierShort > 0) showQtyShortBubble();
+            else hideQtyShortBubble();
         }
     }
 
@@ -2857,7 +2957,6 @@ async function openSalesRequestModal(orderId = null) {
             return;
         }
 
-        const editLbl = window.t ? window.t('btn_so_cart_edit') : 'Edit';
         const editingLbl = window.t ? window.t('lbl_so_cart_editing') : 'Editing…';
 
         let html = '';
@@ -2871,16 +2970,20 @@ async function openSalesRequestModal(orderId = null) {
             const isEditing = entry.cartId === editingCartId;
             const borderStyle = isEditing ? 'border:1px solid var(--primary); box-shadow: 0 0 0 1px var(--primary);' : 'border:1px solid var(--border);';
             const bgStyle = isEditing ? 'background: var(--primary-glow);' : (isShort ? 'background: rgba(239,158,39,0.08);' : '');
+            // Whole card is the edit trigger now (see click delegation below)
+            // — the old per-card "Edit" button was easy to miss (user
+            // feedback 2026-08-31); replaced with the so-cart-edit-hint
+            // bubble shown once after Add to list instead. Locked entries
+            // (Preparing/Approved edit) keep their own direct qty-input and
+            // are never clickable into edit mode.
             html += `
-                <div style="${borderStyle} border-radius:8px; padding:8px 10px; margin-bottom:8px; ${bgStyle}">
+                <div class="${entry.locked ? '' : 'so-cart-card'}" data-cart-id="${entry.cartId}" style="${borderStyle} border-radius:8px; padding:8px 10px; margin-bottom:8px; ${bgStyle} ${entry.locked ? '' : 'cursor:pointer;'}">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
                         <div style="font-size:0.85rem; font-weight:700; line-height:1.3;">${name}</div>
-                        ${entry.locked ? '' : `
-                            <div style="display:flex; align-items:center; gap:6px; flex:0 0 auto;">
-                                <button type="button" class="btn-cart-edit" data-cart-id="${entry.cartId}" style="background:transparent; border:0; cursor:pointer; color:${isEditing ? 'var(--primary)' : 'var(--text-muted)'}; font-size:0.7rem; font-weight:700; padding:0;">${isEditing ? editingLbl : editLbl}</button>
-                                <button type="button" class="btn-cart-remove" data-cart-id="${entry.cartId}" style="background:transparent; border:0; cursor:pointer; color:var(--text-muted); font-size:1.1rem; line-height:1; padding:0;">&times;</button>
-                            </div>
-                        `}
+                        <div style="display:flex; align-items:center; gap:6px; flex:0 0 auto;">
+                            ${(!entry.locked && isEditing) ? `<span style="color:var(--primary); font-size:0.7rem; font-weight:700;">${editingLbl}</span>` : ''}
+                            ${entry.locked ? '' : `<button type="button" class="btn-cart-remove" data-cart-id="${entry.cartId}" style="background:transparent; border:0; cursor:pointer; color:var(--text-muted); font-size:1.1rem; line-height:1; padding:0;">&times;</button>`}
+                        </div>
                     </div>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
                         <span style="font-size:0.72rem; color:var(--text-muted);">${machineName} &middot; ${entry.sizeG}g</span>
@@ -2896,7 +2999,8 @@ async function openSalesRequestModal(orderId = null) {
         cartTotalEl.textContent = totalQty;
 
         cartListEl.querySelectorAll('.btn-cart-remove').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation(); // don't also trigger the card's click-to-edit
                 const cartId = parseInt(btn.getAttribute('data-cart-id'));
                 // Removing the entry currently being edited would leave Save
                 // pointing at a deleted key — back out of edit mode first so
@@ -2907,9 +3011,10 @@ async function openSalesRequestModal(orderId = null) {
                 renderCart();
             });
         });
-        cartListEl.querySelectorAll('.btn-cart-edit').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const cartId = parseInt(btn.getAttribute('data-cart-id'));
+        cartListEl.querySelectorAll('.so-cart-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const cartId = parseInt(card.getAttribute('data-cart-id'));
+                hideCartEditHint(); // the operator just discovered it
                 enterEditMode(cartId);
             });
         });
@@ -2943,9 +3048,17 @@ async function openSalesRequestModal(orderId = null) {
         selSize.value = entry.sizeG;
         inpQty.value = entry.qty;
 
-        if (leftHeadingEl) leftHeadingEl.textContent = window.t ? window.t('lbl_so_edit_item_heading') : 'Edit item';
+        if (leftHeadingEl) leftHeadingEl.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>` + (window.t ? window.t('lbl_so_edit_item_heading') : 'Edit item');
         btnAddItem.textContent = window.t ? window.t('btn_so_save_changes') : 'Save changes';
+        btnAddItem.classList.remove('btn-secondary');
+        btnAddItem.classList.add('btn-primary');
         btnCancelEdit.style.display = '';
+        // The heading text alone was too easy to miss (found via user
+        // feedback 2026-08-31) — frame the whole assembler panel in the same
+        // primary color used for the "being edited" cart card on the right,
+        // so entering edit mode is unmistakable at a glance, not just a
+        // small label swap.
+        if (assemblerBlockEl) assemblerBlockEl.classList.add('so-editing-mode');
 
         renderPreviewNow();
         renderCart(); // re-render so the card being edited gets marked
@@ -2958,10 +3071,14 @@ async function openSalesRequestModal(orderId = null) {
         selSize.selectedIndex = 0;
         inpQty.value = 1;
         infoBox.style.display = 'none';
+        hideQtyShortBubble();
 
         if (leftHeadingEl) leftHeadingEl.textContent = window.t ? window.t('lbl_so_add_item_heading') : 'Add item';
         btnAddItem.textContent = window.t ? window.t('btn_so_add_to_list') : '+ Add to list';
+        btnAddItem.classList.remove('btn-primary');
+        btnAddItem.classList.add('btn-secondary');
         btnCancelEdit.style.display = 'none';
+        if (assemblerBlockEl) assemblerBlockEl.classList.remove('so-editing-mode');
     }
 
     if (btnCancelEdit) {
@@ -2971,6 +3088,26 @@ async function openSalesRequestModal(orderId = null) {
         });
     }
 
+    // Shared with the Customer/Order Number required-field check further
+    // down (form submit handler) — a small red bubble anchored under the
+    // field, instead of a blocking native alert() (found via user feedback
+    // 2026-08-31: the browser's own "Field is required!" dialog for a
+    // missing Machine selection was jarring and didn't point at the field).
+    function showFieldWarn(el) {
+        if (!el) return;
+        el.parentElement.style.position = 'relative';
+        const existing = el.parentElement.querySelector('.custom-empty-warn');
+        if (existing) existing.remove();
+        const warnBubble = document.createElement('div');
+        warnBubble.className = 'custom-empty-warn';
+        warnBubble.style = 'position: absolute; bottom: -28px; left: 0; background: var(--danger); color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; z-index: 10; white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);';
+        warnBubble.innerHTML = `⚠️ ${window.t ? window.t('alert_field_required') : 'Field is required'}<div style="position: absolute; top: -4px; left: 10px; width: 8px; height: 8px; background: var(--danger); transform: rotate(45deg);"></div>`;
+        el.parentElement.appendChild(warnBubble);
+        const removeHandler = () => { if (warnBubble.parentNode) warnBubble.remove(); };
+        el.addEventListener('input', removeHandler, { once: true });
+        el.addEventListener('change', removeHandler, { once: true });
+    }
+
     btnAddItem.addEventListener('click', () => {
         const coffeeVal = selCoffee.value;
         const machineId = selMachine.value ? parseInt(selMachine.value) : null;
@@ -2978,7 +3115,10 @@ async function openSalesRequestModal(orderId = null) {
         const qty = parseInt(inpQty.value) || 0;
 
         if (!coffeeVal || !machineId || !sizeG || qty <= 0) {
-            alert(window.t ? window.t('alert_field_required') : 'Please complete Coffee, Machine, Size, and Qty before adding.');
+            if (!coffeeVal) showFieldWarn(selCoffee);
+            if (!machineId) showFieldWarn(selMachine);
+            if (!sizeG) showFieldWarn(selSize);
+            if (qty <= 0) showFieldWarn(inpQty);
             return;
         }
 
@@ -3030,9 +3170,11 @@ async function openSalesRequestModal(orderId = null) {
         selSize.selectedIndex = 0;
         inpQty.value = 1;
         infoBox.style.display = 'none';
+        hideQtyShortBubble();
 
         recomputeCartStock();
         renderCart();
+        showCartEditHint();
     });
 
     // Populate cart from existing items (edit mode). A Pending-Approval edit
@@ -3095,15 +3237,7 @@ async function openSalesRequestModal(orderId = null) {
         form.querySelectorAll('[required]').forEach(el => {
             if (!el.value || el.value.trim() === '') {
                 isValid = false;
-                el.parentElement.style.position = 'relative';
-                const warnBubble = document.createElement('div');
-                warnBubble.className = 'custom-empty-warn';
-                warnBubble.style = 'position: absolute; bottom: -28px; left: 0; background: var(--danger); color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; z-index: 10; white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);';
-                warnBubble.innerHTML = `⚠️ ${window.t ? window.t('alert_field_required') : 'Field is required'}<div style="position: absolute; top: -4px; left: 10px; width: 8px; height: 8px; background: var(--danger); transform: rotate(45deg);"></div>`;
-                el.parentElement.appendChild(warnBubble);
-                const removeHandler = () => { if(warnBubble.parentNode) warnBubble.remove(); };
-                el.addEventListener('input', removeHandler, {once:true});
-                el.addEventListener('change', removeHandler, {once:true});
+                showFieldWarn(el);
             }
         });
         if (!isValid) return;

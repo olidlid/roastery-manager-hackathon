@@ -571,6 +571,340 @@ function restoreLastTab(sectionId) {
     }
 }
 
+// ==========================================================================
+// WHAT'S NEW POPUP (WHATS_NEW_POPUP_PLAN.md)
+// ==========================================================================
+// One entry per release; newest first is not required (checkWhatsNewPopup
+// only ever looks up WHATS_NEW_VERSION by value), but keeping newest-first
+// makes this readable as a changelog on its own. Each item's `before`/
+// `after`/`alt` are optional — a release note without a screenshot is
+// still valid (F6 in the plan: "butir tanpa gambar tetap sah").
+//
+// Screenshots decision (2026-08-29, plan §5.1): light theme only, redamed
+// with a neutral border so they still read cleanly on a dark-themed card.
+const WHATS_NEW_VERSION = '2026-08-29';
+
+const WHATS_NEW_RELEASES = [
+    {
+        version: '2026-08-29',
+        date: '29-08-2026',
+        items: [
+            // Restructured 2026-08-31 per user request: one focused/zoomed
+            // screenshot per concrete UI addition instead of one item with a
+            // whole-modal before/after pair — each page below points at
+            // exactly the element its caption describes. Captured the same
+            // way as before (headless-Chrome/puppeteer-core against the live
+            // local app, auth bypassed client-side for the screenshot only,
+            // light theme), this time with elementHandle-scoped clips
+            // (form-group / .so-panel) instead of full-page shots.
+            {
+                title: { en: 'Check stock before you commit to a quantity', ar: 'تحقق من المخزون قبل تحديد الكمية' },
+                body: {
+                    en: 'A new "Stock Check" button was added next to the Sales Agent Name field, to check packed coffee stock, green bean stock, and potential production before adding items to the order.',
+                    ar: 'تمت إضافة زر جديد "فحص المخزون" بجانب حقل اسم مندوب المبيعات، للتحقق من مخزون القهوة المعبأة، والبن الأخضر، والإنتاج المحتمل قبل إضافة عناصر إلى الطلب.'
+                },
+                image: 'images/whatsnew/2026-08-29/stock-check-button.png',
+                alt: {
+                    en: 'The new Stock Check button next to Sales Agent Name',
+                    ar: 'زر فحص المخزون الجديد بجانب اسم مندوب المبيعات'
+                }
+            },
+            {
+                title: { en: 'Every item you add shows up on the right', ar: 'كل عنصر تضيفه يظهر في الجانب الأيمن' },
+                body: {
+                    en: 'Items you\'ve added now appear as cards on the right side of the form. Click any card to edit it — no more scrolling through a long stack of repeated rows to find the one you want to change.',
+                    ar: 'العناصر التي أضفتها تظهر الآن كبطاقات في الجانب الأيمن من النموذج. اضغط على أي بطاقة لتعديلها — لا حاجة بعد الآن للتمرير عبر صفوف متكررة طويلة للعثور على العنصر الذي تريد تغييره.'
+                },
+                image: 'images/whatsnew/2026-08-29/order-items-panel.png',
+                alt: {
+                    en: 'The Order Items panel on the right, showing an added item and a "click a card to edit it" hint',
+                    ar: 'لوحة عناصر الطلب على اليمين، تعرض عنصراً مُضافاً وتلميحاً "اضغط على البطاقة للتعديل"'
+                }
+            },
+            {
+                title: { en: 'Add a new customer without leaving the form', ar: 'أضف عميلاً جديداً دون مغادرة النموذج' },
+                body: {
+                    en: 'The "Add New" button next to Customer is now colored so it stands out. You can add a brand new customer directly from this button — no need to leave the page to another menu.',
+                    ar: 'أصبح زر "إضافة جديد" بجانب حقل العميل ملوّناً ليكون أكثر وضوحاً. يمكنك إضافة عميل جديد تماماً مباشرة من هذا الزر — دون الحاجة لمغادرة الصفحة إلى قائمة أخرى.'
+                },
+                image: 'images/whatsnew/2026-08-29/add-new-customer-button.png',
+                alt: {
+                    en: 'The purple "Add New" customer button next to the Customer dropdown',
+                    ar: 'زر "إضافة جديد" الأرجواني بجانب قائمة العميل'
+                }
+            }
+            // Other 2026-08-29 changes (Preparing card wrap fix, batch-date
+            // smart default, customer Wholesale default) were built in the
+            // same session but are intentionally left OUT of this release's
+            // popup per user request 2026-08-31 — this update is scoped to
+            // announcing the Sales Order modal redesign only. Their images
+            // (images/whatsnew/2026-08-29/preparing-card-{before,after}.png)
+            // and the original single-item before/after copy for the whole
+            // modal (images/whatsnew/2026-08-29/sales-order-{before,after}.png)
+            // are still sitting on disk / in git history if a future release
+            // wants to surface them separately.
+        ]
+    }
+];
+
+// Re-show policy (user request 2026-08-31, replaces the earlier "1-hour
+// snooze then never again" design entirely):
+//   - Trigger is clicking "Submit Request" (js/sales.js btn-create-request),
+//     not just navigating to the Item Request page.
+//   - Checking "Don't show update notices again" stops it forever (unchanged).
+//   - Otherwise, it re-shows on every Submit Request click, up to
+//     WHATS_NEW_MAX_PER_DAY times per calendar day, resetting each new day.
+//   - That daily-capped cycle only runs for WHATS_NEW_EXPIRE_MS from the
+//     FIRST time this version's popup was ever shown — past that, it stops
+//     appearing for good even without the checkbox.
+const WHATS_NEW_STORAGE_KEYS = {
+    optOut: 'whatsnew_opt_out',
+    firstShownAt: 'whatsnew_first_shown_at',
+    firstShownVersion: 'whatsnew_first_shown_version',
+    dailyDate: 'whatsnew_daily_date',
+    dailyVersion: 'whatsnew_daily_version',
+    dailyCount: 'whatsnew_daily_count'
+};
+const WHATS_NEW_EXPIRE_MS = 7 * 24 * 60 * 60 * 1000; // 1 week from first show
+const WHATS_NEW_MAX_PER_DAY = 2;
+
+function whatsNewIsOptedOut() {
+    try { return localStorage.getItem(WHATS_NEW_STORAGE_KEYS.optOut) === '1'; }
+    catch (e) { return false; }
+}
+
+function whatsNewSetOptOut(value) {
+    try {
+        if (value) localStorage.setItem(WHATS_NEW_STORAGE_KEYS.optOut, '1');
+        else localStorage.removeItem(WHATS_NEW_STORAGE_KEYS.optOut);
+    } catch (e) { /* localStorage unavailable — nothing to persist */ }
+}
+
+// Reads today's shown-count for `version` without writing anything —
+// shared by whatsNewShouldShow (read-only check) and whatsNewRecordShown
+// (read-then-increment), so the "does today's stored date/version match"
+// logic can't drift between the two.
+function whatsNewTodaysCount(version) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const dailyDate = localStorage.getItem(WHATS_NEW_STORAGE_KEYS.dailyDate);
+    const dailyVersion = localStorage.getItem(WHATS_NEW_STORAGE_KEYS.dailyVersion);
+    if (dailyDate !== todayStr || dailyVersion !== version) return 0;
+    return parseInt(localStorage.getItem(WHATS_NEW_STORAGE_KEYS.dailyCount), 10) || 0;
+}
+
+function whatsNewShouldShow(version) {
+    try {
+        if (whatsNewIsOptedOut()) return false;
+
+        // Hard 1-week expiry from the first time this version was ever
+        // shown — firstShownAt is written once and never overwritten (see
+        // whatsNewRecordShown), so this date can't get pushed forward by
+        // later shows.
+        if (localStorage.getItem(WHATS_NEW_STORAGE_KEYS.firstShownVersion) === version) {
+            const firstShownAt = parseInt(localStorage.getItem(WHATS_NEW_STORAGE_KEYS.firstShownAt), 10) || 0;
+            if (firstShownAt && (Date.now() - firstShownAt) >= WHATS_NEW_EXPIRE_MS) return false;
+        }
+
+        return whatsNewTodaysCount(version) < WHATS_NEW_MAX_PER_DAY;
+    } catch (e) {
+        // Fails closed, same spirit as checkStockFreezeBanner below — a
+        // popup that can't reliably remember it was dismissed must not
+        // reappear on every single click instead.
+        return false;
+    }
+}
+
+// Called once per ACTUAL display (checkWhatsNewPopup, never on a forceShow
+// re-open from Settings — that shouldn't burn into the daily/weekly budget).
+function whatsNewRecordShown(version) {
+    try {
+        if (localStorage.getItem(WHATS_NEW_STORAGE_KEYS.firstShownVersion) !== version) {
+            localStorage.setItem(WHATS_NEW_STORAGE_KEYS.firstShownAt, String(Date.now()));
+            localStorage.setItem(WHATS_NEW_STORAGE_KEYS.firstShownVersion, version);
+        }
+        // MUST read the pre-existing count before writing today's
+        // date/version below — whatsNewTodaysCount decides "is the stored
+        // count actually for today" by comparing against those same two
+        // keys, so overwriting them first makes every count look like it's
+        // already today's and the daily reset never happens (found live
+        // 2026-08-31: count kept climbing past WHATS_NEW_MAX_PER_DAY forever
+        // instead of resetting on a new day).
+        const previousCount = whatsNewTodaysCount(version);
+        const todayStr = new Date().toISOString().split('T')[0];
+        localStorage.setItem(WHATS_NEW_STORAGE_KEYS.dailyDate, todayStr);
+        localStorage.setItem(WHATS_NEW_STORAGE_KEYS.dailyVersion, version);
+        localStorage.setItem(WHATS_NEW_STORAGE_KEYS.dailyCount, String(previousCount + 1));
+    } catch (e) {}
+}
+
+async function checkWhatsNewPopup() {
+    try {
+        // The overlay element is created once and reused — hidden via class
+        // toggle, never removed from the DOM (same lifecycle as
+        // showWarningModal's container). So its mere existence doesn't mean
+        // it's currently open; only the hidden class does.
+        const existing = document.getElementById('whats-new-modal-container');
+        if (existing && !existing.classList.contains('hidden')) return;
+        const release = WHATS_NEW_RELEASES.find(r => r.version === WHATS_NEW_VERSION);
+        if (!release || !release.items || release.items.length === 0) return;
+        if (!whatsNewShouldShow(WHATS_NEW_VERSION)) return;
+        whatsNewRecordShown(WHATS_NEW_VERSION);
+        openWhatsNewModal(release);
+    } catch (e) {
+        console.error("Failed to check What's New popup:", e);
+    }
+}
+
+// Renders as its OWN stacked overlay (z-index 2000, same pattern as
+// showWarningModal/openAddCustomerShortcutModal) instead of through
+// openModal() — openModal shares one #modal-container, so opening this on
+// top of any other open modal would silently wipe it out.
+//
+// `forceShow` bypasses whatsNewShouldShow entirely — used by the Settings
+// "Show What's New" button, which must work even after the release was
+// already seen or opted out of.
+function openWhatsNewModal(release, forceShow = false) {
+    let container = document.getElementById('whats-new-modal-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'whats-new-modal-container';
+        container.className = 'overlay';
+        container.style.zIndex = '2000';
+        document.body.appendChild(container);
+    }
+
+    let page = 0;
+    const total = release.items.length;
+
+    const lang = () => (window.currentLanguage === 'ar' ? 'ar' : 'en');
+    const pick = (field) => field ? (field[lang()] || field.en || '') : '';
+
+    function teardown() {
+        document.removeEventListener('keydown', onKeyDown);
+        container.classList.add('hidden');
+        container.innerHTML = '';
+    }
+
+    // No snooze state to write anymore — whether this shows again is
+    // governed entirely by the daily cap / 1-week expiry recorded at OPEN
+    // time (whatsNewRecordShown in checkWhatsNewPopup), not at close time.
+    // Dismissing mid-way (X / Escape / Skip) is just... closing.
+    function closeAndDismiss() {
+        teardown();
+    }
+
+    function closeAndFinish() {
+        const cb = document.getElementById('whats-new-opt-out-checkbox');
+        if (!forceShow && cb && cb.checked) whatsNewSetOptOut(true);
+        teardown();
+    }
+
+    function onKeyDown(e) {
+        if (e.key === 'Escape') { e.preventDefault(); closeAndDismiss(); }
+    }
+
+    function render() {
+        const item = release.items[page];
+        const isLast = page === total - 1;
+        const altText = pick(item.alt) || pick(item.title);
+
+        const dots = release.items.map((_, i) => `
+            <span style="width:${i === page ? '16px' : '6px'}; height:6px; border-radius:9999px; background:${i === page ? 'var(--primary)' : 'var(--border)'}; display:inline-block; transition: width 0.2s ease;"></span>
+        `).join('');
+
+        // width/height are placeholders for aspect-ratio, not the final
+        // render size — actual sizing is CSS (width:100%; height:auto).
+        // Kept anyway per plan §5.1 so a slow-loading image doesn't cause
+        // layout jump while it's still fetching.
+        const imageHtml = (item.before && item.after) ? `
+            <div class="whats-new-image-pair" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:16px;">
+                <div>
+                    <div style="font-size:0.72rem; font-weight:700; color:var(--text-muted); margin-bottom:4px;">${window.t('whatsnew_before')}</div>
+                    <img src="${item.before}" alt="${altText}" loading="lazy" width="360" height="220" style="width:100%; height:auto; max-width:100%; display:block; border:1px solid var(--border); border-radius:8px;">
+                </div>
+                <div>
+                    <div style="font-size:0.72rem; font-weight:700; color:var(--primary); margin-bottom:4px;">${window.t('whatsnew_after')}</div>
+                    <img src="${item.after}" alt="${altText}" loading="lazy" width="360" height="220" style="width:100%; height:auto; max-width:100%; display:block; border:1px solid var(--primary); border-radius:8px;">
+                </div>
+            </div>
+        ` : (item.image ? `
+            <div class="whats-new-image-single" style="margin-top:16px;">
+                <img src="${item.image}" alt="${altText}" loading="lazy" width="480" height="260" style="width:100%; height:auto; max-width:100%; display:block; border:1px solid var(--border); border-radius:8px;">
+            </div>
+        ` : '');
+
+        const checkboxHtml = isLast ? `
+            <div style="padding-top:14px; border-top:1px solid var(--border); margin-top:16px;">
+                <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer;">
+                    <input type="checkbox" id="whats-new-opt-out-checkbox" style="width:15px; height:15px; margin:2px 0 0;">
+                    <span>
+                        <span style="font-size:0.8rem;">${window.t('whatsnew_optout_label')}</span>
+                        <span style="display:block; font-size:0.7rem; color:var(--text-muted); margin-top:2px; line-height:1.4;">${window.t('whatsnew_optout_hint')}</span>
+                    </span>
+                </label>
+            </div>
+        ` : '';
+
+        container.innerHTML = `
+            <div class="overlay-card" style="max-width:760px; width:92vw; max-height:85vh; padding:0; gap:0; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-bottom:1px solid var(--border); flex-shrink:0;">
+                    <div style="display:flex; align-items:baseline; gap:8px;">
+                        <h3 style="margin:0; font-size:1.05rem; font-weight:700;">${window.t('whatsnew_title')}</h3>
+                        <span style="font-size:0.75rem; color:var(--text-muted);">${release.date}</span>
+                    </div>
+                    <button type="button" id="whats-new-btn-close" style="background:transparent; border:0; cursor:pointer; color:var(--text-muted); font-size:1.4rem; line-height:1; padding:0;">&times;</button>
+                </div>
+                <div style="padding:18px 20px; overflow-y:auto; flex:1;">
+                    <div style="font-size:1rem; font-weight:700; margin-bottom:6px;">${pick(item.title)}</div>
+                    <div style="font-size:0.85rem; color:var(--text-secondary); line-height:1.55;">${pick(item.body)}</div>
+                    ${imageHtml}
+                    ${checkboxHtml}
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 20px; border-top:1px solid var(--border); flex-shrink:0;">
+                    <div style="display:flex; gap:6px; align-items:center;">${dots}</div>
+                    <div style="display:flex; gap:8px;">
+                        ${page > 0 ? `<button type="button" id="whats-new-btn-back" class="btn btn-secondary">${window.t('whatsnew_back')}</button>` : ''}
+                        ${!isLast ? `<button type="button" id="whats-new-btn-skip" class="btn btn-secondary">${window.t('whatsnew_skip')}</button>` : ''}
+                        <button type="button" id="whats-new-btn-next" class="btn btn-primary">${isLast ? window.t('whatsnew_done') : window.t('whatsnew_next')}</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('whats-new-btn-close').addEventListener('click', closeAndDismiss);
+        const backBtn = document.getElementById('whats-new-btn-back');
+        if (backBtn) backBtn.addEventListener('click', () => { page -= 1; render(); });
+        const skipBtn = document.getElementById('whats-new-btn-skip');
+        if (skipBtn) skipBtn.addEventListener('click', closeAndDismiss);
+        document.getElementById('whats-new-btn-next').addEventListener('click', () => {
+            if (isLast) { closeAndFinish(); }
+            else { page += 1; render(); }
+        });
+    }
+
+    render();
+    container.classList.remove('hidden');
+    document.addEventListener('keydown', onKeyDown);
+}
+
+// Settings > What's New card (plan §7 / Fase 3): reversible opt-out and a
+// way to see the popup again on demand. Without this, the opt-out
+// checkbox in the popup itself would be a one-way door.
+function initWhatsNewSettingsCard() {
+    const checkbox = document.getElementById('sett-whatsnew-optout');
+    if (checkbox) {
+        checkbox.checked = whatsNewIsOptedOut();
+        checkbox.onchange = () => whatsNewSetOptOut(checkbox.checked);
+    }
+    const showBtn = document.getElementById('btn-open-whats-new');
+    if (showBtn) {
+        showBtn.onclick = () => {
+            const release = WHATS_NEW_RELEASES.find(r => r.version === WHATS_NEW_VERSION);
+            if (release) openWhatsNewModal(release, true);
+        };
+    }
+}
+
 // Stock Opname Phase 2: soft UX layer only — the database trigger
 // (stock_take_freeze_guard) already rejects writes regardless of whether
 // this banner is shown or a request never fires. Checked from navigateTo()
@@ -908,6 +1242,10 @@ async function loadSectionData(sectionId) {
             } else {
                 await loadHandoverSection();
             }
+            // What's New used to fire here (just landing on the page) —
+            // moved to the "Submit Request" button's own click handler in
+            // js/sales.js per user request 2026-08-31, so it triggers on
+            // that specific action instead of every visit to this section.
             break;
         case 'sec-settings':
             const activeSettTabBtn = document.querySelector('#sec-settings .tab-btn.active');
@@ -1120,6 +1458,7 @@ async function loadSettingTabSpecificData(tabId) {
     switch (tabId) {
         case 'tab-sett-general':
             await loadCompanySettings();
+            initWhatsNewSettingsCard();
             break;
         case 'tab-sett-production':
             await loadMachinesSection();
