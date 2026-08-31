@@ -3996,8 +3996,6 @@ async function loadStockOpnameReport(startDate, endDate) {
         itemsByTake.get(it.stock_take_id).push(it);
     });
 
-    renderStockopnameAccuracyTrend(filtered, itemsByTake);
-
     const tbody = document.getElementById('stockopname-history-body');
     if (!tbody) return;
     tbody.innerHTML = '';
@@ -4044,59 +4042,6 @@ function computeStockTakeAccuracy(items) {
     if (topLevel.length === 0) return null;
     const matched = topLevel.filter(it => stockOpnameVarianceIsMatch(it.category, parseFloat(it.system_qty) || 0, parseFloat(it.variance) || 0)).length;
     return { matched, total: topLevel.length, pct: (matched / topLevel.length) * 100 };
-}
-
-// Fase 7: month-over-month accuracy trend across POSTED takes only
-// (cancelled ones never really counted anything) — one point per calendar
-// month, averaging every take's own accuracy that landed in that month.
-let stockopnameAccuracyChart = null;
-function renderStockopnameAccuracyTrend(takes, itemsByTake) {
-    const canvas = document.getElementById('stockopname-accuracy-chart');
-    const card = document.getElementById('stockopname-accuracy-trend-card');
-    if (!canvas) return;
-
-    const byMonth = new Map(); // 'YYYY-MM' -> [pct, pct, ...]
-    (takes || []).forEach(t => {
-        if (t.status !== 'posted') return;
-        const acc = computeStockTakeAccuracy(itemsByTake.get(t.id));
-        if (!acc) return;
-        const month = (t.take_date || '').slice(0, 7);
-        if (!month) return;
-        if (!byMonth.has(month)) byMonth.set(month, []);
-        byMonth.get(month).push(acc.pct);
-    });
-
-    if (card) card.style.display = byMonth.size === 0 ? 'none' : '';
-    if (byMonth.size === 0) return;
-
-    const months = Array.from(byMonth.keys()).sort();
-    const avgPct = months.map(m => {
-        const vals = byMonth.get(m);
-        return vals.reduce((s, v) => s + v, 0) / vals.length;
-    });
-
-    if (stockopnameAccuracyChart) stockopnameAccuracyChart.destroy();
-    stockopnameAccuracyChart = new Chart(canvas, {
-        type: 'line',
-        data: {
-            labels: months,
-            datasets: [{
-                label: window.t ? (window.t('stockopname_col_accuracy') || 'Accuracy') : 'Accuracy',
-                data: avgPct,
-                borderColor: 'rgb(45, 80, 22)',
-                backgroundColor: 'rgba(45, 80, 22, 0.15)',
-                fill: true,
-                tension: 0.25,
-                pointRadius: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: { y: { min: 0, max: 100, ticks: { callback: (v) => v + '%' } } },
-            plugins: { legend: { display: false } }
-        }
-    });
 }
 
 // Starts a brand new stock take, OR — if one is already open — resumes it
