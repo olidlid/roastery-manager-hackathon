@@ -2439,12 +2439,28 @@
                                             <div class="form-group" style="max-width:220px; margin-top:12px;">
                                                 <label class="form-label" data-i18n="lbl_packed_barcode_height">Barcode Height (mm)</label>
                                                 <input type="number" id="sett-packed-label-barcode-height" class="form-control" min="8" max="24" step="0.5" value="18">
-                                                <span style="font-size:0.75rem; color:var(--text-muted);" data-i18n="hint_packed_barcode_height">Width fills whatever space is left automatically — only height needs tuning per printer. Label is 25mm tall total, so leave room for the text lines below.</span>
+                                                <span style="font-size:0.75rem; color:var(--text-muted);" data-i18n="hint_packed_barcode_height">Only height needs tuning per printer — the barcode width is locked to whole printer dots so the bars stay scannable. Label is 25mm tall total, so leave room for the text lines below.</span>
                                             </div>
                                             <div style="display: flex; justify-content: flex-end; margin-top: 15px;">
                                                 <button type="submit" class="btn btn-primary btn-sm" data-i18n="btn_save_label">Save Label Settings</button>
                                             </div>
                                         </form>
+
+                                        <!-- Printer setup note, added 2026-09-03. Lives here because this
+                                             is where anyone goes when labels come out wrong. The steps are
+                                             Windows-side and cannot be done by the app — a browser has no
+                                             access to printer settings — and they must be repeated on every
+                                             computer that prints labels. See LABEL_TEST_PLAN.md. -->
+                                        <div style="border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px;">
+                                            <label class="form-label" style="font-weight: 700;" data-i18n="lbl_printer_setup_title">Printer Setup — Once Per Computer</label>
+                                            <p style="margin: 2px 0 10px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.5;" data-i18n="hint_printer_setup_intro">Labels print portrait and cropped until the printer itself is set up. This is a Windows setting — the app cannot change it.</p>
+                                            <ol style="margin: 0 0 10px; padding-left: 18px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.6;">
+                                                <li data-i18n="hint_printer_setup_1">In the Zebra driver's Printing preferences, give the 50×25mm size a NAME under Stocks. Do not leave it on "User defined" — an unnamed size is invisible to Chrome.</li>
+                                                <li data-i18n="hint_printer_setup_2">Printer properties → Advanced → Printing Defaults → Orientation = Landscape. It must be Printing Defaults, not Printing preferences — Chrome reads the first one.</li>
+                                                <li data-i18n="hint_printer_setup_3">Close Chrome completely, then reopen it. Paper sizes are only read at startup.</li>
+                                            </ol>
+                                            <p style="margin: 0; font-size: 0.75rem; color: var(--text-muted); line-height: 1.5;" data-i18n="hint_printer_setup_copy">To set up another computer, use the driver's Import/Export settings tab instead of repeating these steps by hand.</p>
+                                        </div>
 
                                         <!-- Removed 2026-08-10: the in-app rotate-90 toggle was pulled
                                              back out again — printer orientation is now hardcoded in
@@ -2717,7 +2733,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=58"></script>
+    <script src="js/translations.js?v=59"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
