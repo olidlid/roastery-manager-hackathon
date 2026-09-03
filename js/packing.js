@@ -3211,7 +3211,17 @@ function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
                 flex-direction: column;
                 align-items: center;
                 text-align: center;
-                padding: 0 1mm;
+                /* Top padding added 2026-09-03: content was printing hard against
+                   the label's top edge. Calibrated against a physically-verified
+                   trial print rather than guessed (LABEL_TEST_PLAN.md), which
+                   sat 1.5mm from the top edge and printed with comfortable
+                   clearance. justify-content below then balances what is left:
+                   measured 2.29mm top / 2.14mm bottom.
+                   box-sizing:border-box keeps the sticker itself
+                   at 24mm; only the content area shrinks, and there was ~3mm of
+                   vertical slack to give. */
+                padding: 1mm;
+                justify-content: center;
                 page-break-after: always;
            }`;
     // Barcode height: for packed-coffee labels (the only caller that passes
@@ -3247,7 +3257,12 @@ function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
                row only affects labels that opt into it, not every label
                sharing this document builder. */
             .barcode-label-row { width: 100%; height: 100%; display: flex; flex-direction: row; align-items: stretch; }
-            .barcode-label-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
+            .barcode-label-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+            /* justify-content added 2026-09-03: packed labels put their content
+               in this column, and .barcode-label-row already fills the item's
+               full height — so centring on .barcode-label-item alone does
+               nothing for them. Without this the block sat flush at the top
+               with all the slack pooling at the bottom. */
             .barcode-label-strip { flex: 0 0 6mm; display: flex; align-items: center; justify-content: center; overflow: hidden; border-left: 0.25mm dashed #999; }
             .barcode-label-strip span { display: inline-block; transform: rotate(-90deg); white-space: nowrap; font-family: monospace; font-weight: 700; font-size: 4mm; }
             /* Barcode zone is a FIXED mm box, set once here — it never
@@ -3279,11 +3294,42 @@ function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
         </style></head><body>
         ${labelsHtml}
         <script>
-            document.querySelectorAll('.lot-barcode-svg').forEach(el => {
-                JsBarcode(el, el.dataset.value, { format: 'CODE128', width: 2.2, height: 60, displayValue: ${showCode}, text: el.dataset.display, fontSize: 22, margin: 4 });
+            /* Bars must land on WHOLE printer dots. The GK420t is 203 dpi and can
+               only fire whole dots, so a barcode stretched to an arbitrary width
+               (what this did before: width 2.2 modules + preserveAspectRatio
+               "none" against a 100% box) puts module edges on fractional dots —
+               some bars round up, some round down, the widths stop matching
+               Code128, and scans fail even though the label looks perfect to the
+               eye. Diagnosed and fixed 2026-09-03 — the approach was proven on
+               paper in a throwaway trial tab first, then brought here; that tab
+               is gone, the findings are in LABEL_TEST_PLAN.md.
+
+               The fix: pick the largest INTEGER dots-per-module that still fits,
+               then size the SVG so 1 of its internal units renders as exactly 1
+               printer dot. preserveAspectRatio stays "none" on purpose — the X
+               scale is now exact, and height is free to fill its own mm box. */
+            var DOTS_PER_MM = 203 / 25.4;
+            document.querySelectorAll('.lot-barcode-svg').forEach(function (el) {
+                var availPx = el.clientWidth || (el.parentElement ? el.parentElement.clientWidth : 0);
+                var availDots = Math.floor(availPx * 25.4 / 96 * DOTS_PER_MM);
+                var natural = 0;
+                for (var w = 4; w >= 1; w--) {
+                    JsBarcode(el, el.dataset.value, { format: 'CODE128', width: w, height: 60, displayValue: ${showCode}, text: el.dataset.display, fontSize: 22, margin: 0 });
+                    natural = parseFloat(el.getAttribute('width')) || 0;
+                    if (!availDots || natural <= availDots || w === 1) break;
+                }
                 el.setAttribute('preserveAspectRatio', 'none');
+                el.removeAttribute('width');
+                el.removeAttribute('height');
+                /* Only ever shrink below the exact mapping if the symbol genuinely
+                   cannot fit even at 1 dot per module — better a slightly
+                   imprecise barcode than one running off the label. */
+                var finalDots = availDots ? Math.min(natural, availDots) : natural;
+                el.style.width = (finalDots / DOTS_PER_MM).toFixed(3) + 'mm';
+                el.style.marginLeft = 'auto';
+                el.style.marginRight = 'auto';
             });
-            setTimeout(() => { window.print(); }, 500);
+            setTimeout(function () { window.print(); }, 500);
         <\/script>
         </body></html>
     `;
