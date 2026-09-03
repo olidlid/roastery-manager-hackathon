@@ -3278,7 +3278,7 @@ function buildFixedLabelDocument(labelsHtml, showCode, packedBarcodeHeightMm) {
             .lbl-coffee { font-size: 2.3mm; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; margin-top: 0.2mm; }
             .lbl-size { font-size: 2.1mm; font-weight: 700; line-height: 1.15; margin-top: 0.15mm; }
             .lbl-machine { font-size: 1.7mm; font-weight: 600; line-height: 1.15; color: #333; margin-top: 0.1mm; }
-            .lbl-dates { font-size: 2mm; font-weight: 700; line-height: 1.15; margin-top: 0.15mm; }
+            .lbl-dates { font-size: 2.8mm; font-weight: 700; line-height: 1.15; margin-top: 0.15mm; }
             /* Priority band (see opts.priorityMark in printLotBarcodeLabels).
                Boxed + letter-spaced rather than plain bold text so it reads
                across a shelf at a glance, which is the whole point of this
