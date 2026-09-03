@@ -5961,6 +5961,10 @@ async function openNewStockReleaseModal() {
     // cart: Map keyed by lotId so re-adding the same lot accumulates instead
     // of creating a duplicate line the submit loop would then double-deduct.
     const cart = new Map();
+    // Which cart line is currently loaded back into the left form for editing
+    // (user request 2026-09-03, mirroring the Sales Order cart). null = the
+    // form is in normal "add a new line" mode.
+    let editingLotId = null;
 
     const cleanup = () => { window.activeStockReleaseScanHandler = null; };
     document.getElementById('btn-close-modal').addEventListener('click', cleanup, { once: true });
@@ -5997,7 +6001,10 @@ async function openNewStockReleaseModal() {
     // already staged.
     function availableFor(lot) {
         if (!lot) return 0;
-        const staged = cart.has(lot.lotId) ? cart.get(lot.lotId).qty : 0;
+        // A line being edited must not count its own staged qty against
+        // itself — otherwise re-saving it unchanged, or nudging it up by one,
+        // would read as "not enough stock".
+        const staged = (cart.has(lot.lotId) && lot.lotId !== editingLotId) ? cart.get(lot.lotId).qty : 0;
         return Math.max(0, lot.remaining - staged);
     }
 
@@ -6030,35 +6037,10 @@ async function openNewStockReleaseModal() {
     // so each line still reads as a distinct object inside the narrower right
     // column, followed by a dashed "scan another" hint that keeps the panel
     // from looking broken while it's still nearly empty.
-    function renderCart() {
-        const emptyMsg = window.t ? window.t('msg_sr_cart_empty') : 'Nothing added yet.';
-        const scanMore = window.t ? window.t('msg_sr_scan_more') : 'Scan another strip code to add more';
-        if (cart.size === 0) {
-            cartEl.innerHTML = `<div style="border:1px dashed var(--border); border-radius:10px; padding:22px 12px; text-align:center; color:var(--text-muted); font-size:0.8rem;">${emptyMsg}</div>`;
-        } else {
-            cartEl.innerHTML = [...cart.values()].map(line => `
-                <div style="background:var(--bg-input); border:1px solid var(--border); border-radius:10px; padding:10px 11px; margin-bottom:8px;">
-                    <div style="display:flex; align-items:flex-start; gap:8px;">
-                        <div style="flex:1; min-width:0;">
-                            <div style="font-family:monospace; font-weight:700; color:var(--primary); font-size:0.9rem;">${line.stripCode || line.lotCode}</div>
-                            <div style="font-size:0.78rem; color:var(--text-secondary); overflow-wrap:anywhere;">${line.label} · ${line.sizeG}g</div>
-                            <div style="font-size:0.7rem; color:var(--text-muted);">${line.packedDate || '-'}</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-weight:700; font-size:0.9rem; white-space:nowrap;">${line.qty} pcs</div>
-                            <button type="button" class="sr-cart-remove btn btn-danger btn-sm" data-lot-id="${line.lotId}" style="margin-top:4px;" aria-label="Remove">&times;</button>
-                        </div>
-                    </div>
-                </div>
-            `).join('') + `<div style="border:1px dashed var(--border); border-radius:10px; padding:10px; text-align:center; font-size:0.7rem; color:var(--text-muted);">${scanMore}</div>`;
-            cartEl.querySelectorAll('.sr-cart-remove').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    cart.delete(parseInt(btn.getAttribute('data-lot-id')));
-                    renderCart();
-                    updateStockHint();
-                });
-            });
-        }
+    // Totals only — split out of renderCart so editing a qty inline can
+    // refresh the footer on every keystroke without rebuilding the list and
+    // yanking focus out of the field being typed into.
+    function updateCartTotals() {
         const total = [...cart.values()].reduce((s, l) => s + l.qty, 0);
         totalEl.textContent = `${total} pcs`;
         const lotWord = cart.size === 1
@@ -6068,6 +6050,126 @@ async function openNewStockReleaseModal() {
         // background, which reads as a stray smudge next to the heading.
         countEl.textContent = cart.size === 0 ? '' : `${cart.size} ${lotWord}`;
         countEl.style.display = cart.size === 0 ? 'none' : '';
+    }
+
+    function renderCart() {
+        const emptyMsg = window.t ? window.t('msg_sr_cart_empty') : 'Nothing added yet.';
+        const scanMore = window.t ? window.t('msg_sr_scan_more') : 'Scan another strip code to add more';
+        const editingLbl = window.t ? (window.t('lbl_sr_editing') || 'Editing...') : 'Editing...';
+        if (cart.size === 0) {
+            cartEl.innerHTML = `<div style="border:1px dashed var(--border); border-radius:10px; padding:22px 12px; text-align:center; color:var(--text-muted); font-size:0.8rem;">${emptyMsg}</div>`;
+        } else {
+            cartEl.innerHTML = [...cart.values()].map(line => {
+                const isEditing = line.lotId === editingLotId;
+                const cardStyle = isEditing
+                    ? 'background:var(--primary-glow); border:1px solid var(--primary); box-shadow:0 0 0 1px var(--primary);'
+                    : 'background:var(--bg-input); border:1px solid var(--border);';
+                return `
+                <div class="sr-cart-card" data-lot-id="${line.lotId}" style="${cardStyle} border-radius:10px; padding:10px 11px; margin-bottom:8px; cursor:pointer;">
+                    <div style="display:flex; align-items:flex-start; gap:8px;">
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-family:monospace; font-weight:700; color:var(--primary); font-size:0.9rem;">${line.stripCode || line.lotCode}</div>
+                            <div style="font-size:0.78rem; color:var(--text-secondary); overflow-wrap:anywhere;">${line.label} &middot; ${line.sizeG}g</div>
+                            <div style="font-size:0.7rem; color:var(--text-muted);">${line.packedDate || '-'}</div>
+                            ${isEditing ? `<div style="font-size:0.7rem; font-weight:700; color:var(--primary); margin-top:3px;">${editingLbl}</div>` : ''}
+                        </div>
+                        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:5px; flex:0 0 auto;">
+                            <input type="number" class="sr-cart-qty form-control" data-lot-id="${line.lotId}"
+                                   value="${line.qty}" min="1" max="${line.remaining}"
+                                   style="width:74px; height:30px; text-align:center; font-weight:700; padding:2px 6px;">
+                            <button type="button" class="sr-cart-remove btn btn-danger btn-sm" data-lot-id="${line.lotId}" aria-label="Remove">&times;</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            }).join('') + `<div style="border:1px dashed var(--border); border-radius:10px; padding:10px; text-align:center; font-size:0.7rem; color:var(--text-muted);">${scanMore}</div>`;
+
+            // Qty is edited in place. Clicks inside it must not bubble to the
+            // card's own click-to-edit handler, or typing a quantity would
+            // also drag the line back into the left form.
+            cartEl.querySelectorAll('.sr-cart-qty').forEach(inp => {
+                inp.addEventListener('click', (e) => e.stopPropagation());
+                inp.addEventListener('input', () => {
+                    const line = cart.get(parseInt(inp.getAttribute('data-lot-id')));
+                    if (!line) return;
+                    const raw = parseInt(inp.value);
+                    if (isNaN(raw)) return; // mid-typing (field momentarily empty) — settle on blur
+                    line.qty = Math.max(1, Math.min(raw, line.remaining));
+                    updateCartTotals();
+                    updateStockHint();
+                });
+                // Normalise on blur. Rebuilding here rather than on every
+                // keystroke is what lets a clamped or emptied value settle
+                // back to a legal number without the field losing focus.
+                inp.addEventListener('change', () => renderCart());
+            });
+
+            cartEl.querySelectorAll('.sr-cart-remove').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const lotId = parseInt(btn.getAttribute('data-lot-id'));
+                    // Removing the line under edit would leave the form saving
+                    // into a key that no longer exists.
+                    if (lotId === editingLotId) exitEditMode({ silent: true });
+                    cart.delete(lotId);
+                    renderCart();
+                    updateStockHint();
+                });
+            });
+
+            cartEl.querySelectorAll('.sr-cart-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    const lotId = parseInt(card.getAttribute('data-lot-id'));
+                    if (lotId === editingLotId) exitEditMode();
+                    else enterEditMode(lotId);
+                });
+            });
+        }
+        updateCartTotals();
+    }
+
+    // Loads a cart line back into the left form so the LOT itself can be
+    // corrected — the quantity alone is editable inline on the card, so this
+    // is for "I scanned the wrong lot". Same interaction as the Sales Order
+    // cart, per user request 2026-09-03.
+    function enterEditMode(lotId) {
+        const line = cart.get(lotId);
+        if (!line) return;
+        editingLotId = lotId;
+        selCoffee.value = String(line.groupIdx);
+        renderLotOptions();
+        selLot.value = String(line.lotId);
+        inpQty.value = line.qty;
+        syncAddButton();
+        updateStockHint();
+        renderCart();
+        inpQty.focus();
+        inpQty.select();
+    }
+
+    function exitEditMode(opts = {}) {
+        editingLotId = null;
+        inpQty.value = 1;
+        syncAddButton();
+        if (!opts.silent) {
+            updateStockHint();
+            renderCart();
+        }
+    }
+
+    // One button, two jobs: "Add to list" normally, "Save changes" while a
+    // line is loaded for editing.
+    function syncAddButton() {
+        const span = btnAdd.querySelector('span');
+        const icon = btnAdd.querySelector('i');
+        const editing = editingLotId !== null;
+        const key = editing ? 'btn_sr_save' : 'btn_sr_add';
+        const fallback = editing ? 'Save changes' : 'Add to list';
+        if (span) {
+            span.setAttribute('data-i18n', key);
+            span.textContent = window.t ? (window.t(key) || fallback) : fallback;
+        }
+        if (icon) icon.className = (editing ? 'icon-check' : 'icon-plus') + ' va-middle-mr-1';
     }
 
     function addToCart(lot, qty) {
@@ -6117,6 +6219,23 @@ async function openNewStockReleaseModal() {
             await showWarningModal(`Only ${availableFor(lot)} pcs of lot ${lot.stripCode || lot.lotCode} are still available (stock minus what you've already added).`, false);
             return;
         }
+        // Saving an edit rather than adding a new line. A changed lot means
+        // the cart key changes too, so the old line is dropped and the new
+        // one goes through addToCart — which merges if that lot was already
+        // staged, instead of leaving two lines for the same lot.
+        if (editingLotId !== null) {
+            const originalId = editingLotId;
+            if (lot.lotId === originalId) {
+                cart.get(originalId).qty = qty;
+            } else {
+                cart.delete(originalId);
+                editingLotId = null;
+                addToCart(lot, qty);
+            }
+            exitEditMode();
+            return;
+        }
+
         addToCart(lot, qty);
         inpQty.value = 1;
     });
