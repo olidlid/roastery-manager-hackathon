@@ -429,7 +429,8 @@ CREATE TABLE IF NOT EXISTS public.request_orders (
     approved_date DATE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     customer_id INTEGER,
-    sales_name TEXT
+    sales_name TEXT,
+    order_type TEXT                              -- snapshot of customers.type at order creation time, never re-derived (see CUSTOMER_CATEGORY_ROLE_PLAN.md §3.2); NULL for 9 pre-migration orders whose customer_id no longer resolves
 );
 
 -- 19. Request order items

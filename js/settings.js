@@ -387,6 +387,19 @@ const PERMISSION_GROUPS = [
         { key: 'customer_edit', label: 'Edit Customer' },
         { key: 'customer_delete', label: 'Delete Customer' }
     ]},
+    // CUSTOMER_CATEGORY_ROLE_PLAN.md: separate from the CRUD group above on
+    // purpose — these gate WHICH customers (by type) a role can see/touch,
+    // not whether the section is reachable at all (customer_view still does
+    // that). A role needs customer_view AND at least one of these three to
+    // see anything. Falls back to customer_view via PERMISSION_FALLBACKS
+    // (js/auth.js) only for a role created before this feature shipped —
+    // production custom_roles is backfilled with explicit true/false values
+    // at rollout, so that fallback should rarely if ever actually fire.
+    { label: '👥 Customers — Categories', keys: [
+        { key: 'customer_cat_retail', label: 'Retail Category Access' },
+        { key: 'customer_cat_wholesale', label: 'Wholesale Category Access' },
+        { key: 'customer_cat_supermarket', label: 'Supermarket Category Access' }
+    ]},
     { label: '📈 Reports', keys: [
         { key: 'reports_view', label: 'View Reports' },
         { key: 'reports_stockopname_view', label: 'Stock Opname Tab' },

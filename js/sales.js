@@ -18,6 +18,26 @@ async function loadHandoverTabSpecificData(tabId) {
 
 // ========== CUSTOMER MANAGEMENT ==========
 
+// CUSTOMER_CATEGORY_ROLE_PLAN.md: single source of truth for the 3 customer
+// categories — icon, badge colors, and customer_id prefix all keyed off
+// CUSTOMER_TYPES, so every place that used to hardcode "Wholesale or
+// Retail" (badge, dropdown optgroups, form select, ID prefix) reads from
+// here instead. Adding a 4th category later means editing this one block,
+// not hunting down every ternary across the file.
+const CUSTOMER_TYPES = ['Wholesale', 'Retail', 'Supermarket'];
+const CUSTOMER_TYPE_META = {
+    Wholesale: { icon: '🏭', bg: 'var(--primary-light)', color: 'var(--primary)', prefix: 'WHL' },
+    Retail: { icon: '☕', bg: '#fef3c7', color: '#92400e', prefix: 'RTL' },
+    // Blue is unused by the other two (green-ish primary / amber) — kept
+    // distinct on purpose, same reasoning this app already applies to its
+    // coffee/bulk-card badge colors elsewhere.
+    Supermarket: { icon: '🏬', bg: '#dbeafe', color: '#1e40af', prefix: 'SPM' }
+};
+const CUSTOMER_TYPE_BADGES = Object.fromEntries(CUSTOMER_TYPES.map(t => {
+    const m = CUSTOMER_TYPE_META[t];
+    return [t, `<span style="background:${m.bg}; color:${m.color}; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600;">${m.icon} ${t}</span>`];
+}));
+
 let _customerFilterType = 'all';
 
 function filterCustomers(type) {
@@ -34,10 +54,33 @@ async function loadCustomersSection(filterType) {
     const tbody = document.getElementById('customers-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
-    
+
+    // CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 3 (Grup A): applied at the SOURCE,
+    // before the existing type/search filters run — a role restricted to,
+    // say, Retail must never see Wholesale/Supermarket rows leak through
+    // regardless of which filter button is active or what's typed in search.
+    const accessible = filterCustomersByAccess(customers);
+
+    // A filter button for a category this role can't access is hidden
+    // entirely (not just ineffective) — re-run on every load since
+    // permissions can change between page loads (role edited elsewhere).
+    // If the button for the CURRENTLY selected filter just got hidden (role
+    // changed under the user, or this is a fresh load past a stale
+    // selection), fall back to 'all' rather than showing an empty table
+    // with no visible way to explain why.
+    const allowedSet = new Set(allowedCustomerTypes());
+    let filterStillValid = _customerFilterType === 'all';
+    document.querySelectorAll('.customer-filter-btn').forEach(btn => {
+        const f = btn.getAttribute('data-filter');
+        const visible = f === 'all' || allowedSet.has(f);
+        btn.classList.toggle('hidden', !visible);
+        if (f === _customerFilterType && visible) filterStillValid = true;
+    });
+    if (!filterStillValid) _customerFilterType = 'all';
+
     const searchVal = (document.getElementById('customer-search')?.value || '').toLowerCase();
-    
-    let filtered = (customers || []).filter(c => {
+
+    let filtered = accessible.filter(c => {
         if (_customerFilterType !== 'all' && c.type !== _customerFilterType) return false;
         if (searchVal && !c.name.toLowerCase().includes(searchVal) && !c.customer_id.toLowerCase().includes(searchVal)) return false;
         return true;
@@ -49,9 +92,11 @@ async function loadCustomersSection(filterType) {
     }
     
     filtered.forEach(c => {
-        const typeBadge = c.type === 'Wholesale' 
-            ? '<span style="background:var(--primary-light); color:var(--primary); padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600;">🏭 Wholesale</span>'
-            : '<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600;">☕ Retail</span>';
+        // CUSTOMER_CATEGORY_ROLE_PLAN.md: Supermarket added as a third
+        // badge color (blue) distinct from Wholesale's green and Retail's
+        // amber, using the same lookup CUSTOMER_TYPE_BADGES that
+        // buildCustomerOptionsHtml below also reads, so the two never drift.
+        const typeBadge = CUSTOMER_TYPE_BADGES[c.type] || CUSTOMER_TYPE_BADGES['Retail'];
         
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -92,22 +137,26 @@ async function loadCustomersSection(filterType) {
 // exactly the same shape/order.
 function buildCustomerOptionsHtml(customersList, selectedId) {
     let html = '';
-    const whlCustomers = (customersList || []).filter(c => c.type === 'Wholesale' && c.is_active !== false);
-    const rtlCustomers = (customersList || []).filter(c => c.type === 'Retail' && c.is_active !== false);
-    if (whlCustomers.length) {
-        html += '<optgroup label="🏭 Wholesale">';
-        html += whlCustomers.map(c => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
+    CUSTOMER_TYPES.forEach(type => {
+        const group = (customersList || []).filter(c => c.type === type && c.is_active !== false);
+        if (!group.length) return;
+        const meta = CUSTOMER_TYPE_META[type];
+        html += `<optgroup label="${meta.icon} ${type}">`;
+        html += group.map(c => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
         html += '</optgroup>';
-    }
-    if (rtlCustomers.length) {
-        html += '<optgroup label="☕ Retail">';
-        html += rtlCustomers.map(c => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
-        html += '</optgroup>';
-    }
+    });
     return html;
 }
 
-function buildCustomerFormFieldsHtml(existing, editId) {
+// `typeOptions` (CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 3, Grup A) restricts
+// which categories render as choices when ADDING a new customer, to
+// whatever the current role has access to — a role can't create a
+// customer in a category it isn't allowed to see. Defaults to every type
+// (existing behavior, and irrelevant for EDIT anyway: the select is
+// `disabled` once editId is set — type can never be changed after
+// creation — so the full list is only there to render the current value).
+function buildCustomerFormFieldsHtml(existing, editId, typeOptions) {
+    const typesToShow = typeOptions || CUSTOMER_TYPES;
     return `
         <div class="form-row">
             <div class="form-group flex-1" >
@@ -117,8 +166,13 @@ function buildCustomerFormFieldsHtml(existing, editId) {
             <div class="form-group flex-1" >
                 <label class="form-label">Type</label>
                 <select id="m-cust-type" class="form-control" ${editId ? 'disabled' : ''} required>
-                    <option value="Wholesale" ${existing?.type === 'Wholesale' || !existing ? 'selected' : ''}>🏭 Wholesale</option>
-                    <option value="Retail" ${existing?.type === 'Retail' ? 'selected' : ''}>☕ Retail</option>
+                    ${typesToShow.map(type => {
+                        // Wholesale defaults for a brand-new customer (user request,
+                        // commit 14c361c) — same "no existing row yet" condition the
+                        // old two-option version used, just generalized to 3 types.
+                        const selected = existing ? existing.type === type : type === 'Wholesale';
+                        return `<option value="${type}" ${selected ? 'selected' : ''}>${CUSTOMER_TYPE_META[type].icon} ${type}</option>`;
+                    }).join('')}
                 </select>
             </div>
         </div>
@@ -170,7 +224,7 @@ function wireCustomerForm({ existing, editId, customers, closeFn, onSaved }) {
 
     async function generateCustomerId() {
         const type = typeSelect.value;
-        const prefix = type === 'Wholesale' ? 'WHL' : 'RTL';
+        const prefix = (CUSTOMER_TYPE_META[type] || CUSTOMER_TYPE_META.Retail).prefix;
         const allCust = (customers || []).filter(c => c.type === type);
         let maxNum = 0;
         allCust.forEach(c => {
@@ -220,11 +274,32 @@ async function openCustomerModal(editId = null) {
     let existing = null;
     if (editId) {
         existing = (customers || []).find(c => c.id === editId);
+        // CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 3 (Grup A): a direct-access
+        // path — this can be called with any id regardless of what the
+        // Customer Directory table happened to render, so the list filter
+        // in loadCustomersSection alone is not enough here.
+        if (existing && !canAccessCustomer(existing)) {
+            await showWarningModal(window.t ? window.t('alert_customer_category_denied') : "You don't have access to this customer's category.", false);
+            return;
+        }
+    }
+
+    // Adding a new customer: only offer categories this role can actually
+    // access. No allowed categories at all -> refuse outright rather than
+    // opening a form with an empty/unusable type dropdown.
+    let typeOptions = null;
+    if (!editId) {
+        const allowed = allowedCustomerTypes();
+        if (allowed.length === 0) {
+            await showWarningModal(window.t ? window.t('alert_customer_category_add_denied') : "You don't have access to add a customer in any category.", false);
+            return;
+        }
+        typeOptions = allowed;
     }
 
     const html = `
         <form id="modal-customer-form" novalidate>
-            ${buildCustomerFormFieldsHtml(existing, editId)}
+            ${buildCustomerFormFieldsHtml(existing, editId, typeOptions)}
             <div class="modal-footer-actions">
                 <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
                 <button type="submit" class="btn btn-primary">${editId ? 'Save Changes' : 'Add Customer'}</button>
@@ -249,6 +324,15 @@ async function openCustomerModal(editId = null) {
 // showWarningModal uses), so the caller's modal survives underneath and
 // `onSaved` can prefill the new customer once it's created.
 async function openAddCustomerShortcutModal(onSaved) {
+    // CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 3 (Grup A): same "add" restriction
+    // as openCustomerModal — this shortcut always creates a NEW customer, so
+    // it needs the same allowed-categories check every time, not just once.
+    const allowedTypes = allowedCustomerTypes();
+    if (allowedTypes.length === 0) {
+        await showWarningModal(window.t ? window.t('alert_customer_category_add_denied') : "You don't have access to add a customer in any category.", false);
+        return;
+    }
+
     const { data: customers } = await fetchData('customers');
 
     let container = document.getElementById('quick-add-customer-modal-container');
@@ -267,7 +351,7 @@ async function openAddCustomerShortcutModal(onSaved) {
                 <button type="button" id="btn-close-quick-add-customer" style="background: transparent; border: 0; cursor: pointer; color: var(--text-muted); font-size: 1.5rem; line-height: 1;">&times;</button>
             </div>
             <form id="modal-customer-form" novalidate>
-                ${buildCustomerFormFieldsHtml(null, null)}
+                ${buildCustomerFormFieldsHtml(null, null, allowedTypes)}
                 <div class="modal-footer-actions">
                     <button type="button" class="btn btn-secondary" id="btn-cancel-quick-add-customer">Cancel</button>
                     <button type="submit" class="btn btn-primary">Add Customer</button>
@@ -289,6 +373,18 @@ async function openAddCustomerShortcutModal(onSaved) {
 }
 
 async function deleteCustomer(id) {
+    // CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 3 (Grup A): a direct-access path
+    // just like openCustomerModal/viewCustomerHistory — must refuse a
+    // customer outside the role's allowed categories, not just omit it from
+    // the Customer Directory table.
+    const { data: customersForGuard } = await fetchData('customers');
+    const customerToDelete = (customersForGuard || []).find(c => c.id === id);
+    if (!customerToDelete) return;
+    if (!canAccessCustomer(customerToDelete)) {
+        await showWarningModal(window.t ? window.t('alert_customer_category_denied') : "You don't have access to this customer's category.", false);
+        return;
+    }
+
     const proceed = await showWarningModal(
         'This will permanently remove the customer and all associated sales orders.',
         true,
@@ -309,6 +405,10 @@ async function viewCustomerHistory(customerId) {
     const { data: customers } = await fetchData('customers');
     const customer = (customers || []).find(c => c.id === customerId);
     if (!customer) return;
+    if (!canAccessCustomer(customer)) {
+        await showWarningModal(window.t ? window.t('alert_customer_category_denied') : "You don't have access to this customer's category.", false);
+        return;
+    }
 
     const [
         { data: orders },
@@ -453,7 +553,20 @@ async function searchLotCodeLookup(query) {
     }
 
     const lotIds = matchingLots.map(l => l.id);
-    const matches = (dispatchLotItems || []).filter(d => lotIds.includes(d.packed_coffee_lot_id));
+    let matches = (dispatchLotItems || []).filter(d => lotIds.includes(d.packed_coffee_lot_id));
+
+    // CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 5 (Grup C) — a dispatch row whose
+    // order falls outside the role's allowed customer categories is dropped
+    // here too, same as the order lists, so a restricted category can't be
+    // read back out through the lot lookup instead. A row with no resolvable
+    // order (or a null order_type) is kept, matching the fail-open rule used
+    // everywhere else for orders order_type can't classify.
+    const visibleOrderIds = new Set(filterOrdersByCustomerCategory(orders).map(o => o.id));
+    matches = matches.filter(d => {
+        const item = (orderItems || []).find(i => i.id === d.request_order_item_id);
+        const order = item ? (orders || []).find(o => o.id === item.request_order_id) : null;
+        return !order || visibleOrderIds.has(order.id);
+    });
 
     if (matches.length === 0) {
         resultsEl.innerHTML = '<p class="table-empty-state">Matching lot(s) found, but not dispatched to any customer yet</p>';
@@ -538,8 +651,11 @@ async function loadSalesDispatchRequestsTable() {
     tbody.innerHTML = '';
 
     // V2 1J: row-level filter — a sales_request_view_own-only role sees just
-    // its own orders (see filterOwnOrders in js/auth.js).
-    const visibleOrders = filterOwnOrders(orders);
+    // its own orders (see filterOwnOrders in js/auth.js). Layered (not
+    // replaced) with CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 5 (Grup C): a role
+    // also loses orders whose order_type falls outside its allowed customer
+    // categories — both filters apply on top of each other on this list.
+    const visibleOrders = filterOrdersByCustomerCategory(filterOwnOrders(orders));
 
     if (!visibleOrders || visibleOrders.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" class="text-center-muted">${window.t ? window.t("msg_no_orders") : "No orders found."}</td></tr>`;
@@ -765,6 +881,7 @@ async function loadSalesDispatchRequestsTable() {
             <td>
                 <strong>${order.sales_name}</strong>
                 ${(() => { const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null; return cust ? `<br/><span class="text-secondary-xs">👤 ${cust.name} <code style="font-size:0.65rem;">${cust.customer_id}</code></span>` : ''; })()}
+                ${order.order_type ? `<br/>${CUSTOMER_TYPE_BADGES[order.order_type] || ''}` : ''}
             </td>
             <td>${itemsHtml}</td>
             <td>
@@ -818,12 +935,17 @@ async function loadDispatchApprovalTable() {
     if (!tbody) return;
     tbody.innerHTML = '';
 
-    if (!orders || orders.length === 0) {
+    // CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 5 (Grup C) — no filterOwnOrders
+    // here (this table has never been "own orders only"; leaders/admins
+    // approve everyone's orders), but category access still applies.
+    const visibleOrders = filterOrdersByCustomerCategory(orders);
+
+    if (!visibleOrders || visibleOrders.length === 0) {
         tbody.innerHTML = `<tr><td colspan="6" class="text-center-muted">${window.t ? window.t("msg_no_orders") : "No orders found."}</td></tr>`;
         return;
     }
 
-    const sortedOrders = [...orders]
+    const sortedOrders = [...visibleOrders]
         .sort((a, b) => new Date(b.order_date) - new Date(a.order_date) || b.id - a.id);
 
     // Registers this table so applyFiltersForTable (js/app.js) filters the
@@ -970,7 +1092,7 @@ async function loadDispatchApprovalTable() {
         const tr = e.target.closest('tr[data-order-id]');
         if (tr) {
             const orderId = parseInt(tr.getAttribute('data-order-id'));
-            openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines, packed, roastBatches, codeDefinitions);
+            openOrderDetailPopup(orderId, visibleOrders, orderItems, greenbeans, recipes, machines, packed, roastBatches, codeDefinitions);
         }
     };
 
@@ -2406,9 +2528,18 @@ async function openSalesRequestModal(orderId = null) {
         .sort((a, b) => (parseFloat(a.gram) || 0) - (parseFloat(b.gram) || 0));
     const sizeOptionsHtml = visibleSizes.map(s => `<option value="${s.gram}">${s.label}</option>`).join('');
 
-    // Customer options
+    // Customer options — restricted to the current role's allowed categories.
+    // When editing an existing order, the order's own customer is always kept
+    // in the list even if outside the allowed categories, so re-saving an
+    // edit can never silently null out or swap the order's customer_id (the
+    // <select> would otherwise land on no matching <option> and submit empty).
     const { data: customersList } = await fetchData('customers');
-    const customerOptionsHtml = buildCustomerOptionsHtml(customersList, existingOrder?.customer_id ?? null);
+    let visibleCustomersForDropdown = filterCustomersByAccess(customersList);
+    if (existingOrder && existingOrder.customer_id != null && !visibleCustomersForDropdown.some(c => c.id === existingOrder.customer_id)) {
+        const existingCust = (customersList || []).find(c => c.id === existingOrder.customer_id);
+        if (existingCust) visibleCustomersForDropdown = [...visibleCustomersForDropdown, existingCust];
+    }
+    const customerOptionsHtml = buildCustomerOptionsHtml(visibleCustomersForDropdown, existingOrder?.customer_id ?? null);
 
     // SALES_ORDER_REDESIGN_PLAN.md Fase 0/1: two-column layout (.so-grid,
     // added css/styles.css alongside Stock Release's .sr-grid) — left column
@@ -2546,9 +2677,13 @@ async function openSalesRequestModal(orderId = null) {
         openAddCustomerShortcutModal((newCustomer) => {
             if (!newCustomer) return;
             fetchData('customers').then(({ data: freshCustomers }) => {
+                // newCustomer was just created via openAddCustomerShortcutModal, which
+                // already restricts the type choice to allowedCustomerTypes() — so it's
+                // always inside the filtered set below, and selection right after is safe.
+                const visibleFreshCustomers = filterCustomersByAccess(freshCustomers);
                 customerSelect.innerHTML = `
                     <option value="" disabled>-- Select Customer --</option>
-                    ${buildCustomerOptionsHtml(freshCustomers, newCustomer.id)}
+                    ${buildCustomerOptionsHtml(visibleFreshCustomers, newCustomer.id)}
                 `;
                 customerSelect.value = newCustomer.id;
             });
@@ -3421,6 +3556,20 @@ async function openSalesRequestModal(orderId = null) {
             await saveData('sales_agents', { name: salesName, code: agentCode });
         }
 
+        // CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 4: order_type is a SNAPSHOT of the
+        // customer's type, but what it's a snapshot OF depends on which customer
+        // the order is actually attached to right now. §3.2's decision protects
+        // history from a customer that later CHANGES CATEGORY — it says nothing
+        // about an order being reassigned to a DIFFERENT customer during an edit.
+        // So: if this edit keeps the same customer_id as before, order_type stays
+        // frozen at whatever it already was (even if that customer's type has
+        // since changed — that's the whole point). If the customer_id is being
+        // changed on this save, order_type is re-snapshotted from the newly
+        // selected customer's current type, exactly like a brand-new order would.
+        const selectedCustomerId = parseInt(document.getElementById('m-req-customer')?.value) || null;
+        const selectedCustomerForType = selectedCustomerId ? (customersList || []).find(c => c.id === selectedCustomerId) : null;
+        const customerUnchanged = existingOrder && existingOrder.customer_id === selectedCustomerId;
+
         // 1. Save Request Order header
         const orderRecord = {
             id: orderId || undefined,
@@ -3429,7 +3578,8 @@ async function openSalesRequestModal(orderId = null) {
             sales_name: salesName,
             status: existingOrder ? existingOrder.status : 'Pending Approval',
             notes: document.getElementById('m-req-notes').value,
-            customer_id: parseInt(document.getElementById('m-req-customer')?.value) || null
+            customer_id: selectedCustomerId,
+            order_type: customerUnchanged ? existingOrder.order_type : (selectedCustomerForType ? selectedCustomerForType.type : null)
         };
 
         const { data: savedOrder, error } = await saveData('request_orders', orderRecord);

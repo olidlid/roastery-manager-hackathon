@@ -374,7 +374,9 @@ window.translations = {
         alert_save_failed: "Failed to save: {msg}",
         alert_order_failed: "Ordering failed: {msg}",
         alert_field_required: "⚠️ Field is required!",
-        
+        alert_customer_category_denied: "You don't have access to this customer's category.",
+        alert_customer_category_add_denied: "You don't have access to add a customer in any category.",
+
         // Sales Request Modal
         modal_submit_req: "Submit Sales Request Order",
         modal_edit_sales_req: "Edit Sales Request",
@@ -1210,7 +1212,9 @@ window.translations = {
         alert_save_failed: "فشل الحفظ: {msg}",
         alert_order_failed: "فشل الطلب: {msg}",
         alert_field_required: "⚠️ حقل مطلوب!",
-        
+        alert_customer_category_denied: "ليس لديك صلاحية الوصول إلى فئة هذا العميل.",
+        alert_customer_category_add_denied: "ليس لديك صلاحية إضافة عميل في أي فئة.",
+
         // Sales Request Modal
         modal_submit_req: "تقديم طلب مبيعات",
         modal_edit_sales_req: "تعديل طلب المبيعات",

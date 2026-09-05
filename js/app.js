@@ -150,7 +150,7 @@ const MOCK_DB = {
                 packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_repack: true, packing_stock_release: true, packing_completed_view: true, packing_dispatch_checkout: true,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
-                customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
+                customer_view: true, customer_add: true, customer_edit: true, customer_delete: true, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
                 tracking_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
@@ -172,7 +172,7 @@ const MOCK_DB = {
                 packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_repack: true, packing_stock_release: true, packing_completed_view: true, packing_dispatch_checkout: true,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
-                customer_view: true, customer_add: true, customer_edit: true, customer_delete: true,
+                customer_view: true, customer_add: true, customer_edit: true, customer_delete: true, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
                 tracking_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
@@ -194,7 +194,7 @@ const MOCK_DB = {
                 packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_repack: true, packing_stock_release: true, packing_completed_view: true, packing_dispatch_checkout: true,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
-                customer_view: true, customer_add: false, customer_edit: false, customer_delete: false,
+                customer_view: true, customer_add: false, customer_edit: false, customer_delete: false, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
                 tracking_view: true,
                 settings_general: false, settings_production: true, settings_system: false,
@@ -224,7 +224,7 @@ const MOCK_DB = {
                 packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_repack: false, packing_stock_release: false, packing_completed_view: false, packing_dispatch_checkout: false,
                 sales_request_view: false, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
-                customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
+                customer_view: false, customer_add: false, customer_edit: false, customer_delete: false, customer_cat_retail: false, customer_cat_wholesale: false, customer_cat_supermarket: false,
                 reports_view: false, reports_stockopname_view: false, reports_stockopname_perform: false,
                 tracking_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
@@ -246,7 +246,7 @@ const MOCK_DB = {
                 packing_view: true, packing_daily: true, packing_print_barcode: true, packing_manual_add: true, packing_order_view: true, packing_records_view: true, packing_unpack: true, packing_repack: true, packing_stock_release: true, packing_completed_view: true, packing_dispatch_checkout: true,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
-                customer_view: false, customer_add: false, customer_edit: false, customer_delete: false,
+                customer_view: false, customer_add: false, customer_edit: false, customer_delete: false, customer_cat_retail: false, customer_cat_wholesale: false, customer_cat_supermarket: false,
                 reports_view: false, reports_stockopname_view: false, reports_stockopname_perform: false,
                 tracking_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
@@ -268,7 +268,7 @@ const MOCK_DB = {
                 packing_view: false, packing_daily: false, packing_print_barcode: false, packing_manual_add: false, packing_order_view: false, packing_records_view: false, packing_unpack: false, packing_repack: false, packing_stock_release: false, packing_completed_view: false, packing_dispatch_checkout: false,
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
-                customer_view: true, customer_add: true, customer_edit: true, customer_delete: false,
+                customer_view: true, customer_add: true, customer_edit: true, customer_delete: false, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: false,
                 tracking_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
@@ -3468,7 +3468,9 @@ async function loadCustomerReport(startDate, endDate) {
 
     // V2 1J: row-level filter — a sales_request_view_own-only role sees just
     // its own orders in this report (see filterOwnOrders in js/auth.js).
-    const ownVisibleOrders = filterOwnOrders(orders);
+    // Layered with CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 5 (Grup C): a role
+    // also loses orders outside its allowed customer categories here.
+    const ownVisibleOrders = filterOrdersByCustomerCategory(filterOwnOrders(orders));
 
     // Only count orders that actually shipped — mirrors Sales Dispatch report's
     // definition of "volume" (Pending/Cancelled orders never left the warehouse).

@@ -200,6 +200,16 @@ const PERMISSION_FALLBACKS = {
     // closest existing equivalent — packing_daily only covers turning bulk
     // into bags, which is a different kind of authority.
     packing_stock_release: 'packing_dispatch_checkout',
+    // CUSTOMER_CATEGORY_ROLE_PLAN.md: safety net only — production
+    // custom_roles is backfilled with explicit true/false for all three of
+    // these at rollout (Fase 0), so this should rarely fire. Falls back to
+    // customer_view so a role created some other way (outside this app's own
+    // Role Management UI) that already has customer_view still sees every
+    // category, exactly like before this feature existed, instead of being
+    // silently locked out of customers entirely.
+    customer_cat_retail: 'customer_view',
+    customer_cat_wholesale: 'customer_view',
+    customer_cat_supermarket: 'customer_view',
 };
 
 // Effective permission for a specific role object, honouring PERMISSION_FALLBACKS
@@ -237,6 +247,63 @@ function filterOwnOrders(orders) {
         return (orders || []).filter(o => o.sales_name === myName);
     }
     return [];
+}
+
+// CUSTOMER_CATEGORY_ROLE_PLAN.md — second data-filtering permission in this
+// codebase, same class as filterOwnOrders above. Deliberately independent
+// of the `customer_view` key: that key still gates whether the Customers
+// SECTION is reachable at all (SECTION_PERMISSIONS['sec-customers'] below);
+// this only answers "which categories", because it's also reused to filter
+// ORDER lists (Grup C: Dispatch Request/Approval, Customer Report) on pages
+// that have no customer_view dependency of their own.
+//
+// CUSTOMER_TYPES is defined in js/sales.js, which loads AFTER this file —
+// safe here because this is a function body, only ever evaluated once
+// something actually CALLS allowedCustomerTypes(), by which point every
+// script has already run (same shared-global-scope reasoning as this app's
+// other forward-references, e.g. js/roasting.js calling
+// buildPreviewLotCode from js/packing.js).
+function allowedCustomerTypes() {
+    if (!currentUser) return [];
+    return CUSTOMER_TYPES.filter(t => hasPermission('customer_cat_' + t.toLowerCase()));
+}
+
+// Guards a DIRECT access path (edit, history, add-with-this-type) to one
+// specific customer — a filtered LIST alone isn't enough, since the id can
+// still be called directly (openCustomerModal(id), viewCustomerHistory(id))
+// bypassing whatever the list happened to show. Every Grup A call site in
+// CUSTOMER_CATEGORY_ROLE_PLAN.md must check this before acting, not just
+// filter what it renders.
+function canAccessCustomer(customer) {
+    if (!customer) return false;
+    return allowedCustomerTypes().includes(customer.type);
+}
+
+// List-filter counterpart to canAccessCustomer, same shape as
+// filterOwnOrders above — for the Customer Directory table and any other
+// place a full customer list is rendered (Grup A).
+function filterCustomersByAccess(customers) {
+    const allowed = allowedCustomerTypes();
+    return (customers || []).filter(c => allowed.includes(c.type));
+}
+
+// Grup C (CUSTOMER_CATEGORY_ROLE_PLAN.md §3.1, user decision 2026-09-04):
+// applies the SAME category gate to an order list via its own order_type
+// snapshot column (added Fase 0 — request_orders.order_type, set once at
+// order creation and never re-derived, so a later customer type change
+// can't retroactively change old orders' visibility). Layer this ON TOP OF
+// filterOwnOrders, never as a replacement — a role can be restricted by
+// both "only my own orders" AND "only these categories" simultaneously.
+//
+// An order with no order_type (the 9 pre-migration orders whose customer_id
+// no longer resolves to any row — see CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 0)
+// is shown to EVERY role regardless of category, not hidden from
+// everyone — there's no data to restrict it BY, and silently disappearing
+// old real orders because of a historical data gap would be a worse outcome
+// than an admin occasionally seeing one they technically shouldn't.
+function filterOrdersByCustomerCategory(orders) {
+    const allowed = allowedCustomerTypes();
+    return (orders || []).filter(o => o.order_type == null || allowed.includes(o.order_type));
 }
 
 function getFirstAllowedSection() {
