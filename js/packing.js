@@ -1904,11 +1904,65 @@ async function openDispatchCheckoutModal(orderId) {
     if (!order) return;
     const items = (orderItemsAll || []).filter(i => i.request_order_id === orderId);
     const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
-    // Which lot(s) fulfilled an already-prepared line, if the fulfillment
-    // came from THIS modal (records a trail) rather than from stock-fulfill
-    // at order approval (js/sales.js, no per-lot trail) — lets "Undo" below
-    // restore the exact stock it came from instead of guessing.
+    // Which lot(s) a checkout session in THIS modal drew from — Undo prefers
+    // the ledger (packedMovementsAll below) and only falls back to this trail
+    // for pre-Phase-3 rows the ledger query can't see (no ref on their row).
     let dispatchLotItemsAll = (dispatchLotItemsData || []).filter(d => items.some(i => i.id === d.request_order_item_id));
+
+    // STOCK_LEDGER_PLAN.md Phase 5: packed_stock_movements is the real
+    // source of truth for what can be restored — both a checkout draw AND
+    // an approval-time deduction (js/sales.js consume_packed_lot) leave a
+    // row here, tagged ref_table='request_order_items'. Fetched once for
+    // the whole order (not per item, not on every render) and read
+    // synchronously by committedQtyBreakdown below. Found 2026-09-04: the
+    // "can't be auto-restored" message was WRONG for an approval-fulfilled
+    // line — the ledger already had exactly what it needed, only the
+    // display (this comment's previous version) had never been updated to
+    // look here instead of dispatch_lot_items.
+    let packedMovementsAll = [];
+    if (items.length > 0) {
+        const { data: pmData, error: pmErr } = await window.supabaseClient
+            .from('packed_stock_movements')
+            .select('id, packed_coffee_lot_id, delta_pcs, ref_id')
+            .eq('ref_table', 'request_order_items')
+            .in('ref_id', items.map(i => i.id));
+        if (pmErr) console.error('Failed to read packed_stock_movements for undo classification:', pmErr);
+        packedMovementsAll = pmData || [];
+    }
+
+    // Shared by the display (renderItemLots) and the actual restore
+    // (undoCommittedQty) so they can never drift apart again — that drift
+    // is exactly what caused the 2026-09-04 bug. Returns, for one order
+    // item: which lots the ledger can restore from (newest movement first,
+    // per STOCK_LEDGER_PLAN.md Phase 5), the legacy dispatch_lot_items rows
+    // for anything pre-ledger, and whatever's left over that genuinely has
+    // no record anywhere.
+    function committedQtyBreakdown(itemId) {
+        const perLot = new Map();
+        for (const m of packedMovementsAll) {
+            if (m.ref_id !== itemId || !m.packed_coffee_lot_id) continue;
+            const entry = perLot.get(m.packed_coffee_lot_id) || { net: 0, lastId: m.id };
+            entry.net += (parseInt(m.delta_pcs) || 0);
+            entry.lastId = Math.max(entry.lastId, m.id);
+            perLot.set(m.packed_coffee_lot_id, entry);
+        }
+        const ledgerLots = [...perLot.entries()]
+            .map(([lotId, e]) => ({ lotId, outstanding: -e.net, lastId: e.lastId }))
+            .filter(e => e.outstanding > 0)
+            .sort((a, b) => b.lastId - a.lastId);
+        const ledgerQty = ledgerLots.reduce((s, e) => s + e.outstanding, 0);
+        const ledgerLotIds = new Set(ledgerLots.map(e => e.lotId));
+
+        const legacyRows = dispatchLotItemsAll
+            .filter(d => d.request_order_item_id === itemId && !d._undone && !ledgerLotIds.has(d.packed_coffee_lot_id))
+            .sort((a, b) => b.id - a.id);
+        const legacyQty = legacyRows.reduce((s, d) => s + (parseInt(d.qty) || 0), 0);
+
+        const prepared = parseInt((items.find(i => i.id === itemId) || {}).quantity_prepared) || 0;
+        const untrackedQty = Math.max(0, prepared - ledgerQty - legacyQty);
+
+        return { ledgerLots, ledgerQty, legacyRows, legacyQty, untrackedQty, prepared };
+    }
 
     // Resolve a packed_coffee row's (type, coffeeId) identity — same matching
     // pattern used throughout sales.js/packing.js for coffee+machine lookups.
@@ -2073,9 +2127,13 @@ async function openDispatchCheckoutModal(orderId) {
         const prepared = parseInt(item.quantity_prepared) || 0;
         const requested = parseInt(item.quantity_requested) || 0;
 
-        const itemTrail = dispatchLotItemsAll.filter(d => d.request_order_item_id === itemId);
-        const trailQty = itemTrail.reduce((s, d) => s + (parseInt(d.qty) || 0), 0);
-        const untrackedQty = Math.max(0, prepared - trailQty);
+        // Ledger + legacy trail together are what Undo can actually restore
+        // (see committedQtyBreakdown) — using dispatch_lot_items alone here
+        // undercounted an approval-time deduction and wrongly told the user
+        // it "can't be auto-restored" when the ledger already had it.
+        const breakdown = committedQtyBreakdown(itemId);
+        const trailQty = breakdown.ledgerQty + breakdown.legacyQty;
+        const untrackedQty = breakdown.untrackedQty;
         // An inline expand-in-place form, not a second openModal() — the
         // checkout body already occupies the app's single shared modal slot,
         // so stacking another openModal() on top would wipe out this modal's
@@ -2088,7 +2146,7 @@ async function openDispatchCheckoutModal(orderId) {
             ? `<div class="dc-committed">
                     <div>
                         Already checked out earlier: <b>${prepared}</b>
-                        <span style="opacity:0.75;">(${trailQty > 0 ? trailQty + ' from lots' : ''}${trailQty > 0 && untrackedQty > 0 ? ', ' : ''}${untrackedQty > 0 ? untrackedQty + ' from approval' : ''})</span>
+                        <span style="opacity:0.75;">(${untrackedQty > 0 ? `${trailQty} restorable, ${untrackedQty} not` : 'restorable'})</span>
                         <button type="button" class="dc-committed-undo-toggle" data-item="${itemId}">Undo&hellip;</button>
                     </div>
                     <div class="dc-committed-undo-form hidden" data-item="${itemId}">
@@ -2212,11 +2270,10 @@ async function openDispatchCheckoutModal(orderId) {
         let remaining = undoQty;
 
         // Decrements/deletes this item's dispatch_lot_items rows for one lot
-        // (oldest checkout session first is irrelevant here — any order
-        // nets to the same result) so the modal's "already committed" lot
-        // display stays in sync with a refund made via the ledger path.
-        // Loops across rows because multiple checkout sessions can each
-        // leave their own row for the same lot.
+        // so the modal's "already committed" display stays in sync with a
+        // refund made via the ledger path. Loops across rows because
+        // multiple checkout sessions can each leave their own row for the
+        // same lot.
         const syncDispatchLotItems = async (lotId, takeTotal) => {
             let left = takeTotal;
             const rows = dispatchLotItemsAll.filter(x => x.request_order_item_id === itemId && x.packed_coffee_lot_id === lotId && !x._undone);
@@ -2238,30 +2295,22 @@ async function openDispatchCheckoutModal(orderId) {
             }
         };
 
-        // 1) Ledger-tracked draws.
-        const { data: movements, error: mvErr } = await window.supabaseClient
-            .from('packed_stock_movements')
-            .select('id, packed_coffee_lot_id, delta_pcs')
-            .eq('ref_table', 'request_order_items')
-            .eq('ref_id', itemId)
-            .order('id', { ascending: true });
-        if (mvErr) console.error('Failed to read packed_stock_movements for undo:', mvErr);
+        // Same classification the display already used to decide what to
+        // show (committedQtyBreakdown) — restoring exactly what was
+        // promised there is what this bug was about (2026-09-04: the two
+        // had drifted apart).
+        const { ledgerLots, legacyRows } = committedQtyBreakdown(itemId);
+        // Recorded as each refund actually succeeds, then appended to
+        // packedMovementsAll once below — packedMovementsAll was fetched
+        // ONCE at modal-open (unlike the old per-undo network query this
+        // replaced), so without this a second Undo on the same item in the
+        // same modal session would still see the pre-refund balance.
+        const justRefunded = [];
 
-        const perLot = new Map();
-        for (const m of (movements || [])) {
-            if (!m.packed_coffee_lot_id) continue;
-            const entry = perLot.get(m.packed_coffee_lot_id) || { net: 0, lastId: m.id };
-            entry.net += (parseInt(m.delta_pcs) || 0);
-            entry.lastId = m.id; // ascending order, so the last write seen is the max id
-            perLot.set(m.packed_coffee_lot_id, entry);
-        }
-        const outstandingLots = [...perLot.entries()]
-            .map(([lotId, e]) => ({ lotId, outstanding: -e.net, lastId: e.lastId }))
-            .filter(e => e.outstanding > 0)
-            .sort((a, b) => b.lastId - a.lastId);
-
-        const ledgerCoveredLotIds = new Set();
-        for (const { lotId, outstanding } of outstandingLots) {
+        // 1) Ledger-tracked draws (STOCK_LEDGER_PLAN.md Phase 5) — covers
+        // BOTH a checkout draw and an approval-time deduction
+        // (js/sales.js consume_packed_lot), since both leave a row here.
+        for (const { lotId, outstanding } of ledgerLots) {
             if (remaining <= 0) break;
             const take = Math.min(outstanding, remaining);
             if (take <= 0) continue;
@@ -2274,42 +2323,43 @@ async function openDispatchCheckoutModal(orderId) {
             });
             if (refundErr) { console.error('refund_packed_lot RPC failed:', refundErr); continue; }
             liveRemaining[lotId] = (liveRemaining[lotId] || 0) + take;
-            ledgerCoveredLotIds.add(lotId);
             await syncDispatchLotItems(lotId, take);
+            justRefunded.push({ lotId, take });
             remaining -= take;
         }
 
         // 2) Legacy fallback for pre-Phase-3 checkout draws the ledger query
-        // above can't see (no ref on their movement row).
-        if (remaining > 0) {
-            const trail = dispatchLotItemsAll
-                .filter(d => d.request_order_item_id === itemId && !d._undone && !ledgerCoveredLotIds.has(d.packed_coffee_lot_id))
-                .sort((a, b) => b.id - a.id);
-            if (trail.length) {
-                const { data: freshLots } = await fetchData('packed_coffee_lots');
-                for (const d of trail) {
-                    if (remaining <= 0) break;
-                    const dQty = parseInt(d.qty) || 0;
-                    if (dQty <= 0) continue;
-                    const take = Math.min(dQty, remaining);
-                    if (d.packed_coffee_lot_id) {
-                        const lot = (freshLots || []).find(l => l.id === d.packed_coffee_lot_id);
-                        if (lot) {
-                            const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
-                                p_lot_id: lot.id, p_pcs: take,
-                                p_operation: 'undo', p_ref_table: 'request_order_items', p_ref_id: itemId,
-                                p_reason: `Undo of dispatch_lot_items #${d.id}`, p_user: (currentUser && currentUser.name) || null
-                            });
-                            if (refundErr) console.error('refund_packed_lot RPC failed:', refundErr);
-                            liveRemaining[lot.id] = (liveRemaining[lot.id] || 0) + take;
-                        }
+        // can't see (no ref on their movement row).
+        if (remaining > 0 && legacyRows.length) {
+            const { data: freshLots } = await fetchData('packed_coffee_lots');
+            for (const d of legacyRows) {
+                if (remaining <= 0) break;
+                const dQty = parseInt(d.qty) || 0;
+                if (dQty <= 0) continue;
+                const take = Math.min(dQty, remaining);
+                if (d.packed_coffee_lot_id) {
+                    const lot = (freshLots || []).find(l => l.id === d.packed_coffee_lot_id);
+                    if (lot) {
+                        const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
+                            p_lot_id: lot.id, p_pcs: take,
+                            p_operation: 'undo', p_ref_table: 'request_order_items', p_ref_id: itemId,
+                            p_reason: `Undo of dispatch_lot_items #${d.id}`, p_user: (currentUser && currentUser.name) || null
+                        });
+                        if (refundErr) console.error('refund_packed_lot RPC failed:', refundErr);
+                        liveRemaining[lot.id] = (liveRemaining[lot.id] || 0) + take;
                     }
-                    await syncDispatchLotItems(d.packed_coffee_lot_id, take);
-                    remaining -= take;
                 }
+                await syncDispatchLotItems(d.packed_coffee_lot_id, take);
+                remaining -= take;
             }
         }
         dispatchLotItemsAll = dispatchLotItemsAll.filter(d => !d._undone);
+        // committedQtyBreakdown only looks at NET delta per lot, so a
+        // synthetic positive-delta row per actual refund keeps this
+        // session's own breakdown accurate without a re-fetch.
+        for (const { lotId, take } of justRefunded) {
+            packedMovementsAll.push({ id: Date.now() + Math.random(), packed_coffee_lot_id: lotId, delta_pcs: take, ref_id: itemId });
+        }
 
         const newPrepared = Math.max(0, prepared - undoQty);
         item.quantity_prepared = newPrepared;
