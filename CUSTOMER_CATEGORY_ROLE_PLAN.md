@@ -1,6 +1,6 @@
 # Kategori Customer + Role Akses per Kategori — Rencana Pengerjaan
 
-**Status:** Rencana, belum dikerjakan
+**Status:** Rencana, belum dikerjakan. Semua keputusan desain sudah diambil user 2026-09-04 (§3.1, §3.2, §3.3) — tidak ada yang tersisa untuk ditanyakan.
 **Tanggal:** 2026-09-04
 **Untuk dikerjakan oleh:** sesi Sonnet 5 terpisah
 
@@ -99,22 +99,26 @@ Untuk edit/tambah/history: bukan cuma menyaring daftar, tapi **menolak akses lan
 | `loadCustomerReport` | [js/app.js:3456](js/app.js:3456) |
 | `searchLotCodeLookup` | [js/sales.js:446](js/sales.js:446) |
 
-Pertanyaannya: kalau sales Retail tidak boleh melihat customer Wholesale di direktori, apakah dia masih boleh melihat **order** milik customer Wholesale (yang menampilkan nama customer itu) di daftar Dispatch Request dan Reports?
+**KEPUTUSAN USER (2026-09-04): Grup C ikut dibatasi.** Alasannya: kalau tidak, nama customer yang disembunyikan di direktori tetap terbaca di daftar order sebelahnya, dan pembatasannya jadi kosmetik saja.
 
-**Rekomendasi:** ikut dibatasi juga. Kalau tidak, nama customer yang disembunyikan di satu layar tetap terbaca di layar sebelah — pembatasannya jadi kosmetik saja. Tapi ini keputusan user, bukan asumsi pelaksana.
+Konsekuensi yang harus ditangani pelaksana: order milik customer di luar kategori yang diizinkan **hilang dari daftar** Dispatch Request, Dispatch Approval, dan Customer Report bagi role tersebut. Ini bertumpuk dengan `filterOwnOrders` yang sudah ada ([js/auth.js:233](js/auth.js:233)) — dua penyaring berlapis pada daftar yang sama. Terapkan keduanya, jangan saling menggantikan.
 
 ### 3.2 Tipe order — diturunkan atau disimpan?
 
 `request_orders` **tidak punya kolom tipe** sama sekali saat ini.
 
-- **Opsi A (rekomendasi):** tipe order **diturunkan saat dibaca** dari tipe customer yang tertaut. Tanpa kolom baru, tanpa kemungkinan tidak sinkron.
-- **Opsi B:** tambah kolom `order_type`, di-snapshot saat order dibuat.
+**KEPUTUSAN USER (2026-09-04): disimpan saat order dibuat** (snapshot), supaya kalau suatu hari tipe customer berubah, riwayat order lama tetap sesuai keadaan saat dipesan.
 
-Bedanya cuma satu skenario: kalau customer nanti pindah kategori (mis. Retail naik jadi Wholesale), apakah order-order lamanya ikut berubah jadi Wholesale (A) atau tetap Retail sesuai saat dipesan (B)? Kalau riwayat harus akurat, pilih B.
+Artinya:
+
+- Tambah kolom `request_orders.order_type TEXT` (migrasi, lihat Fase 0).
+- Diisi dari tipe customer **saat order dibuat**, lalu tidak pernah ikut berubah lagi.
+- **Backfill 50 order yang sudah ada** dari tipe customer mereka saat ini. Ini akurat hari ini karena belum ada customer yang pindah kategori — dan begitu kolomnya terisi, order-order itu ikut terlindungi dari perubahan kategori di masa depan. Semua 50 order punya `customer_id`, jadi tidak ada yang tertinggal null.
+- Jangan pernah menurunkan ulang nilai ini dari customer saat membaca — itu justru membatalkan seluruh tujuan snapshot.
 
 ### 3.3 Prefix kode customer untuk Supermarket
 
-Sekarang `WHL-xxx` / `RTL-xxx`. Usul: **`SPM-xxx`**. Perlu dikonfirmasi karena begitu dipakai, mengubahnya berarti menomori ulang seperti yang pernah dilakukan sebelumnya.
+Sekarang `WHL-xxx` / `RTL-xxx`. **Pakai `SPM-xxx`** kecuali user menentukan lain. Begitu dipakai, mengubahnya berarti menomori ulang seperti yang pernah dilakukan sebelumnya, jadi jangan diubah sepihak di tengah jalan.
 
 ---
 
@@ -126,8 +130,9 @@ Sekarang `WHL-xxx` / `RTL-xxx`. Usul: **`SPM-xxx`**. Perlu dikonfirmasi karena b
 2. `PERMISSION_FALLBACKS`: ketiganya → `customer_view`.
 3. `MOCK_DB.custom_roles` di `js/app.js`: tambahkan ketiganya ke setiap role, nilai mengikuti `customer_view` role tersebut.
 4. **SQL backfill produksi** — set ketiganya `true` di semua baris `custom_roles` yang ada, lalu `NOTIFY pgrst, 'reload schema';`.
+5. **Migrasi `request_orders.order_type TEXT`** (§3.2), lalu backfill 50 order yang ada dari tipe customer masing-masing. Perbarui juga `database/supabase_schema.sql` di commit yang sama — aturan repo ini: file skema harus ikut berubah bersama migrasinya.
 
-*Verifikasi:* setelah backfill, query `custom_roles` dan pastikan **tidak ada** role yang masih kehilangan ketiga key itu. Login sebagai role non-admin, pastikan daftar customer masih tampil utuh seperti sebelumnya (belum ada perubahan perilaku di fase ini).
+*Verifikasi:* setelah backfill, query `custom_roles` dan pastikan **tidak ada** role yang masih kehilangan ketiga key itu. Query `request_orders` dan pastikan tidak ada `order_type` yang null. Login sebagai role non-admin, pastikan daftar customer masih tampil utuh seperti sebelumnya (belum ada perubahan perilaku di fase ini).
 
 ### Fase 1 — Kategori ketiga (tanpa permission)
 
@@ -159,11 +164,17 @@ Terapkan `allowedCustomerTypes()` / `canAccessCustomer()` ke enam pemanggil Grup
 - Idem `viewCustomerHistory`
 - Tambah customer baru hanya bisa dengan kategori yang diizinkan
 
-### Fase 4 — Tipe order mengikuti tipe customer
+### Fase 4 — Tipe order
 
-Sesuai keputusan §3.2. Tampilkan tipe pada order (daftar, detail, cetak) sesuai kebutuhan.
+Isi `order_type` dari tipe customer saat order dibuat ([js/sales.js](js/sales.js), submit handler `openSalesRequestModal`), lalu tampilkan pada daftar/detail/cetak order.
 
-### Fase 5 — Grup C (hanya jika user setuju di §3.1)
+*Verifikasi:* buat order `ZZ TEST` untuk customer Wholesale → `order_type` tersimpan `Wholesale`. Lalu ubah customer itu jadi Retail → order tadi **harus tetap** Wholesale. Itulah inti keputusan §3.2; kalau ikut berubah, berarti nilainya masih diturunkan dari customer di suatu tempat.
+
+### Fase 5 — Grup C
+
+Terapkan pembatasan ke empat pemanggil Grup C sesuai keputusan §3.1, **berlapis** dengan `filterOwnOrders` yang sudah ada.
+
+*Verifikasi:* login sebagai role Retail-saja, pastikan order milik customer Wholesale tidak muncul di Dispatch Request, Dispatch Approval, maupun Customer Report — sementara tim packing (Grup B) masih melihat order yang sama dengan normal.
 
 ### Fase 6 — i18n + rilis
 
