@@ -361,7 +361,7 @@ async function openPurchaseRequestFormModal(editId = null) {
     ).join('');
 
     const html = `
-        <form id="modal-pr-form">
+        <form id="modal-pr-form" novalidate>
             <div class="sr-grid">
                 <div>
                     <div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px; margin-bottom:12px;">
@@ -498,11 +498,32 @@ function renderPurchaseCart() {
 function wirePurchaseRequestForm({ existing, requestNumber, requests }) {
     renderPurchaseCart();
 
+    // Same non-blocking field-warning bubble as Sales Order's own copy in
+    // js/sales.js (openSalesRequestModal) — found via user feedback
+    // 2026-08-31 that the browser's native alert() for a missing field was
+    // jarring and didn't point at the field. Kept as its own local closure
+    // here rather than shared, matching how sales.js's own copy is scoped
+    // to its own modal-wiring function, not exported globally.
+    function showFieldWarn(el) {
+        if (!el) return;
+        el.parentElement.style.position = 'relative';
+        const existingWarn = el.parentElement.querySelector('.custom-empty-warn');
+        if (existingWarn) existingWarn.remove();
+        const warnBubble = document.createElement('div');
+        warnBubble.className = 'custom-empty-warn';
+        warnBubble.style = 'position: absolute; bottom: -28px; left: 0; background: var(--danger); color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; z-index: 10; white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);';
+        warnBubble.innerHTML = `⚠️ ${prT('alert_field_required', 'Field is required')}<div style="position: absolute; top: -4px; left: 10px; width: 8px; height: 8px; background: var(--danger); transform: rotate(45deg);"></div>`;
+        el.parentElement.appendChild(warnBubble);
+        const removeHandler = () => { if (warnBubble.parentNode) warnBubble.remove(); };
+        el.addEventListener('input', removeHandler, { once: true });
+        el.addEventListener('change', removeHandler, { once: true });
+    }
+
     document.getElementById('pr-btn-add-item').addEventListener('click', () => {
         const nameEl = document.getElementById('pr-item-name');
         const name = nameEl.value.trim();
         if (!name) {
-            alert(prT('alert_pr_item_name_required', 'Item name is required.'));
+            showFieldWarn(nameEl);
             nameEl.focus();
             return;
         }
@@ -527,14 +548,20 @@ function wirePurchaseRequestForm({ existing, requestNumber, requests }) {
     document.getElementById('modal-pr-form').addEventListener('submit', async (e) => {
         e.preventDefault();
 
-        const category = document.getElementById('pr-category').value;
-        const purpose = document.getElementById('pr-purpose').value.trim();
+        const categoryEl = document.getElementById('pr-category');
+        const purposeEl = document.getElementById('pr-purpose');
+        const category = categoryEl.value;
+        const purpose = purposeEl.value.trim();
         const neededBy = document.getElementById('pr-needed-by').value || null;
         const notes = document.getElementById('pr-notes').value.trim();
 
-        if (!category) { alert(prT('alert_pr_category_required', 'Category is required.')); return; }
-        if (!purpose) { alert(prT('alert_pr_purpose_required', 'Purpose is required.')); document.getElementById('pr-purpose').focus(); return; }
-        if (_prCart.size === 0) { alert(prT('alert_pr_no_items', 'Add at least one item first.')); return; }
+        if (!category) { showFieldWarn(categoryEl); categoryEl.focus(); return; }
+        if (!purpose) { showFieldWarn(purposeEl); purposeEl.focus(); return; }
+        // Doesn't point at a single field — showWarningModal, not showFieldWarn.
+        if (_prCart.size === 0) {
+            await showWarningModal(prT('alert_pr_no_items', 'Add at least one item first.'), false);
+            return;
+        }
 
         const headerRecord = {
             id: existing ? existing.id : undefined,
@@ -708,7 +735,7 @@ async function openPurchaseRequestDetailPopup(id) {
             <div class="card" style="overflow:hidden;">
                 <div class="table-container">
                     <table>
-                        <thead><tr><th>${prT('lbl_pr_item_name', 'Item')}</th><th>${prT('lbl_pr_item_qty', 'Qty')}</th><th style="text-align:right;">${prT('lbl_pr_item_price', 'Est. Price')}</th></tr></thead>
+                        <thead><tr><th>${prT('lbl_pr_item_name', 'Item')}</th><th>${prT('lbl_pr_item_qty', 'Qty')}</th><th style="text-align:right;">${prT('col_pr_item_price', 'Est. Price')}</th></tr></thead>
                         <tbody>${itemRows}</tbody>
                     </table>
                 </div>
