@@ -758,7 +758,26 @@ async function loadBlendRecipes() {
         return;
     }
 
-    const sortedRecipes = [...recipes].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    // Sorted by code first, newest-first within each code (user request
+    // 2026-09-06) — so every variant sharing a code sits together, with the
+    // most recent revision of that code on top. `code` is TEXT in the schema
+    // but holds numbers ("9", "28"), so compare with numeric collation:
+    // a plain string sort would put "28" before "9". Recipes with no code at
+    // all sink to the bottom instead of leading the table.
+    const sortedRecipes = [...recipes].sort((a, b) => {
+        const codeA = (a.code || '').trim();
+        const codeB = (b.code || '').trim();
+        if (!codeA !== !codeB) return codeA ? -1 : 1;
+        const byCode = codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
+        if (byCode !== 0) return byCode;
+        // Newest first. Falls back to id (SERIAL, so higher = newer) when
+        // created_at is missing or identical — two recipes created the same
+        // day would otherwise land in an arbitrary order.
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (dateA !== dateB) return dateB - dateA;
+        return (b.id || 0) - (a.id || 0);
+    });
 
     sortedRecipes.forEach(recipe => {
         // Find ingredients
