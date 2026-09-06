@@ -3236,7 +3236,12 @@ async function openSalesRequestModal(orderId = null) {
         const warnBubble = document.createElement('div');
         warnBubble.className = 'custom-empty-warn';
         warnBubble.style = 'position: absolute; bottom: -28px; left: 0; background: var(--danger); color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; z-index: 10; white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);';
-        warnBubble.innerHTML = `⚠️ ${window.t ? window.t('alert_field_required') : 'Field is required'}<div style="position: absolute; top: -4px; left: 10px; width: 8px; height: 8px; background: var(--danger); transform: rotate(45deg);"></div>`;
+        // No literal warning emoji here: alert_field_required already starts
+        // with one in both en and ar, so prepending a second rendered
+        // "⚠️ ⚠️ Field is required!" (found live 2026-09-06). js/roasting.js
+        // never had this bug — matched to it. The fallback carries the emoji
+        // so the no-i18n path still shows exactly one.
+        warnBubble.innerHTML = `${window.t ? window.t('alert_field_required') : '⚠️ Field is required!'}<div style="position: absolute; top: -4px; left: 10px; width: 8px; height: 8px; background: var(--danger); transform: rotate(45deg);"></div>`;
         el.parentElement.appendChild(warnBubble);
         const removeHandler = () => { if (warnBubble.parentNode) warnBubble.remove(); };
         el.addEventListener('input', removeHandler, { once: true });
