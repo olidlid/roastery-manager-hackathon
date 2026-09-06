@@ -79,7 +79,7 @@ let companySettings = {
     handover_title: 'GOODS HANDOVER SLIP',
     show_logo_in_print: true,
     print_footer_text: 'All goods transferred are the responsibility of the sales team.',
-    currency: 'USD',
+    currency: 'SAR',
     weight_unit: 'kg',
     min_stock_greenbean_kg: 0,
     min_production_potential_kg: 0,
@@ -426,7 +426,7 @@ function applyCompanySettings() {
     document.getElementById('sett-email').value = companySettings.email || '';
     document.getElementById('sett-address').value = companySettings.address || '';
     document.getElementById('sett-weight').value = companySettings.weight_unit || 'kg';
-    document.getElementById('sett-currency').value = companySettings.currency || 'USD';
+    document.getElementById('sett-currency').value = companySettings.currency || 'SAR';
     
     document.getElementById('sett-print-title').value = companySettings.handover_title || 'GOODS HANDOVER SLIP';
     document.getElementById('sett-print-logo').checked = companySettings.show_logo_in_print !== false;

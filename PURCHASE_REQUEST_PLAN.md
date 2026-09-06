@@ -189,8 +189,10 @@ Fungsi itu mencocokkan **nama** (`order.sales_name === currentUser.name`), dan k
 **7.3 — `hasPermission` memberi izin penuh kalau role tidak ditemukan.**
 [js/auth.js:230](js/auth.js:230): `if (!role) return true;`. Jadi user yang `profiles.role`-nya salah ketik atau menunjuk role yang sudah dihapus akan mendapat **semua** izin, termasuk approve. Jangan mengandalkan sembunyi-tombol saja untuk approval — periksa `hasPermission('purchase_approval_decide')` di dalam fungsi approve/reject itu sendiri (Fase 4).
 
-**7.4 — Mata uang produksi masih `USD`.**
-`company_settings.currency` bernilai `USD` padahal perusahaannya BICA.sa. Harga di fitur ini akan tampil sebagai USD sampai diubah di Settings. Ubah dulu sebelum rollout, atau angka estimasinya akan menyesatkan manager yang memutuskan. Baca nilainya dari `companySettings`, jangan pernah hardcode simbol mata uang.
+**7.4 — Mata uang: sudah `SAR` (diperbaiki 2026-09-06).**
+Sebelumnya `company_settings.currency` bernilai `USD` padahal perusahaannya BICA.sa. Sudah diubah ke `SAR`, dan opsi Saudi Riyal ditambahkan ke dropdown Settings maupun onboarding yang sebelumnya hanya menawarkan USD/IDR/SGD. Baca nilainya dari `companySettings.currency`, **jangan pernah hardcode** simbol mata uang — itulah alasan perbaikan ini dilakukan sebelum fitur harga dibangun, bukan sesudahnya.
+
+Catatan penting untuk pelaksana: sampai hari ini `currency` **belum dipakai menampilkan angka apa pun** di seluruh aplikasi — hanya disimpan dan ditampilkan kembali di form Settings. Fitur inilah pemakai pertamanya, jadi kamu yang menentukan format tampilannya (mis. `SAR 1,250.00`). Pilih satu format dan pakai konsisten di daftar, detail, dan cetak.
 
 **7.5 — Tipe foreign key: INTEGER, bukan UUID.**
 `purchase_request_items.purchase_request_id` menunjuk ke `purchase_requests.id` yang bertipe `SERIAL` (integer). Kesalahan ini pernah terjadi di proyek ini saat menambah tabel lot — tercatat di `REFACTORING.md`. Perhatikan bahwa `requested_by_id`/`decided_by_id` justru **UUID** karena menunjuk `profiles.id`; dua tipe berbeda di satu tabel yang sama, mudah tertukar.
