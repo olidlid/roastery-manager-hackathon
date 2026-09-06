@@ -1543,6 +1543,59 @@ tbody tr:hover {
     border-color: rgba(251, 191, 36, 0.35) !important;
 }
 
+/* PURCHASE_REQUEST_PLAN.md: category badges. Raw Materials reuses the same
+   amber pair as .badge-post-blend/.badge-roasted, and Equipment reuses the
+   same blue as .badge-potential — deliberate reuse, not an oversight: these
+   badges only ever appear inside the Purchase Request section, never on the
+   same screen as Blend Recipes or the Sales Order "Potential Production"
+   button, so there's no risk of the two concepts being read as the same
+   thing. Housekeeping Supplies reuses .badge-pre-blend's green for the same
+   reason. Other is genuinely new — no neutral/gray badge existed yet. */
+.badge-pr-raw {
+    background: rgba(180, 83, 9, 0.12) !important;
+    color: #b45309 !important;
+}
+[data-theme="dark"] .badge-pr-raw {
+    background: rgba(251, 191, 36, 0.15) !important;
+    color: #fbbf24 !important;
+}
+
+.badge-pr-equip {
+    background: rgba(29, 78, 216, 0.12) !important;
+    color: #1d4ed8 !important;
+}
+[data-theme="dark"] .badge-pr-equip {
+    background: rgba(96, 165, 250, 0.15) !important;
+    color: #60a5fa !important;
+}
+
+.badge-pr-house {
+    background: rgba(21, 128, 61, 0.12) !important;
+    color: #15803d !important;
+}
+[data-theme="dark"] .badge-pr-house {
+    background: rgba(74, 222, 128, 0.15) !important;
+    color: #4ade80 !important;
+}
+
+.badge-pr-other {
+    background: rgba(100, 116, 139, 0.12) !important;
+    color: #475569 !important; /* high contrast slate for light mode */
+}
+[data-theme="dark"] .badge-pr-other {
+    background: rgba(148, 163, 184, 0.15) !important;
+    color: #94a3b8 !important; /* muted slate for dark mode */
+}
+
+/* Purchase Request row marker — the request belongs to currentUser (§3.5:
+   list is global, but "mine" still needs to stand out). Same inset-shadow
+   technique as nothing else in this file yet; kept as its own rule (not
+   folded into a generic ".row-mine") since this is the first place the app
+   needs it. */
+.pr-row-mine {
+    box-shadow: inset 3px 0 0 var(--primary);
+}
+
 .text-repack {
     color: #be185d;
 }

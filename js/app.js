@@ -151,6 +151,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
+                purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: true, purchase_approval_decide: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
                 tracking_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
@@ -173,6 +174,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
+                purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: true, purchase_approval_decide: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
                 tracking_view: true,
                 settings_general: true, settings_production: true, settings_system: true,
@@ -195,6 +197,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: false, customer_edit: false, customer_delete: false, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
+                purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: true, purchase_approval_decide: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
                 tracking_view: true,
                 settings_general: false, settings_production: true, settings_system: false,
@@ -225,6 +228,7 @@ const MOCK_DB = {
                 sales_request_view: false, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false, customer_cat_retail: false, customer_cat_wholesale: false, customer_cat_supermarket: false,
+                purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: false, purchase_approval_decide: false,
                 reports_view: false, reports_stockopname_view: false, reports_stockopname_perform: false,
                 tracking_view: false,
                 settings_general: false, settings_production: false, settings_system: false,
@@ -247,6 +251,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false, customer_cat_retail: false, customer_cat_wholesale: false, customer_cat_supermarket: false,
+                purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: false, purchase_approval_decide: false,
                 reports_view: false, reports_stockopname_view: false, reports_stockopname_perform: false,
                 tracking_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
@@ -269,6 +274,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: false, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
+                purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: false, purchase_approval_decide: false,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: false,
                 tracking_view: true,
                 settings_general: false, settings_production: false, settings_system: false,
@@ -1142,6 +1148,30 @@ handoverTabBtns.forEach(btn => {
     });
 });
 
+// --- SUB-TABS MANAGEMENT FOR PURCHASE REQUEST (PURCHASE_REQUEST_PLAN.md) ---
+const purchasingTabBtns = document.querySelectorAll('#sec-purchasing .tab-btn');
+const purchasingTabContents = document.querySelectorAll('#sec-purchasing .tab-content');
+
+purchasingTabBtns.forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const targetTab = btn.getAttribute('data-tab');
+
+        purchasingTabBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        purchasingTabContents.forEach(content => {
+            if (content.id === targetTab) {
+                content.classList.remove('hidden');
+            } else {
+                content.classList.add('hidden');
+            }
+        });
+
+        saveLastTab('sec-purchasing', targetTab);
+        await loadPurchasingTabSpecificData(targetTab);
+    });
+});
+
 // --- SUB-TABS MANAGEMENT FOR REPORTS ---
 const reportsTabBtns = document.querySelectorAll('#sec-reports .tab-btn');
 const reportsTabContents = document.querySelectorAll('#sec-reports .tab-content');
@@ -1247,6 +1277,14 @@ async function loadSectionData(sectionId) {
             // js/sales.js per user request 2026-08-31, so it triggers on
             // that specific action instead of every visit to this section.
             break;
+        case 'sec-purchasing':
+            const activePurchasingTabBtn = document.querySelector('#sec-purchasing .tab-btn.active');
+            if (activePurchasingTabBtn) {
+                await loadPurchasingTabSpecificData(activePurchasingTabBtn.getAttribute('data-tab'));
+            } else {
+                await loadPurchasingSection();
+            }
+            break;
         case 'sec-settings':
             const activeSettTabBtn = document.querySelector('#sec-settings .tab-btn.active');
             if (activeSettTabBtn) {
@@ -1280,6 +1318,11 @@ function enforceGranularPermissions() {
         'tab-packing-history': 'packing_completed_view',
         // Handover tabs
         'tab-dispatch-approval': 'dispatch_approval_view',
+        // Purchase Request tabs (PURCHASE_REQUEST_PLAN.md §3.6 — the whole
+        // point of this entry: a role without purchase_approval_view never
+        // even sees the Approval tab button, same mechanism as the Handover
+        // entry right above).
+        'tab-purchase-approval': 'purchase_approval_view',
         // Settings tabs
         'tab-sett-general': 'settings_general',
         'tab-sett-production': 'settings_production',
@@ -1389,6 +1432,14 @@ function enforceGranularPermissions() {
     // --- SALES / DISPATCH REQUEST BUTTONS ---
     const btnCreateRequest = document.getElementById('btn-create-request');
     if (btnCreateRequest) btnCreateRequest.style.display = hasPermission('sales_request_create') ? '' : 'none';
+
+    // --- PURCHASE REQUEST BUTTON (PURCHASE_REQUEST_PLAN.md) ---
+    // Per-row Edit/Cancel buttons are gated at render time in
+    // js/purchasing.js itself (ownership + status + permission all factor
+    // in), same as this file's own pattern below for .btn-edit-order — only
+    // this static "New Request" button needs the sweep here.
+    const btnCreatePR = document.getElementById('btn-create-purchase-request');
+    if (btnCreatePR) btnCreatePR.style.display = hasPermission('purchase_request_create') ? '' : 'none';
     document.querySelectorAll('.btn-edit-order').forEach(btn => {
         btn.style.display = hasPermission('sales_request_edit') ? '' : 'none';
     });
@@ -1729,6 +1780,20 @@ async function updateNavNotificationBadges() {
         paint(roastingBadges, pendingPlanCount);
     } else {
         paint(roastingBadges, 0);
+    }
+
+    // PURCHASE_REQUEST_PLAN.md mockup layer 4 ("Approval <3>"). Gated on
+    // purchase_approval_decide (the DECIDE permission), same reasoning as
+    // dispatch's badge above being gated on dispatch_approval_approve rather
+    // than the weaker _view key — a badge that tells someone "N things need
+    // YOUR decision" shouldn't show for a role that can only look.
+    const purchaseApprovalBadges = [document.getElementById('badge-nav-purchasing'), document.getElementById('badge-tab-purchase-approval')];
+    if (hasPermission('purchase_approval_decide')) {
+        const { data: prs } = await fetchData('purchase_requests');
+        const pendingPrCount = (prs || []).filter(p => p.status === 'Requested').length;
+        paint(purchaseApprovalBadges, pendingPrCount);
+    } else {
+        paint(purchaseApprovalBadges, 0);
     }
 }
 

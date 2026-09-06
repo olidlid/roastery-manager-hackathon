@@ -400,6 +400,23 @@ const PERMISSION_GROUPS = [
         { key: 'customer_cat_wholesale', label: 'Wholesale Category Access' },
         { key: 'customer_cat_supermarket', label: 'Supermarket Category Access' }
     ]},
+    // PURCHASE_REQUEST_PLAN.md §5.1 — six active keys. A seventh key,
+    // purchase_request_view_own, exists in the data (seeded false for every
+    // role, §5.2) but is DELIBERATELY absent from this list: a checkbox that
+    // can be checked but does nothing is worse than no checkbox at all — an
+    // admin would check it believing the list becomes owner-filtered when it
+    // doesn't. Don't add it here without also wiring the actual filter in
+    // js/purchasing.js (see the comment above loadPurchaseRequestsList there).
+    { label: '🛒 Purchase Request', keys: [
+        { key: 'purchase_request_view', label: 'View Purchase Requests' },
+        { key: 'purchase_request_create', label: 'Create Purchase Request' },
+        { key: 'purchase_request_edit', label: 'Edit Own Request (while Requested)' },
+        { key: 'purchase_request_delete', label: 'Cancel Own Request' }
+    ]},
+    { label: '✅ Purchase Approval', keys: [
+        { key: 'purchase_approval_view', label: 'View Approval Tab' },
+        { key: 'purchase_approval_decide', label: 'Approve / Reject' }
+    ]},
     { label: '📈 Reports', keys: [
         { key: 'reports_view', label: 'View Reports' },
         { key: 'reports_stockopname_view', label: 'Stock Opname Tab' },

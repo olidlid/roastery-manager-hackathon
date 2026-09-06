@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=25">
+    <link rel="stylesheet" href="css/styles.css?v=26">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -292,6 +292,11 @@
                     <i class="icon-truck"></i>
                     <span data-i18n="nav_handover">Goods Handover</span>
                     <span id="badge-nav-handover" class="nav-notif-badge hidden"></span>
+                </li>
+                <li class="menu-item" data-target="sec-purchasing">
+                    <i class="icon-shopping-cart"></i>
+                    <span data-i18n="nav_purchasing">Purchasing</span>
+                    <span id="badge-nav-purchasing" class="nav-notif-badge hidden"></span>
                 </li>
                 <li class="menu-item" data-target="sec-reports">
                     <i class="icon-bar-chart-2"></i>
@@ -1542,7 +1547,84 @@
                 </div>
             </section>
 
+            <!-- ========================================== -->
+            <!-- SECTION: PURCHASE REQUEST (PURCHASE_REQUEST_PLAN.md) -->
+            <!-- ========================================== -->
+            <section id="sec-purchasing" class="page-section hidden">
+                <div class="tab-container">
+                    <div class="tab-headers">
+                        <button class="tab-btn active" data-tab="tab-purchase-request" data-i18n="tab_purchase_request">Purchase Request</button>
+                        <!-- TAB_PERMISSIONS in js/app.js maps this tab to purchase_approval_view
+                             (§3.6: not rendered at all for a role without it — same
+                             display:none mechanism already used for tab-dispatch-approval). -->
+                        <button class="tab-btn" data-tab="tab-purchase-approval"><span data-i18n="tab_purchase_approval">Approval</span><span id="badge-tab-purchase-approval" class="tab-notif-badge hidden"></span></button>
+                    </div>
 
+                    <!-- TAB 1: Purchase Request (global list — §3.5, ALL users see ALL requests) -->
+                    <div id="tab-purchase-request" class="tab-content">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="pr_list_title">Purchase Request</h3>
+                                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                    <div style="display: flex; gap: 4px;" id="pr-filter-group">
+                                        <button class="btn btn-secondary btn-sm pr-filter-btn active" data-filter="all" onclick="filterPurchaseRequests('all')" data-i18n="pr_filter_all">All</button>
+                                        <button class="btn btn-secondary btn-sm pr-filter-btn" data-filter="Raw Materials" onclick="filterPurchaseRequests('Raw Materials')" data-i18n="pr_cat_raw">Raw Materials</button>
+                                        <button class="btn btn-secondary btn-sm pr-filter-btn" data-filter="Equipment" onclick="filterPurchaseRequests('Equipment')" data-i18n="pr_cat_equip">Equipment</button>
+                                        <button class="btn btn-secondary btn-sm pr-filter-btn" data-filter="Housekeeping Supplies" onclick="filterPurchaseRequests('Housekeeping Supplies')" data-i18n="pr_cat_house">Housekeeping</button>
+                                        <button class="btn btn-secondary btn-sm pr-filter-btn" data-filter="Other" onclick="filterPurchaseRequests('Other')" data-i18n="pr_cat_other">Other</button>
+                                    </div>
+                                    <button id="btn-create-purchase-request" class="btn btn-primary btn-sm" data-i18n="btn_pr_new">
+                                        <i class="icon-plus"></i> New Request
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_pr_request">Request</th>
+                                            <th data-i18n="col_pr_requested_by">Requested By</th>
+                                            <th data-i18n="col_pr_category">Category</th>
+                                            <th data-i18n="col_pr_items">Items</th>
+                                            <th data-i18n="col_pr_est_total">Est. Total</th>
+                                            <th data-i18n="col_pr_status">Status</th>
+                                            <th data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="purchase-requests-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div style="font-size: 0.72rem; color: var(--text-muted); padding: 9px 4px 0;" data-i18n="pr_click_hint">Click a row to view its details · the green line on the left marks your own requests</div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 2: Approval — only Requested-status rows, only reachable with purchase_approval_view -->
+                    <div id="tab-purchase-approval" class="tab-content hidden">
+                        <div class="card">
+                            <h3 class="card-title" data-i18n="pr_approval_title">Pending Approval</h3>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_pr_request">Request</th>
+                                            <th data-i18n="col_pr_requested_by">Requested By</th>
+                                            <th data-i18n="col_pr_category">Category</th>
+                                            <th data-i18n="col_pr_est_total">Est. Total</th>
+                                            <th data-i18n="col_pr_needed_by">Needed By</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="purchase-approval-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div style="font-size: 0.72rem; color: var(--text-muted); padding: 9px 4px 0;" data-i18n="pr_approval_click_hint">Click a row to view its details and decide</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
 
             <!-- ========================================== -->
             <!-- SECTION: REPORTS & ANALYTICS -->
@@ -2736,18 +2818,19 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=60"></script>
+    <script src="js/translations.js?v=61"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=3"></script>
-    <script src="js/auth.js?v=12"></script>
+    <script src="js/auth.js?v=13"></script>
     <script src="js/greenbean.js?v=21"></script>
     <script src="js/roasting.js?v=41"></script>
     <script src="js/packing.js?v=121"></script>
     <script src="js/sales.js?v=46"></script>
-    <script src="js/settings.js?v=25"></script>
+    <script src="js/settings.js?v=26"></script>
     <script src="js/tracking.js?v=8"></script>
-    <script src="js/app.js?v=110"></script>
+    <script src="js/purchasing.js?v=1"></script>
+    <script src="js/app.js?v=111"></script>
 </body>
 </html>

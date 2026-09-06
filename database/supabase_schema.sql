@@ -1534,3 +1534,43 @@ DROP TRIGGER IF EXISTS trg_aa_stock_take_freeze ON public.bulk_roasted_coffee;
 CREATE TRIGGER trg_aa_stock_take_freeze
 BEFORE INSERT OR UPDATE OR DELETE ON public.bulk_roasted_coffee
 FOR EACH ROW EXECUTE FUNCTION stock_take_freeze_guard();
+
+-- 31. Purchase requests (PURCHASE_REQUEST_PLAN.md) — permintaan pembelian
+-- dari staff ke manager. Sengaja TIDAK terhubung ke stok/inventory sama
+-- sekali: tidak ada FK ke green_coffee/bulk_roasted_coffee/packed_coffee,
+-- tidak ada RPC ledger. Alur berakhir di status 'Approved' — tidak ada
+-- 'Purchased'/'Received' (§3.3 keputusan user, sengaja tidak dibangun).
+CREATE TABLE IF NOT EXISTS public.purchase_requests (
+    id SERIAL PRIMARY KEY,
+    request_number TEXT,                      -- PR-YYMMDD-NNN, dibuat aplikasi
+    category TEXT NOT NULL,                   -- 'Raw Materials' | 'Equipment' | 'Housekeeping Supplies' | 'Other'
+    status TEXT DEFAULT 'Requested',          -- 'Requested' | 'Approved' | 'Rejected' | 'Cancelled'
+    purpose TEXT,                             -- keperluan, wajib diisi aplikasi
+    notes TEXT,                               -- catatan tambahan untuk manager, opsional
+    needed_by DATE,                           -- opsional
+    requested_by_id UUID,                     -- profiles.id — sumber kebenaran kepemilikan, BUKAN nama (§7.2 plan)
+    requested_by_name TEXT,                   -- snapshot nama saat dibuat, untuk tampilan & riwayat
+    request_date DATE DEFAULT CURRENT_DATE,
+    decided_by_id UUID,                       -- profiles.id manager yang memutuskan
+    decided_by_name TEXT,                     -- snapshot nama
+    decided_at TIMESTAMPTZ,
+    decision_note TEXT,                       -- alasan; OPSIONAL bahkan saat Rejected (§3.7 plan)
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 32. Purchase request items
+CREATE TABLE IF NOT EXISTS public.purchase_request_items (
+    id SERIAL PRIMARY KEY,
+    purchase_request_id INTEGER,              -- FK ke purchase_requests.id (INTEGER, bukan UUID)
+    item_name TEXT NOT NULL,
+    qty NUMERIC,
+    unit TEXT,                                -- 'pcs' | 'kg' | 'box' | dst, teks bebas
+    estimated_price NUMERIC,                  -- NULL = peminta tidak tahu harganya (§3.4 plan) — tidak pernah dihitung sebagai 0
+    item_note TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.purchase_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.purchase_request_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY full_access ON public.purchase_requests FOR ALL USING (true);
+CREATE POLICY full_access ON public.purchase_request_items FOR ALL USING (true);

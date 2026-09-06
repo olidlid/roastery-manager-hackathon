@@ -137,6 +137,10 @@ const SECTION_PERMISSIONS = {
     'sec-packing': 'packing_view',
     'sec-customers': ['customer_view'],
     'sec-handover': ['sales_request_view', 'sales_request_view_own', 'dispatch_approval_view'],
+    // PURCHASE_REQUEST_PLAN.md §5.1: either key reaches the section (Approval
+    // tab itself is hidden per-key inside — §3.6), same array-OR shape as
+    // sec-handover above.
+    'sec-purchasing': ['purchase_request_view', 'purchase_approval_view'],
     'sec-reports': 'reports_view',
     // 'dashboard' is included so the section stays reachable for every role
     // (every default/custom role has it) even with none of the settings_*
@@ -316,6 +320,7 @@ function getFirstAllowedSection() {
         'sec-packing',
         'sec-customers',
         'sec-handover',
+        'sec-purchasing',
         'sec-reports',
         'sec-tracking',
         'sec-settings'
