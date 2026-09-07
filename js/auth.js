@@ -226,13 +226,72 @@ function roleHasPermission(role, key) {
     return false;
 }
 
+// Roles whose "not found" warning has already been logged, so a permission
+// check running on every render doesn't flood the console with the same line.
+const _warnedMissingRoles = new Set();
+
+// Reads the cached custom_roles list (see syncCustomRolesFromSupabase) so
+// permission checks stay synchronous — no await on every render.
+//
+// The two "can't resolve the role" cases are deliberately NOT the same:
+//
+//   empty list  -> fail OPEN. The cache simply hasn't been populated yet
+//                  (first paint before the sync resolves, a failed fetch,
+//                  cleared site data). Nothing can be told apart in that
+//                  state, and locking the whole team out of every screen
+//                  because one fetch blipped is far worse than a brief
+//                  over-permissive window.
+//
+//   list loaded,
+//   role absent -> fail CLOSED. profiles.role points at a role that was
+//                  deleted or renamed. This used to return true, silently
+//                  handing that user EVERY permission in the app — all
+//                  customer categories, every approval, Settings. Found
+//                  2026-09-07 while auditing the customer-category feature,
+//                  which the hole bypassed completely. An orphaned user who
+//                  sees nothing is a visible, fixable problem; an orphaned
+//                  user who silently holds admin rights is not.
+//
+// Escape hatch if this ever strands the owner: Developer-only UI is gated on
+// currentUser.role === 'Developer' directly, not through this function.
 function hasPermission(key) {
     if (!currentUser) return false;
     const roleName = currentUser.role;
-    const roles = JSON.parse(localStorage.getItem('mock_custom_roles')) || [];
+
+    let roles = [];
+    try {
+        roles = JSON.parse(localStorage.getItem('mock_custom_roles')) || [];
+    } catch (e) {
+        roles = []; // corrupt cache reads the same as an empty one
+    }
+
+    if (roles.length === 0) return true;
+
     const role = roles.find(r => r.name === roleName);
-    if (!role) return true; // if role not found, default allow (for backward compat)
+    if (!role) {
+        if (!_warnedMissingRoles.has(roleName)) {
+            _warnedMissingRoles.add(roleName);
+            console.warn(`[auth] role "${roleName}" is not in custom_roles — denying every permission for this user. Fix profiles.role, or re-create the role in Settings → Role Management.`);
+        }
+        return false;
+    }
     return roleHasPermission(role, key);
+}
+
+// True only when the roles cache IS loaded and this user's role is missing
+// from it — i.e. the fail-closed branch above is what's driving the empty UI.
+// Kept separate from hasPermission so the banner in applyRoleAccess can tell
+// "your role was deleted" apart from "you legitimately have no permissions".
+function currentUserRoleIsMissing() {
+    if (!currentUser) return false;
+    let roles = [];
+    try {
+        roles = JSON.parse(localStorage.getItem('mock_custom_roles')) || [];
+    } catch (e) {
+        return false;
+    }
+    if (roles.length === 0) return false;
+    return !roles.some(r => r.name === currentUser.role);
 }
 
 // V2 1J: the first permission in this codebase that filters DATA, not just
@@ -390,8 +449,24 @@ function applyMenuVisibility() {
     }
 }
 
+// One-time-per-session flag so the orphaned-role notice doesn't reappear on
+// every navigation — applyRoleAccess runs on each section change.
+let _missingRoleNoticeShown = false;
+
 function applyRoleAccess() {
     if (!currentUser) return;
+
+    // Without this, a user whose role was deleted just gets an app with no
+    // menus and no explanation — indistinguishable from a broken load. Say
+    // what happened so they can tell an admin instead of filing it as a bug.
+    if (currentUserRoleIsMissing() && !_missingRoleNoticeShown) {
+        _missingRoleNoticeShown = true;
+        const msg = window.t
+            ? window.t('alert_role_missing').replace('{role}', currentUser.role)
+            : `Your account's role ("${currentUser.role}") no longer exists, so no features are available. Please ask an administrator to reassign your role.`;
+        if (typeof showWarningModal === 'function') showWarningModal(msg, false);
+    }
+
     applyMenuVisibility();
     if (typeof updateNavNotificationBadges === 'function') updateNavNotificationBadges();
 

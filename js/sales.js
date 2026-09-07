@@ -149,12 +149,19 @@ function buildCustomerOptionsHtml(customersList, selectedId) {
 }
 
 // `typeOptions` (CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 3, Grup A) restricts
-// which categories render as choices when ADDING a new customer, to
-// whatever the current role has access to — a role can't create a
-// customer in a category it isn't allowed to see. Defaults to every type
-// (existing behavior, and irrelevant for EDIT anyway: the select is
-// `disabled` once editId is set — type can never be changed after
-// creation — so the full list is only there to render the current value).
+// which categories render as choices to whatever the current role has
+// access to — a role can't file a customer under a category it isn't
+// allowed to see, whether creating or re-categorising.
+//
+// The select used to be `disabled` on edit, which meant a customer's
+// category was permanent: a Retail customer that grew into Wholesale could
+// never be moved, and a wrong pick at creation could never be corrected
+// (found 2026-09-07 while auditing this feature). It's editable now. Two
+// things deliberately do NOT follow the change: the customer_id keeps its
+// original prefix (WHL-002 stays WHL-002 — the code appears on printed
+// waybills and in order history, so rewriting it would orphan paper
+// records), and past orders keep their own order_type snapshot (§3.2).
+// Only the customer's CURRENT category moves.
 function buildCustomerFormFieldsHtml(existing, editId, typeOptions) {
     const typesToShow = typeOptions || CUSTOMER_TYPES;
     return `
@@ -165,7 +172,7 @@ function buildCustomerFormFieldsHtml(existing, editId, typeOptions) {
             </div>
             <div class="form-group flex-1" >
                 <label class="form-label">Type</label>
-                <select id="m-cust-type" class="form-control" ${editId ? 'disabled' : ''} required>
+                <select id="m-cust-type" class="form-control" required>
                     ${typesToShow.map(type => {
                         // Wholesale defaults for a brand-new customer (user request,
                         // commit 14c361c) — same "no existing row yet" condition the
@@ -174,6 +181,7 @@ function buildCustomerFormFieldsHtml(existing, editId, typeOptions) {
                         return `<option value="${type}" ${selected ? 'selected' : ''}>${CUSTOMER_TYPE_META[type].icon} ${type}</option>`;
                     }).join('')}
                 </select>
+                ${editId ? `<div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;">${window.t ? window.t('hint_cust_type_change') : 'Customer ID stays the same, and past orders keep the type they were placed under.'}</div>` : ''}
             </div>
         </div>
         <div class="form-group">
@@ -284,18 +292,19 @@ async function openCustomerModal(editId = null) {
         }
     }
 
-    // Adding a new customer: only offer categories this role can actually
-    // access. No allowed categories at all -> refuse outright rather than
-    // opening a form with an empty/unusable type dropdown.
-    let typeOptions = null;
-    if (!editId) {
-        const allowed = allowedCustomerTypes();
-        if (allowed.length === 0) {
-            await showWarningModal(window.t ? window.t('alert_customer_category_add_denied') : "You don't have access to add a customer in any category.", false);
-            return;
-        }
-        typeOptions = allowed;
+    // Only offer categories this role can actually access — for BOTH paths.
+    // Creating: can't file a new customer somewhere it then can't see it.
+    // Editing: now that the Type select is editable, this is what stops a
+    // Retail-only role from pushing a customer into Wholesale (which would
+    // also make it vanish from that role's own directory). The canAccessCustomer
+    // guard above guarantees the customer's current type is inside this list,
+    // so the existing value always has an <option> to render on.
+    const allowed = allowedCustomerTypes();
+    if (allowed.length === 0) {
+        await showWarningModal(window.t ? window.t('alert_customer_category_add_denied') : "You don't have access to add a customer in any category.", false);
+        return;
     }
+    const typeOptions = allowed;
 
     const html = `
         <form id="modal-customer-form" novalidate>

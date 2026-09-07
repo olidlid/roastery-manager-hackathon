@@ -450,6 +450,8 @@ window.translations = {
         alert_order_failed: "Ordering failed: {msg}",
         alert_field_required: "⚠️ Field is required!",
         alert_customer_category_denied: "You don't have access to this customer's category.",
+        alert_role_missing: "Your account's role (\"{role}\") no longer exists, so no features are available. Please ask an administrator to reassign your role.",
+        hint_cust_type_change: "Customer ID stays the same, and past orders keep the type they were placed under.",
         alert_customer_category_add_denied: "You don't have access to add a customer in any category.",
 
         // Sales Request Modal
@@ -1363,6 +1365,8 @@ window.translations = {
         alert_order_failed: "فشل الطلب: {msg}",
         alert_field_required: "⚠️ حقل مطلوب!",
         alert_customer_category_denied: "ليس لديك صلاحية الوصول إلى فئة هذا العميل.",
+        alert_role_missing: "لم يعد الدور المرتبط بحسابك (\"{role}\") موجودًا، لذلك لا تتوفر أي ميزات. يرجى الطلب من المسؤول إعادة تعيين دورك.",
+        hint_cust_type_change: "معرّف العميل يبقى كما هو، والطلبات السابقة تحتفظ بالفئة التي أُنشئت بها.",
         alert_customer_category_add_denied: "ليس لديك صلاحية إضافة عميل في أي فئة.",
 
         // Sales Request Modal
