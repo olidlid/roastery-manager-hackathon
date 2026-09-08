@@ -420,7 +420,7 @@ CREATE TABLE IF NOT EXISTS public.request_orders (
     order_number TEXT,
     customer_name TEXT,                         -- legacy (app uses customer_id)
     order_date DATE,
-    status TEXT DEFAULT 'Pending',
+    status TEXT DEFAULT 'Pending',               -- 'Pending Approval' | 'Preparing' | 'Dispatched' | 'Unable to Fulfill' (2026-09-08) | 'Cancelled' (hanya dihasilkan aplikasi Leader Android)
     items JSONB DEFAULT '[]'::jsonb,            -- legacy (app uses request_order_items table)
     notes TEXT,
     dispatch_date DATE,
@@ -430,6 +430,15 @@ CREATE TABLE IF NOT EXISTS public.request_orders (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     customer_id INTEGER,
     sales_name TEXT,
+    -- APPROVAL_REVISION_PLAN.md Fase 0 (2026-09-08): siapa yang memutuskan, kapan,
+    -- dan alasannya. approved_by/approved_date SENGAJA tidak dipakai ulang - keduanya
+    -- kolom mati (0 dari 51 baris terisi, tidak ada kode yang pernah menulisnya), dan
+    -- nama "approved_by" yang berisi orang yang MENOLAK akan menyesatkan pembaca.
+    -- Penamaan ini juga menyamakan modul ini dengan purchase_requests.
+    decided_by_id UUID,
+    decided_by_name TEXT,
+    decided_at TIMESTAMPTZ,
+    decision_note TEXT,                          -- alasan OPSIONAL; dipakai untuk pemenuhan sebagian MAUPUN Unable to Fulfill
     order_type TEXT                              -- snapshot of customers.type at order creation time, never re-derived (see CUSTOMER_CATEGORY_ROLE_PLAN.md §3.2); NULL for 9 pre-migration orders whose customer_id no longer resolves
 );
 
@@ -457,6 +466,11 @@ CREATE TABLE IF NOT EXISTS public.request_order_items (
     quantity_allocated INTEGER DEFAULT 0,       -- added 2026-07-06
     quantity_pending INTEGER DEFAULT 0,         -- added 2026-07-06
     quantity_prepared INTEGER DEFAULT 0,        -- added 2026-07-06 (packing progress at Order Requests stage; distinct from quantity_allocated, which is set at Dispatch Approval time)
+    quantity_unfulfilled INTEGER DEFAULT 0,     -- APPROVAL_REVISION_PLAN.md Fase 0 (2026-09-08): jumlah yang SENGAJA
+                                                 -- tidak diproses saat approval. Disimpan, bukan dihitung dari
+                                                 -- quantity_requested - allocated - pending: ketiga angka itu terus
+                                                 -- berubah selama packing, sehingga selisihnya lama-lama tidak lagi
+                                                 -- berarti "sengaja tidak dipenuhi".
     coffee_code TEXT                            -- added 2026-07-21: set (with single_coffee_id left NULL) when this
                                                  -- item is a trade-name product from code_definitions rather than
                                                  -- one specific green_coffee row — fulfillment can draw from any
