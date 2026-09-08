@@ -1909,6 +1909,18 @@ async function openDispatchCheckoutModal(orderId) {
     // for pre-Phase-3 rows the ledger query can't see (no ref on their row).
     let dispatchLotItemsAll = (dispatchLotItemsData || []).filter(d => items.some(i => i.id === d.request_order_item_id));
 
+    // Every lot by id, drained ones included. lotsByItem below only keeps lots
+    // with remaining_pcs > 0 (it drives the pickable rows), but the
+    // "already checked out earlier" breakdown has to name lots that an earlier
+    // checkout emptied completely — those are exactly the ones missing from
+    // that list. Built from the full packed_coffee_lots fetch instead.
+    const lotById = new Map((packedLots || []).map(l => [l.id, l]));
+    function lotLabel(lotId) {
+        const l = lotById.get(lotId);
+        if (!l) return `Lot #${lotId}`;
+        return l.strip_code ? `${l.strip_code} · ${l.lot_code}` : (l.lot_code || `Lot #${lotId}`);
+    }
+
     // STOCK_LEDGER_PLAN.md Phase 5: packed_stock_movements is the real
     // source of truth for what can be restored — both a checkout draw AND
     // an approval-time deduction (js/sales.js consume_packed_lot) leave a
@@ -2142,6 +2154,28 @@ async function openDispatchCheckoutModal(orderId) {
         // renderer this app's automation drives) and is inconsistent with
         // the rest of the UI besides, so this follows the same
         // hidden-attribute expand/collapse pattern as .dc-lots.
+        // Which lots that earlier checkout actually drew from. The breakdown
+        // already carried this per-lot detail (ledgerLots / legacyRows) but
+        // only its TOTAL was ever printed, so "50 / 50" told the operator the
+        // line was covered without saying by what — the exact gap reported
+        // 2026-09-08. Shown always, not behind a toggle, per user decision.
+        //
+        // untrackedQty is the one part with genuinely no lot trail: stock
+        // deducted at order-approval time before the movement ledger existed.
+        // It gets its own line saying so rather than being silently omitted,
+        // so the numbers on screen still add up to `prepared`.
+        const committedLines = [
+            ...breakdown.ledgerLots.map(e => ({ label: lotLabel(e.lotId), qty: e.outstanding })),
+            ...breakdown.legacyRows.map(d => ({ label: lotLabel(d.packed_coffee_lot_id), qty: parseInt(d.qty) || 0 }))
+        ].filter(e => e.qty > 0);
+
+        const committedDetailHtml = (committedLines.length || untrackedQty > 0)
+            ? `<div class="dc-committed-lots">
+                    ${committedLines.map(e => `<div><span class="dc-committed-lot-code">${e.label}</span><span class="dc-committed-lot-qty">${e.qty} pcs</span></div>`).join('')}
+                    ${untrackedQty > 0 ? `<div><span class="dc-committed-lot-code" style="opacity:0.7;">from order approval — lot not recorded</span><span class="dc-committed-lot-qty">${untrackedQty} pcs</span></div>` : ''}
+               </div>`
+            : '';
+
         const committedHtml = prepared > 0
             ? `<div class="dc-committed">
                     <div>
@@ -2149,6 +2183,7 @@ async function openDispatchCheckoutModal(orderId) {
                         <span style="opacity:0.75;">(${untrackedQty > 0 ? `${trailQty} restorable, ${untrackedQty} not` : 'restorable'})</span>
                         <button type="button" class="dc-committed-undo-toggle" data-item="${itemId}">Undo&hellip;</button>
                     </div>
+                    ${committedDetailHtml}
                     <div class="dc-committed-undo-form hidden" data-item="${itemId}">
                         ${trailQty > 0 ? `<div class="dc-undo-note">${trailQty} from tracked lots — stock will be restored</div>` : ''}
                         ${untrackedQty > 0 ? `<div class="dc-undo-note">${untrackedQty} from order approval — stock already deducted, can't be auto-restored</div>` : ''}
@@ -2174,10 +2209,23 @@ async function openDispatchCheckoutModal(orderId) {
             const avail = (liveRemaining[l.id] || 0) + taken;
             const mismatch = !item.coffee_code && l.machineId !== item.machine_id;
             const isFifo = (fifoLotForItemMachine(itemId) || {}).id === l.id;
-            let suggestQty = 1;
+            // Only the lots that actually cover the remaining shortfall get a
+            // suggested qty; every lot past that point is left BLANK.
+            //
+            // The old expression ended in `|| 1`, so once the shortfall hit 0
+            // it fell through to 1 for EVERY remaining row — on a line that
+            // was already fully fulfilled that meant nine rows each showing 1
+            // next to a live Take button, any one of which would deduct a bag
+            // nobody ordered (user report 2026-09-08). Drawing extra stock is
+            // now a deliberate act: type a number, and only then does Take
+            // become clickable (see the input handler further down).
+            let suggestQty = '';
             if (!cartRow) {
-                suggestQty = Math.max(1, Math.min(shortfall, liveRemaining[l.id] || 0) || 1);
-                shortfall = Math.max(0, shortfall - Math.min(shortfall, liveRemaining[l.id] || 0));
+                const cover = Math.min(shortfall, liveRemaining[l.id] || 0);
+                if (cover > 0) {
+                    suggestQty = cover;
+                    shortfall -= cover;
+                }
             }
             return `
                 <div class="dc-lot${mismatch ? ' dc-lot-mismatch' : ''}${taken > 0 ? ' dc-lot-taken' : ''}" data-item="${itemId}" data-lot="${l.id}">
@@ -2188,8 +2236,8 @@ async function openDispatchCheckoutModal(orderId) {
                     <span class="dc-lot-stock">${avail}</span>
                     <span class="dc-lot-add">
                         <span class="dc-lot-check" ${taken > 0 ? '' : 'hidden'}>&#10003;</span>
-                        <input type="number" class="dc-lot-qty" min="1" value="${taken > 0 ? taken : suggestQty}" ${avail <= 0 && taken === 0 ? 'disabled' : ''}>
-                        <button type="button" class="btn btn-primary btn-sm dc-lot-take" ${taken > 0 ? 'hidden' : ''} ${avail <= 0 ? 'disabled' : ''}>Take</button>
+                        <input type="number" class="dc-lot-qty" min="1" placeholder="0" value="${taken > 0 ? taken : suggestQty}" ${avail <= 0 && taken === 0 ? 'disabled' : ''}>
+                        <button type="button" class="btn btn-primary btn-sm dc-lot-take" ${taken > 0 ? 'hidden' : ''} ${(avail <= 0 || (taken === 0 && suggestQty === '')) ? 'disabled' : ''}>Take</button>
                         <button type="button" class="btn btn-sm dc-lot-cancel" style="border:1px solid var(--border); background:none; color: var(--danger);" ${taken > 0 ? '' : 'hidden'}>Cancel</button>
                     </span>
                 </div>
@@ -2464,6 +2512,10 @@ async function openDispatchCheckoutModal(orderId) {
             #dispatch-checkout-body .dc-lot-add { display:flex; gap:6px; justify-content:flex-end; align-items:center; }
             #dispatch-checkout-body .dc-lot-check { color:var(--primary); font-weight:700; }
             #dispatch-checkout-body .dc-lot-qty { width:52px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--bg-app); color:var(--text-primary); font-size:0.78rem; text-align:right; font-family:monospace; }
+            #dispatch-checkout-body .dc-committed-lots { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:3px; }
+            #dispatch-checkout-body .dc-committed-lots > div { display:flex; justify-content:space-between; gap:12px; font-size:0.74rem; color:var(--text-secondary); }
+            #dispatch-checkout-body .dc-committed-lot-code { font-family:monospace; }
+            #dispatch-checkout-body .dc-committed-lot-qty { font-variant-numeric:tabular-nums; white-space:nowrap; }
         </style>
     `;
 
@@ -2602,7 +2654,21 @@ async function openDispatchCheckoutModal(orderId) {
         const inp = e.target.closest('.dc-lot-qty');
         if (!inp) return;
         const lotEl = inp.closest('.dc-lot');
-        if (!lotEl.classList.contains('dc-lot-taken')) return;
+
+        // Not-yet-taken row: the qty box starts blank for any lot the order
+        // doesn't actually need, and Take stays disabled until a real number
+        // is typed. This is the other half of the blank-by-default change
+        // above — without it the button would be permanently dead on those
+        // rows, and a deliberate extra draw would be impossible.
+        if (!lotEl.classList.contains('dc-lot-taken')) {
+            const takeBtnEl = lotEl.querySelector('.dc-lot-take');
+            if (takeBtnEl && !takeBtnEl.hidden) {
+                const typed = parseInt(inp.value) || 0;
+                const lotIdForRow = parseInt(lotEl.getAttribute('data-lot'));
+                takeBtnEl.disabled = typed <= 0 || (liveRemaining[lotIdForRow] || 0) <= 0;
+            }
+            return;
+        }
         const itemId = parseInt(lotEl.getAttribute('data-item'));
         const lotId = parseInt(lotEl.getAttribute('data-lot'));
         const key = `${itemId}:${lotId}`;
