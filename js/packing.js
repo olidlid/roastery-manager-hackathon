@@ -2058,8 +2058,22 @@ async function openDispatchCheckoutModal(orderId) {
             }
             return [p.id, identity || { name: 'Unknown', code: '' }];
         }));
+        // Deliberately NOT filtered to remaining_pcs > 0 here. This array is
+        // built once when the modal opens and is the only place a lot's
+        // metadata (code, date, machine, origin) exists for this session — so
+        // a lot excluded now can never come back, even after its stock does.
+        //
+        // That was the bug reported 2026-09-08: a lot drained to 0 sat outside
+        // this list, Undo refunded it into liveRemaining, but the header STOCK
+        // sums over THIS array — so it kept reading 0 and the row never
+        // reappeared. The stock had genuinely been restored in the database;
+        // only this modal's view was stale, which is why reopening it showed
+        // the right number and made the refund look delayed rather than lost.
+        //
+        // Emptiness is now decided per render from liveRemaining instead (see
+        // renderItemLots), which is the value Take/Cancel/Undo actually move.
         const lots = (packedLots || [])
-            .filter(l => packedIds.has(l.packed_coffee_id) && (parseInt(l.remaining_pcs) || 0) > 0)
+            .filter(l => packedIds.has(l.packed_coffee_id))
             .map(l => ({
                 id: l.id,
                 lotCode: l.lot_code,
@@ -2202,7 +2216,14 @@ async function openDispatchCheckoutModal(orderId) {
         // pre-filled matches what actually happens on Take.
         let shortfall = Math.max(0, requested - prepared - alreadyInCartForItem(itemId));
 
-        const rowsHtml = lots.map(l => {
+        // lotsByItem now carries every lot for this coffee/size, empty ones
+        // included (see its build above), so the "is there anything to pick"
+        // decision moves here — and is made against liveRemaining, which Undo
+        // updates. A lot with nothing left still renders while it's held in
+        // the cart, otherwise its Cancel button would vanish mid-session.
+        const visibleLots = lots.filter(l => (liveRemaining[l.id] || 0) > 0 || cart.has(`${itemId}:${l.id}`));
+
+        const rowsHtml = visibleLots.map(l => {
             const key = `${itemId}:${l.id}`;
             const cartRow = cart.get(key);
             const taken = cartRow ? cartRow.qty : 0;
