@@ -2723,10 +2723,23 @@ async function openSalesRequestModal(orderId = null) {
             const mm = String(now.getMonth() + 1).padStart(2, '0');
             const yy = String(now.getFullYear()).slice(-2);
             const datePart = `${dd}${mm}${yy}`;
+            // Read the trailing DDMMYY + 3-digit sequence, whatever the prefix is.
+            //
+            // This used to be anchored as /^[A-Z0-9]+(\d{6})(\d{3})$/ — ASCII
+            // letters only. An agent code in Arabic (مح, ما, …) never matched,
+            // so those numbers were invisible to this scan and the sequence
+            // restarted from whatever the Latin-prefixed orders had reached.
+            // That produced two real orders both numbered ما080926007 on
+            // 2026-09-08 (ids 80 and 81, ten minutes apart), which in turn
+            // made roasting_plans.order_ref ambiguous between them.
+            //
+            // Anchoring on the END instead of the start sidesteps the prefix
+            // charset entirely, and stays correct even when the agent code
+            // itself contains digits (e.g. "S1" from "Sale 101").
             let maxSeq = 0;
             (requestOrders || []).forEach(o => {
                 if (o.order_number) {
-                    const match = o.order_number.match(/^[A-Z0-9]+(\d{6})(\d{3})$/);
+                    const match = String(o.order_number).match(/(\d{6})(\d{3})$/);
                     if (match && match[1] === datePart) { const s = parseInt(match[2]); if (s > maxSeq) maxSeq = s; }
                 }
             });
@@ -3598,6 +3611,20 @@ async function openSalesRequestModal(orderId = null) {
 
         const { data: savedOrder, error } = await saveData('request_orders', orderRecord);
         if (error) {
+            // request_orders.order_number carries a UNIQUE index (added
+            // 2026-09-12). It can still be hit by two people submitting at the
+            // same moment: each generates the number from the order list their
+            // own modal loaded, so both can land on the same sequence before
+            // either row exists. The raw Postgres text would leave the operator
+            // stuck, so say the one thing that actually resolves it.
+            const isDuplicateNumber = error.code === '23505' || /duplicate key|unique constraint/i.test(error.message || '');
+            if (isDuplicateNumber) {
+                await showWarningModal(
+                    window.t ? window.t('alert_order_number_taken')
+                             : 'That order number was just used by someone else. Close this form and open it again to get a fresh number — nothing has been saved.',
+                    false);
+                return;
+            }
             alert((window.t ? window.t('alert_order_failed') : "Ordering failed: {msg}").replace("{msg}", error.message));
             return;
         }

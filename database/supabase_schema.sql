@@ -415,6 +415,11 @@ CREATE TABLE IF NOT EXISTS public.sales_agents (
 );
 
 -- 18. Request orders (sales dispatch requests)
+-- Nomor order WAJIB unik (indeks unik ditambahkan 2026-09-12). Sebelum itu,
+-- pemindai urutan di js/sales.js memakai regex ^[A-Z0-9]+ sehingga awalan agen
+-- berhuruf Arab tidak pernah terbaca dan urutannya mengulang: order id 80 dan 81
+-- sama-sama bernomor 'ما080926007' pada 2026-09-08, membuat
+-- roasting_plans.order_ref tidak bisa dipastikan miliknya yang mana.
 CREATE TABLE IF NOT EXISTS public.request_orders (
     id SERIAL PRIMARY KEY,
     order_number TEXT,
