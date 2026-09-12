@@ -1821,6 +1821,9 @@ async function loadPackingRequestsSection() {
                     <button class="btn btn-secondary btn-sm btn-print-order" data-id="${order.id}" style="flex: 1;">Print</button>
                     ${actionBtnHtml}
                 </div>
+                <div style="display: flex; gap: 8px; margin-top: 8px;">
+                    <button class="btn btn-sm btn-stop-order" data-order="${order.id}" style="flex: 1; background: transparent; border: 1px solid rgba(239,68,68,0.45); color: var(--danger);" ${hasPermission('packing_dispatch_checkout') ? '' : 'disabled title="No permission to stop orders"'} data-i18n="btn_unable_to_fulfill">Unable to Fulfill</button>
+                </div>
             </div>
         `;
     }
@@ -1860,7 +1863,292 @@ async function loadPackingRequestsSection() {
             const orderId = parseInt(btnPrint.getAttribute('data-id'));
             await printOrderDetail(orderId);
         }
+
+        // APPROVAL_REVISION_PLAN.md Fase 6 — Unable to Fulfill from packing
+        // (§3.9/§3.11: packing decides on its own, second action row).
+        const btnStop = e.target.closest('.btn-stop-order');
+        if (btnStop) {
+            const orderId = parseInt(btnStop.getAttribute('data-order'));
+            await openStopOrderDialog(orderId);
+        }
     };
+}
+
+// ==========================================================================
+// APPROVAL_REVISION_PLAN.md Fase 6 — UNABLE TO FULFILL FROM PACKING
+// ==========================================================================
+// Standalone from openDispatchCheckoutModal's undoCommittedQty on purpose:
+// this runs from the Order Requests card, not from inside that modal's
+// closure, and always unwinds the FULL committed amount for every item of
+// the order at once — not a partial, operator-typed undo. §5.3.
+
+// Gathers everything that would need to be reversed for one order, without
+// writing anything yet — used both to render the confirmation dialog and,
+// on confirm, to drive the actual refund/delete calls, so the numbers shown
+// to the operator are exactly the numbers acted on (same reasoning as
+// committedQtyBreakdown being shared between display and undo in
+// undoCommittedQty above).
+async function buildOrderUnwindBreakdown(orderId) {
+    const [{ data: orders }, { data: itemsAll }] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items')
+    ]);
+    const order = (orders || []).find(o => o.id === orderId);
+    if (!order) return null;
+    const orderItems = (itemsAll || []).filter(i => i.request_order_id === orderId);
+    const itemIds = orderItems.map(i => i.id);
+
+    const [movementsRes, bulkResRes, dispatchLotItemsRes] = await Promise.all([
+        itemIds.length
+            ? window.supabaseClient.from('packed_stock_movements').select('id, packed_coffee_lot_id, delta_pcs, ref_id').eq('ref_table', 'request_order_items').in('ref_id', itemIds)
+            : Promise.resolve({ data: [] }),
+        itemIds.length
+            ? window.supabaseClient.from('bulk_reservations').select('id, kg, request_order_item_id').in('request_order_item_id', itemIds)
+            : Promise.resolve({ data: [] }),
+        itemIds.length
+            ? window.supabaseClient.from('dispatch_lot_items').select('id, packed_coffee_lot_id, qty, request_order_item_id').in('request_order_item_id', itemIds)
+            : Promise.resolve({ data: [] })
+    ]);
+    const movements = movementsRes.data || [];
+    const bulkReservations = bulkResRes.data || [];
+    const dispatchLotItemsForOrder = dispatchLotItemsRes.data || [];
+
+    const { data: packedLots } = await fetchData('packed_coffee_lots');
+    const lotById = new Map((packedLots || []).map(l => [l.id, l]));
+    function lotLabel(lotId) {
+        const l = lotById.get(lotId);
+        if (!l) return `Lot #${lotId}`;
+        return l.strip_code ? `${l.strip_code} · ${l.lot_code}` : (l.lot_code || `Lot #${lotId}`);
+    }
+
+    // Net outstanding per (item, lot) — same shape/logic as
+    // committedQtyBreakdown further up this file, just keyed across every
+    // item of the order at once instead of one item at a time, since the
+    // refund calls below need the real item id as p_ref_id.
+    const perItemLotNet = new Map(); // "itemId:lotId" -> net delta
+    for (const m of movements) {
+        if (!m.packed_coffee_lot_id) continue;
+        const key = `${m.ref_id}:${m.packed_coffee_lot_id}`;
+        perItemLotNet.set(key, (perItemLotNet.get(key) || 0) + (parseInt(m.delta_pcs) || 0));
+    }
+    const ledgerCoveredKeys = new Set();
+    const refundTasks = []; // { itemId, lotId, qty, label } — the ledger-tracked ones
+    for (const [key, net] of perItemLotNet.entries()) {
+        const qty = -net;
+        if (qty <= 0) continue;
+        const [itemIdStr, lotIdStr] = key.split(':');
+        const lotId = parseInt(lotIdStr);
+        refundTasks.push({ itemId: parseInt(itemIdStr), lotId, qty, label: lotLabel(lotId) });
+        ledgerCoveredKeys.add(key);
+    }
+    // Legacy fallback: a dispatch_lot_items row whose (item, lot) pair has
+    // no ledger movement at all (pre-Phase-3 draw — same case
+    // committedQtyBreakdown's legacyRows/legacyQty handles).
+    for (const d of dispatchLotItemsForOrder) {
+        const key = `${d.request_order_item_id}:${d.packed_coffee_lot_id}`;
+        if (ledgerCoveredKeys.has(key)) continue;
+        const qty = parseInt(d.qty) || 0;
+        if (qty <= 0 || !d.packed_coffee_lot_id) continue;
+        refundTasks.push({ itemId: d.request_order_item_id, lotId: d.packed_coffee_lot_id, qty, label: lotLabel(d.packed_coffee_lot_id) });
+    }
+
+    // Aggregated purely for DISPLAY — two items in the same order can share
+    // a lot, and the confirmation dialog shows one number per lot, not one
+    // per item.
+    const byLotDisplay = new Map();
+    for (const t of refundTasks) {
+        byLotDisplay.set(t.lotId, { label: t.label, qty: (byLotDisplay.get(t.lotId)?.qty || 0) + t.qty });
+    }
+    const lotRefundsForDisplay = [...byLotDisplay.values()].sort((a, b) => b.qty - a.qty);
+    const totalLotQty = lotRefundsForDisplay.reduce((s, e) => s + e.qty, 0);
+
+    const bulkKg = bulkReservations.reduce((s, r) => s + (parseFloat(r.kg) || 0), 0);
+
+    const [{ data: plans }, { data: batches }, { data: greenbeans }, { data: recipes }] = await Promise.all([
+        fetchData('roasting_plans'),
+        fetchData('roast_batches'),
+        fetchData('green_coffee'),
+        fetchData('blend_recipes')
+    ]);
+    const orderPlans = (plans || []).filter(p => order.order_number && p.order_ref === order.order_number);
+    function planCoffeeName(p) {
+        if (p.coffee_type === 'Single') {
+            const g = (greenbeans || []).find(x => x.id === p.single_coffee_id);
+            return g ? g.name : 'Single Origin';
+        }
+        const r = (recipes || []).find(x => x.id === p.blend_recipe_id);
+        return r ? r.name : 'Blend Recipe';
+    }
+    // §5.3 — a plan with a logged batch cannot be cancelled: the coffee
+    // already exists as physical bulk stock. A plan with none is a paper
+    // plan only and gets deleted, same as deletePlan() elsewhere does for a
+    // plan with no batches.
+    const plansWithBatch = [];
+    const plansWithoutBatch = [];
+    for (const p of orderPlans) {
+        const hasBatch = (batches || []).some(b => b.roast_plan_id === p.id);
+        if (hasBatch) {
+            plansWithBatch.push({ id: p.id, date: p.plan_date, name: planCoffeeName(p), kg: parseFloat(p.fulfilled_roasted_kg) || parseFloat(p.target_roasted_kg) || 0 });
+        } else {
+            plansWithoutBatch.push(p);
+        }
+    }
+
+    return {
+        order, orderItems, itemIds,
+        refundTasks, lotRefundsForDisplay, totalLotQty,
+        bulkReservationIds: bulkReservations.map(r => r.id), bulkReservationCount: bulkReservations.length, bulkKg,
+        dispatchLotItemIdsToDelete: dispatchLotItemsForOrder.map(d => d.id),
+        plansWithoutBatch, plansWithBatch,
+        hasAnythingToUnwind: refundTasks.length > 0 || bulkReservations.length > 0 || orderPlans.length > 0
+    };
+}
+
+async function openStopOrderDialog(orderId) {
+    if (!hasPermission('packing_dispatch_checkout')) {
+        await showWarningModal(window.t ? window.t('alert_stop_order_denied') : "You don't have permission to stop this order.", false);
+        return;
+    }
+
+    const bd = await buildOrderUnwindBreakdown(orderId);
+    if (!bd) return;
+    const order = bd.order;
+
+    const lotRows = bd.lotRefundsForDisplay.slice(0, 3)
+        .map(e => `<div style="display:flex; justify-content:space-between; gap:12px; padding:6px 0; font-size:0.82rem;"><span style="font-family:monospace;">${e.label}</span><span style="font-variant-numeric:tabular-nums;">+${e.qty} pcs</span></div>`).join('');
+    const lotMoreCount = bd.lotRefundsForDisplay.length - 3;
+    const lotMoreRow = lotMoreCount > 0
+        ? `<div style="display:flex; justify-content:space-between; gap:12px; padding:6px 0; font-size:0.82rem; color:var(--text-muted);"><span>${(window.t ? window.t('lbl_and_n_more_lots') : 'and {count} more').replace('{count}', lotMoreCount)}</span></div>`
+        : '';
+    const stockSectionHtml = bd.refundTasks.length > 0 ? `
+        <div style="border:1px solid var(--border); border-radius:9px; overflow:hidden; margin-top:14px;">
+            <div style="padding:9px 13px; font-size:0.7rem; font-weight:800; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted); border-bottom:1px solid var(--border);">${(window.t ? window.t('lbl_stock_returned') : 'Stock returned') + ' · ' + bd.totalLotQty + ' pcs'}</div>
+            <div style="padding:2px 13px 8px;">${lotRows}${lotMoreRow}</div>
+        </div>` : '';
+
+    const bulkSectionHtml = bd.bulkReservationCount > 0 ? `
+        <div style="border:1px solid var(--border); border-radius:9px; overflow:hidden; margin-top:10px;">
+            <div style="padding:9px 13px; font-size:0.7rem; font-weight:800; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted);">${window.t ? window.t('lbl_bulk_released') : 'Bulk reservations released'}</div>
+            <div style="padding:0 13px 9px; font-size:0.82rem;">${bd.bulkReservationCount} (${bd.bulkKg.toFixed(1)} kg)</div>
+        </div>` : '';
+
+    const plansCancelledHtml = bd.plansWithoutBatch.length > 0 ? `
+        <div style="border:1px solid var(--border); border-radius:9px; overflow:hidden; margin-top:10px;">
+            <div style="padding:9px 13px; font-size:0.7rem; font-weight:800; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted);">${window.t ? window.t('lbl_plans_cancelled') : 'Roasting plans cancelled'}</div>
+            <div style="padding:0 13px 9px; font-size:0.82rem;">${bd.plansWithoutBatch.length}</div>
+        </div>` : '';
+
+    // §5.3 — the one part of this dialog that's mandatory whenever it
+    // applies, not just informative: without it, the bulk this produces has
+    // no visible link back to why it exists.
+    const stuckBatchHtml = bd.plansWithBatch.map(p => {
+        const line = (window.t ? window.t('hint_batch_already_roasted') : 'Plan {date} · {coffee} already roasted {kg} kg. That coffee now exists as bulk stock with no destination order — consider reassigning it to another order before continuing.')
+            .replace('{date}', p.date || '').replace('{coffee}', p.name).replace('{kg}', p.kg.toFixed(1));
+        return `<div style="margin-top:10px; background:rgba(255,209,102,0.14); border:1px solid rgba(255,209,102,0.42); border-left-width:3px; border-radius:8px; padding:11px 13px;">
+                    <div style="font-size:0.8rem; font-weight:800; color:var(--warning);">${window.t ? window.t('lbl_batch_already_roasted_title') : '⚠️ One roasting plan already produced a batch'}</div>
+                    <p style="font-size:0.81rem; margin-top:4px; color:var(--text-secondary);">${line}</p>
+                </div>`;
+    }).join('');
+
+    const nothingHtml = !bd.hasAnythingToUnwind
+        ? `<p style="font-size:0.85rem; color:var(--text-muted); margin-top:14px;">${window.t ? window.t('lbl_nothing_to_unwind') : 'No stock, reservations, or roasting plans need to be reversed for this order.'}</p>`
+        : '';
+
+    const html = `
+        <form id="modal-stop-order-form">
+            <p style="font-size:0.86rem; color:var(--text-secondary);">${(window.t ? window.t('hint_stop_order_intro') : 'This order will be stopped and not processed further.').replace('{number}', order.order_number || ('#ORD-' + order.id))}</p>
+            ${stockSectionHtml}
+            ${bulkSectionHtml}
+            ${plansCancelledHtml}
+            ${stuckBatchHtml}
+            ${nothingHtml}
+            <div class="form-group" style="margin-top:16px;">
+                <label class="form-label" data-i18n="lbl_decision_reason">Reason (optional)</label>
+                <textarea id="stop-order-reason" class="form-control" rows="2"></textarea>
+            </div>
+            <div class="modal-footer-actions">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                <button type="submit" class="btn btn-danger" data-i18n="btn_stop_order">Stop order</button>
+            </div>
+        </form>
+    `;
+    openModal((window.t ? window.t('modal_stop_order_title') : 'Unable to Fulfill {number}').replace('{number}', order.order_number || ('#ORD-' + order.id)), html);
+
+    document.getElementById('modal-stop-order-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const reasonEl = document.getElementById('stop-order-reason');
+        const reason = reasonEl ? reasonEl.value.trim() : '';
+        await stopOrderFromPacking(bd, reason || null);
+    });
+}
+
+async function stopOrderFromPacking(breakdown, reason) {
+    // §7.3 — re-checked here, not just at the dialog-open gate, matching
+    // every other decision path in this revision.
+    if (!hasPermission('packing_dispatch_checkout')) {
+        await showWarningModal(window.t ? window.t('alert_stop_order_denied') : "You don't have permission to stop this order.", false);
+        return;
+    }
+    const { order, orderItems, refundTasks, bulkReservationIds, dispatchLotItemIdsToDelete, plansWithoutBatch } = breakdown;
+
+    // 1) Refund every outstanding lot — §7.6: through the RPC, not a direct
+    // UPDATE, so the movement ledger records the refund instead of just the
+    // final number changing with no trail.
+    for (const t of refundTasks) {
+        const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
+            p_lot_id: t.lotId, p_pcs: t.qty,
+            p_operation: 'unable_to_fulfill', p_ref_table: 'request_order_items', p_ref_id: t.itemId,
+            p_reason: `Order ${order.order_number || order.id} marked Unable to Fulfill from packing`,
+            p_user: (currentUser && currentUser.name) || null
+        });
+        if (refundErr) console.error('refund_packed_lot RPC failed while stopping order:', refundErr);
+    }
+
+    // 2) Drop the dispatch_lot_items trail for this order — it no longer
+    // reflects anything real once every unit behind it has been refunded.
+    for (const id of dispatchLotItemIdsToDelete) {
+        await deleteData('dispatch_lot_items', id);
+    }
+
+    // 3) Release bulk reservations. Deleting the row IS the release — it
+    // never touched bulk_available in the first place (see the reservation
+    // comment in js/sales.js's approveSalesOrder), so there's nothing else
+    // to restore.
+    for (const id of bulkReservationIds) {
+        await deleteData('bulk_reservations', id);
+    }
+
+    // 4) Cancel roasting plans that never produced a batch — same as
+    // deletePlan() elsewhere in the app for a batch-less plan. Plans WITH a
+    // batch are deliberately left untouched (§5.3) — reported in the dialog
+    // instead of acted on.
+    for (const p of plansWithoutBatch) {
+        await deleteData('roasting_plans', p.id);
+    }
+
+    // 5) Close the books on the order itself.
+    order.status = 'Unable to Fulfill';
+    order.decided_by_id = currentUser ? currentUser.id : null;
+    order.decided_by_name = currentUser ? currentUser.name : null;
+    order.decided_at = new Date().toISOString();
+    order.decision_note = reason || null;
+    await saveData('request_orders', order);
+
+    for (const item of orderItems) {
+        item.quantity_unfulfilled = parseInt(item.quantity_requested) || 0;
+        // Everything committed for this item was just refunded above, so
+        // these no longer describe anything real either.
+        item.quantity_allocated = 0;
+        item.quantity_pending = 0;
+        item.quantity_prepared = 0;
+        await saveData('request_order_items', item);
+    }
+
+    const modalCloseBtn = document.getElementById('btn-close-modal');
+    if (modalCloseBtn) modalCloseBtn.click();
+
+    await loadPackingRequestsSection();
+    if (typeof scheduleDashboardRefresh === 'function') scheduleDashboardRefresh();
 }
 
 // ==========================================================================

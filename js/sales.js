@@ -802,6 +802,26 @@ async function loadSalesDispatchRequestsTable() {
         }
         
         const isPending = order.status === 'Pending Approval';
+
+        // APPROVAL_REVISION_PLAN.md Fase 3 — same chip as
+        // loadDispatchApprovalTable, so a shortfall reads the same way in
+        // both places it's ever shown (§1's reason for combining Fases 1-6
+        // into one piece of work in the first place).
+        const shortItemsReq = items.filter(i => (parseInt(i.quantity_unfulfilled) || 0) > 0);
+        let shortfallChipHtmlReq = '';
+        if (shortItemsReq.length === 1) {
+            const it = shortItemsReq[0];
+            const requestedQ = parseInt(it.quantity_requested) || 0;
+            const unfulfilledQ = parseInt(it.quantity_unfulfilled) || 0;
+            const processedQ = requestedQ - unfulfilledQ;
+            const line = (window.t ? window.t('chip_shortfall_single') : '{processed} of {requested} processed')
+                .replace('{processed}', processedQ).replace('{requested}', requestedQ);
+            shortfallChipHtmlReq = `<div style="margin-top:4px; display:inline-block; font-size:0.68rem; font-weight:700; background:rgba(255,209,102,0.16); color:var(--warning); border:1px solid rgba(255,209,102,0.40); padding:2px 8px; border-radius:999px;">${line}</div>`;
+        } else if (shortItemsReq.length > 1) {
+            const line = (window.t ? window.t('chip_shortfall_multi') : '{count} items short').replace('{count}', shortItemsReq.length);
+            shortfallChipHtmlReq = `<div style="margin-top:4px; display:inline-block; font-size:0.68rem; font-weight:700; background:rgba(255,209,102,0.16); color:var(--warning); border:1px solid rgba(255,209,102,0.40); padding:2px 8px; border-radius:999px;">${line}</div>`;
+        }
+
         let actionColumnContent = '';
         if (isPending) {
             actionColumnContent = `
@@ -816,12 +836,29 @@ async function loadSalesDispatchRequestsTable() {
                     Cancelled
                 </span>
             `;
+        } else if (order.status === 'Unable to Fulfill') {
+            // APPROVAL_REVISION_PLAN.md Fase 4/6 — this order was stopped
+            // either at approval or from packing; both land here the same
+            // way. No action buttons — Reopen (§3.7) is reached from the
+            // Dispatch Approval popup, not this table.
+            const dateOnlyReq = order.decided_at ? String(order.decided_at).split('T')[0] : '';
+            const decidedLineReq = (window.t ? window.t('lbl_order_decided_unable_by') : 'by {name} · {date}')
+                .replace('{name}', order.decided_by_name || '').replace('{date}', dateOnlyReq);
+            actionColumnContent = `
+                <div>
+                    <span style="color: var(--danger); font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.30); border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">
+                        <span style="display:inline-block; width:6px; height:6px; background:var(--danger); border-radius:50%;"></span> ${window.t ? window.t('status_unable_to_fulfill') : 'Unable to Fulfill'}
+                    </span>
+                    <div style="margin-top:4px; font-size:0.7rem; color:var(--text-muted);">${decidedLineReq}</div>
+                </div>
+            `;
         } else if (order.status === 'Dispatched') {
             actionColumnContent = `
                 <span style="color: #0891b2; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: rgba(6,182,212,0.1); border: 1px solid rgba(6,182,212,0.3); border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
                     Dispatched
                 </span>
+                ${shortfallChipHtmlReq}
             `;
         } else {
             const allItemsReady = items.every(item => item.item_status === 'Ready for Handover');
@@ -831,6 +868,7 @@ async function loadSalesDispatchRequestsTable() {
                     <span style="color: #15803d; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: #dcfce7; border: 1px solid #bbf7d0; border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">
                         <i class="lucide-check-circle" style="width:14px; height:14px;"></i> ${labelReadyToDispatch}
                     </span>
+                    ${shortfallChipHtmlReq}
                 `;
             } else {
                 const labelOnProgress = window.t ? window.t("status_on_progress") || "On Progress" : "On Progress";
@@ -838,6 +876,7 @@ async function loadSalesDispatchRequestsTable() {
                     <span style="color: #1d4ed8; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">
                         <span style="display:inline-block; width:6px; height:6px; background:#1d4ed8; border-radius:50%;"></span> ${labelOnProgress}
                     </span>
+                    ${shortfallChipHtmlReq}
                 `;
             }
         }
@@ -918,6 +957,37 @@ async function loadSalesDispatchRequestsTable() {
     if (typeof window.translatePage === 'function') window.translatePage();
 }
 
+// APPROVAL_REVISION_PLAN.md §3.8 — same bubble style as showFieldWarn (this
+// file, inside openSalesRequestModal) and the .custom-empty-warn class it
+// uses, but anchored to a disabled BUTTON instead of a field: this button
+// never fires an 'input'/'change' event to clean itself up on, so it's
+// removed on a timer instead, and on the next click anywhere in the
+// document (whichever comes first).
+function showEditLockedBubble(btnEl, message) {
+    if (!btnEl || !message) return;
+    const parent = btnEl.parentElement;
+    parent.style.position = 'relative';
+    const existing = parent.querySelector('.custom-empty-warn');
+    if (existing) existing.remove();
+    const bubble = document.createElement('div');
+    bubble.className = 'custom-empty-warn';
+    bubble.style = 'position: absolute; top: calc(100% + 6px); left: 0; background: var(--danger); color: #fff; padding: 5px 9px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; z-index: 20; max-width: 220px; line-height: 1.35; box-shadow: 0 2px 5px rgba(0,0,0,0.25);';
+    bubble.textContent = message;
+    parent.appendChild(bubble);
+    const remove = () => { if (bubble.parentNode) bubble.remove(); };
+    setTimeout(remove, 4000);
+    // Deferred with its own setTimeout(…, 0): this function runs from
+    // inside the SAME click event that's still bubbling up to document, so
+    // attaching the "click elsewhere closes it" listener synchronously
+    // would catch that very click on its way past and remove the bubble
+    // before it's ever seen.
+    setTimeout(() => {
+        document.addEventListener('click', function onceMore(ev) {
+            if (!bubble.contains(ev.target)) { remove(); document.removeEventListener('click', onceMore); }
+        });
+    }, 0);
+}
+
 async function loadDispatchApprovalTable() {
     const [
         { data: orders },
@@ -928,7 +998,9 @@ async function loadDispatchApprovalTable() {
         { data: customers },
         { data: packed },
         { data: roastBatches },
-        { data: codeDefinitions }
+        { data: codeDefinitions },
+        { data: dispatchLotItems },
+        { data: roastingPlans }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
@@ -938,7 +1010,9 @@ async function loadDispatchApprovalTable() {
         fetchData('customers'),
         fetchData('packed_coffee'),
         fetchData('roast_batches'),
-        fetchData('code_definitions')
+        fetchData('code_definitions'),
+        fetchData('dispatch_lot_items'),
+        fetchData('roasting_plans')
     ]);
     const tbody = document.getElementById('approval-orders-table-body');
     if (!tbody) return;
@@ -1031,6 +1105,47 @@ async function loadDispatchApprovalTable() {
 
         // Action column - same style as Sales Dispatch Request
         const isPending = order.status === 'Pending Approval';
+
+        // APPROVAL_REVISION_PLAN.md Fase 3 — shortfall chip, computed once
+        // per order and reused by whichever status branch below applies.
+        // Deliberately NOT shown on the Unable to Fulfill branch (§3.6): a
+        // fully-unfulfilled order already says so via its own badge, and
+        // repeating it as "N item(s) short" underneath would be redundant.
+        const shortItems = items.filter(i => (parseInt(i.quantity_unfulfilled) || 0) > 0);
+        let shortfallChipHtml = '';
+        if (shortItems.length === 1) {
+            const it = shortItems[0];
+            const requestedQ = parseInt(it.quantity_requested) || 0;
+            const unfulfilledQ = parseInt(it.quantity_unfulfilled) || 0;
+            const processedQ = requestedQ - unfulfilledQ;
+            const line = (window.t ? window.t('chip_shortfall_single') : '{processed} of {requested} processed')
+                .replace('{processed}', processedQ).replace('{requested}', requestedQ);
+            shortfallChipHtml = `<div style="margin-top:4px; display:inline-block; font-size:0.68rem; font-weight:700; background:rgba(255,209,102,0.16); color:var(--warning); border:1px solid rgba(255,209,102,0.40); padding:2px 8px; border-radius:999px;">${line}</div>`;
+        } else if (shortItems.length > 1) {
+            const line = (window.t ? window.t('chip_shortfall_multi') : '{count} items short').replace('{count}', shortItems.length);
+            shortfallChipHtml = `<div style="margin-top:4px; display:inline-block; font-size:0.68rem; font-weight:700; background:rgba(255,209,102,0.16); color:var(--warning); border:1px solid rgba(255,209,102,0.40); padding:2px 8px; border-radius:999px;">${line}</div>`;
+        }
+
+        // APPROVAL_REVISION_PLAN.md §5.2 — Edit is locked (meredup + inert,
+        // §3.8) once EITHER team has started real work on this order:
+        // stock has actually left the warehouse for it (dispatch_lot_items),
+        // or a roasting batch has been logged against one of its plans.
+        // Deliberately does NOT look at packed_stock_movements from the
+        // approval-time deduction — that's the leader's own bookkeeping,
+        // not a team having started, and counting it would lock Edit on
+        // every approved order before anyone had touched it (§5.2, and see
+        // the contrast with canReopenOrder's §5.1 checks which DO count
+        // that deduction — the two are intentionally different).
+        const orderItemIdSet = new Set(items.map(i => i.id));
+        const stockAlreadyPicked = (dispatchLotItems || []).some(d => orderItemIdSet.has(d.request_order_item_id));
+        const orderPlanIds = (roastingPlans || [])
+            .filter(p => order.order_number && p.order_ref === order.order_number)
+            .map(p => p.id);
+        const hasLoggedBatch = orderPlanIds.length > 0 && (roastBatches || []).some(b => orderPlanIds.includes(b.roast_plan_id));
+        const editLocked = stockAlreadyPicked || hasLoggedBatch;
+        const editLockedMsgKey = 'hint_edit_locked';
+        const editLockedMsgFallback = 'This order can no longer be edited — packing or roasting has already started.';
+
         let actionColumnContent = '';
         if (isPending) {
             actionColumnContent = `
@@ -1041,29 +1156,49 @@ async function loadDispatchApprovalTable() {
             `;
         } else if (order.status === 'Cancelled') {
             actionColumnContent = `<span style="color: #b91c1c; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">Cancelled</span>`;
+        } else if (order.status === 'Unable to Fulfill') {
+            // APPROVAL_REVISION_PLAN.md Fase 4 — badge + "by NAME · date"
+            // line. No action buttons here; Reopen (§3.7) lives in the
+            // detail popup only (opened by clicking the row), matching
+            // where Unable to Fulfill itself is triggered from (inside the
+            // Approve modal, not this row).
+            const dateOnly = order.decided_at ? String(order.decided_at).split('T')[0] : '';
+            const decidedLine = (window.t ? window.t('lbl_order_decided_unable_by') : 'by {name} · {date}')
+                .replace('{name}', order.decided_by_name || '').replace('{date}', dateOnly);
+            actionColumnContent = `
+                <div>
+                    <span style="color: var(--danger); font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.30); border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">
+                        <span style="display:inline-block; width:6px; height:6px; background:var(--danger); border-radius:50%;"></span> ${window.t ? window.t('status_unable_to_fulfill') : 'Unable to Fulfill'}
+                    </span>
+                    <div style="margin-top:4px; font-size:0.7rem; color:var(--text-muted);">${decidedLine}</div>
+                </div>
+            `;
         } else if (order.status === 'Dispatched') {
             actionColumnContent = `
                 <span style="color: #0891b2; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: rgba(6,182,212,0.1); border: 1px solid rgba(6,182,212,0.3); border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
                     Dispatched
                 </span>
+                ${shortfallChipHtml}
             `;
         } else if (order.status === 'Preparing') {
-            const canEdit = true;
             actionColumnContent = `
-                <div style="display:flex; flex-direction:column; gap:6px;">
+                <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-start;">
                     <span style="color: #8b5cf6; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: rgba(139,92,246,0.1); border: 1px solid rgba(139,92,246,0.3); border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;">
                         <span style="display:inline-block; width:6px; height:6px; background:#8b5cf6; border-radius:50%;"></span> Preparing
                     </span>
-                    ${canEdit ? `<button class="btn btn-primary btn-sm btn-edit-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>` : ''}
+                    ${shortfallChipHtml}
+                    ${editLocked
+                        ? `<button type="button" class="btn btn-primary btn-sm btn-edit-order-locked" data-msg-key="${editLockedMsgKey}" data-msg-fallback="${editLockedMsgFallback}" style="opacity:0.45; cursor:not-allowed;"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>`
+                        : `<button class="btn btn-primary btn-sm btn-edit-order" data-id="${order.id}"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="va-middle-mr-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit</button>`}
                 </div>
             `;
         } else {
             const allReady = items.every(item => item.item_status === 'Ready for Handover');
             if (allReady) {
-                actionColumnContent = `<span style="color: #15803d; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: #dcfce7; border: 1px solid #bbf7d0; border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;"><i class="lucide-check-circle" style="width:14px; height:14px;"></i> Completed</span>`;
+                actionColumnContent = `<span style="color: #15803d; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: #dcfce7; border: 1px solid #bbf7d0; border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;"><i class="lucide-check-circle" style="width:14px; height:14px;"></i> Completed</span>${shortfallChipHtml}`;
             } else {
-                actionColumnContent = `<span style="color: #1d4ed8; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;"><span style="display:inline-block; width:6px; height:6px; background:#1d4ed8; border-radius:50%;"></span> On Progress</span>`;
+                actionColumnContent = `<span style="color: #1d4ed8; font-weight: 700; font-size: 0.8rem; padding: 4px 10px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 9999px; display: inline-flex; align-items: center; gap: 4px;"><span style="display:inline-block; width:6px; height:6px; background:#1d4ed8; border-radius:50%;"></span> On Progress</span>${shortfallChipHtml}`;
             }
         }
 
@@ -1092,6 +1227,18 @@ async function loadDispatchApprovalTable() {
             approveSalesOrder(parseInt(btnApprove.getAttribute('data-id')));
             return;
         }
+        // APPROVAL_REVISION_PLAN.md §3.8 / §5.2 — checked BEFORE
+        // .btn-edit-order below and BEFORE the row-click popup fallback:
+        // the button stays visible but does nothing except explain why
+        // (§7.1 — this is the click handler, not just a CSS [disabled], so
+        // there's an actual guard here rather than relying on opacity/
+        // cursor styling alone).
+        const btnEditLocked = e.target.closest('.btn-edit-order-locked');
+        if (btnEditLocked) {
+            const msg = (window.t ? window.t(btnEditLocked.getAttribute('data-msg-key')) : null) || btnEditLocked.getAttribute('data-msg-fallback');
+            showEditLockedBubble(btnEditLocked, msg);
+            return;
+        }
         const btnEdit = e.target.closest('.btn-edit-order');
         if (btnEdit) {
             openSalesRequestModal(parseInt(btnEdit.getAttribute('data-id')));
@@ -1109,9 +1256,14 @@ async function loadDispatchApprovalTable() {
     if (typeof window.translatePage === 'function') window.translatePage();
 }
 
-function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines, packed, roastBatches, codeDefinitions) {
+async function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, machines, packed, roastBatches, codeDefinitions) {
     const order = (orders || []).find(o => o.id === orderId);
     if (!order) return;
+
+    // APPROVAL_REVISION_PLAN.md §5.1 — decided up front (this function is
+    // now async) so the Reopen button either renders correctly the first
+    // time or not at all, rather than flashing in then disappearing.
+    const canReopenThisOrder = order.status === 'Unable to Fulfill' ? await canReopenOrder(orderId) : false;
 
     const items = (orderItems || []).filter(i => i.request_order_id === orderId);
 
@@ -1170,19 +1322,48 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                        order.status === 'Preparing' ? 'rgba(139,92,246,0.15)' :
                        order.status === 'Approved' ? 'rgba(59,130,246,0.15)' :
                        order.status === 'Cancelled' ? 'rgba(239,68,68,0.15)' :
+                       order.status === 'Unable to Fulfill' ? 'rgba(239,68,68,0.15)' :
                        'rgba(245,158,11,0.15)';
     const textCol = order.status === 'Dispatched' ? '#0891b2' :
                     order.status === 'Completed' ? 'var(--success)' :
                     order.status === 'Preparing' ? '#8b5cf6' :
                     order.status === 'Approved' ? 'var(--info)' :
                     order.status === 'Cancelled' ? 'var(--danger)' :
+                    order.status === 'Unable to Fulfill' ? 'var(--danger)' :
                     'var(--warning)';
+
+    // APPROVAL_REVISION_PLAN.md Fase 3 (§3.5) — one banner, two colors:
+    // red for Unable to Fulfill, amber for an approved-with-shortfall order
+    // that has a note. Mirrors the pattern in js/purchasing.js
+    // (openPurchaseRequestDetailPopup's banner), including the same "reason
+    // is optional, so show the line WITHOUT a colored box when it's empty"
+    // rule (§3.7 / §7's Fase 4 verification step).
+    let decisionBannerHtml = '';
+    const decidedDateOnly = order.decided_at ? String(order.decided_at).split('T')[0] : '';
+    if (order.status === 'Unable to Fulfill') {
+        const line = (window.t ? window.t('lbl_order_decided_unable_by') : 'Unable to Fulfill by {name} · {date}')
+            .replace('{name}', order.decided_by_name || '').replace('{date}', decidedDateOnly);
+        decisionBannerHtml = order.decision_note
+            ? `<div style="background:rgba(239,68,68,0.10); border:1px solid rgba(239,68,68,0.35); border-left-width:3px; border-radius:8px; padding:12px 14px; margin-bottom:18px;">
+                 <div style="font-size:0.68rem; color:var(--danger); text-transform:uppercase; letter-spacing:0.05em;">${line}</div>
+                 <p style="font-size:0.85rem; margin-top:4px;">${order.decision_note}</p>
+               </div>`
+            : `<div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:18px;">${line}</div>`;
+    } else if (order.decision_note && order.decided_by_name) {
+        const line = (window.t ? window.t('lbl_order_partial_by') : 'Partially fulfilled by {name} · {date}')
+            .replace('{name}', order.decided_by_name).replace('{date}', decidedDateOnly);
+        decisionBannerHtml = `<div style="background:rgba(255,209,102,0.12); border:1px solid rgba(255,209,102,0.40); border-left-width:3px; border-radius:8px; padding:12px 14px; margin-bottom:18px;">
+                 <div style="font-size:0.68rem; color:var(--warning); text-transform:uppercase; letter-spacing:0.05em;">${line}</div>
+                 <p style="font-size:0.85rem; margin-top:4px;">${order.decision_note}</p>
+               </div>`;
+    }
 
     // Build items table
     let itemsHtml = '';
     let totalBags = 0;
     let totalAllocated = 0;
     let totalPending = 0;
+    let totalUnfulfilled = 0;
     items.forEach((item, idx) => {
         let coffeeName = '';
         if (item.coffee_code) {
@@ -1228,6 +1409,16 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
         totalAllocated += availableStock;
         totalPending += toPlan;
 
+        // APPROVAL_REVISION_PLAN.md Fase 3 — "Tidak diproses" column. Only
+        // meaningful once a decision has actually been made (quantity_
+        // unfulfilled stays 0 by default for a still-pending order, which
+        // renders correctly here as "—" without needing an isPending check).
+        const unfulfilledQty = parseInt(item.quantity_unfulfilled) || 0;
+        totalUnfulfilled += unfulfilledQty;
+        const unfulfilledCell = unfulfilledQty > 0
+            ? `<strong style="color: var(--warning);">${unfulfilledQty}</strong>`
+            : '<span style="color: var(--text-muted);">—</span>';
+
         itemsHtml += `
             <tr>
                 <td class="text-center">${idx + 1}</td>
@@ -1238,6 +1429,7 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                 <td class="text-center"><strong>${item.quantity_requested || 0}</strong></td>
                 <td class="text-center">${availableStock}</td>
                 <td class="text-center">${toPlan}</td>
+                <td class="text-center">${unfulfilledCell}</td>
             </tr>
         `;
     });
@@ -1258,6 +1450,8 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                 <h3 style="margin: 0; font-weight: 800; color: var(--text-primary);">Order Detail</h3>
                 <button type="button" class="btn btn-secondary btn-sm" id="btn-close-order-detail">&times;</button>
             </div>
+
+            ${decisionBannerHtml}
 
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; margin-bottom: 20px; font-size: 0.85rem;">
                 <div>
@@ -1292,6 +1486,7 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                             <th class="text-center">Qty (bags)</th>
                             <th class="text-center">Available Stock</th>
                             <th class="text-center">To Production Plan</th>
+                            <th class="text-center">Not Fulfilled</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1301,15 +1496,29 @@ function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, recipes, 
                             <td style="text-align: center; color: var(--primary);"><strong>${totalBags}</strong></td>
                             <td style="text-align: center; color: var(--primary);"><strong>${totalAllocated}</strong></td>
                             <td style="text-align: center; color: var(--primary);"><strong>${totalPending}</strong></td>
+                            <td style="text-align: center; color: ${totalUnfulfilled > 0 ? 'var(--warning)' : 'var(--primary)'};"><strong>${totalUnfulfilled}</strong></td>
                         </tr>
                     </tbody>
                 </table>
             </div>
+
+            ${canReopenThisOrder ? `
+            <div style="display: flex; justify-content: flex-end; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);">
+                <button type="button" class="btn btn-primary" id="btn-reopen-order" data-i18n="btn_reopen_order">${window.t ? window.t('btn_reopen_order') : 'Reopen'}</button>
+            </div>
+            ` : ''}
         </div>
     `;
 
     existingPopup.classList.remove('hidden');
     document.getElementById('btn-close-order-detail').onclick = () => existingPopup.classList.add('hidden');
+    const btnReopen = document.getElementById('btn-reopen-order');
+    if (btnReopen) {
+        btnReopen.addEventListener('click', async () => {
+            if (!await showWarningModal(window.t ? window.t('confirm_reopen') : 'Reopen this order? It will go back to Pending Approval.', true)) return;
+            await reopenOrder(orderId);
+        });
+    }
 }
 
 // Approve sales request order and allocate packed stock
@@ -1745,7 +1954,7 @@ async function approveSalesOrder(orderId) {
         const changeLbl = window.t ? window.t('btn_change_fulfillment') : 'Change fulfillment';
 
         htmlContent += `
-            <div class="approval-item-row" data-id="${item.id}" data-proposed-packed="${p.packed}" data-proposed-bulk="${p.bulk}" data-proposed-roast="${p.roast}" style="background: rgba(0,0,0,0.02); border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+            <div class="approval-item-row" data-id="${item.id}" data-requested="${parseInt(item.quantity_requested) || 0}" data-proposed-packed="${p.packed}" data-proposed-bulk="${p.bulk}" data-proposed-roast="${p.roast}" style="background: rgba(0,0,0,0.02); border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
                 <div style="font-weight: bold; margin-bottom: 8px; color: var(--text-primary);">${coffeeName} - ${size}g${machineLabel}</div>
                 <div style="display: flex; gap: 20px; font-size: 0.85rem; align-items: center;">
                     <div class="flex-1">
@@ -1777,6 +1986,17 @@ async function approveSalesOrder(orderId) {
                     </div>
                 </div>
 
+                <!-- APPROVAL_REVISION_PLAN.md Fase 1: shortfall warning. Hidden by
+                     default (recomputed and shown/hidden on every 'input' event on
+                     the three fields above — §3.4, must react to typing, not only
+                     on submit) — see the .inp-fulfill/.inp-bulk/.inp-prod listener
+                     wired further down, which is the single place that fills in
+                     the numbers and toggles [hidden]. -->
+                <div class="shortfall-warning hidden" style="margin-top: 12px; background: rgba(255,209,102,0.12); border: 1px solid rgba(255,209,102,0.40); border-left-width: 3px; border-radius: 8px; padding: 10px 12px; font-size: 0.8rem; color: var(--warning);">
+                    <span class="shortfall-warning-qty" style="font-weight: 700;"></span>
+                    <span style="display: block; margin-top: 3px; color: var(--text-secondary); font-weight: 400;" data-i18n="hint_shortfall_hangus">This remainder will not carry over — the sales team will need to submit a new request if it's still needed.</span>
+                </div>
+
                 <div class="machine-select-row" style="margin-top: 12px; ${p.roast > 0 ? '' : 'display: none;'}">
                     <label class="form-label" style="font-size: 0.75rem;">Machine for Production</label>
                     <select class="form-control sel-machine" style="padding: 6px 10px;">
@@ -1790,14 +2010,71 @@ async function approveSalesOrder(orderId) {
     
     htmlContent += `
             </div>
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border-color);">
-                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
-                <button type="submit" class="btn btn-primary" data-i18n="btn_confirm_approve">Confirm Approval</button>
+
+            <!-- APPROVAL_REVISION_PLAN.md §3.5 — one Reason box for the whole
+                 order, OPTIONAL, shared by both write paths from this modal:
+                 approving with a shortfall (Fase 2) and Unable to Fulfill
+                 (Fase 4). Both write it to the same decision_note column. -->
+            <div class="form-group" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+                <label class="form-label" data-i18n="lbl_decision_reason">Reason (optional)</label>
+                <textarea id="approve-decision-reason" class="form-control" rows="2" data-i18n-placeholder="hint_decision_reason_ph" placeholder="Why is this order short, or being marked unable to fulfill?"></textarea>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border-color);">
+                <button type="button" id="btn-unable-to-fulfill" class="btn" style="background: transparent; border: 1px solid rgba(239,68,68,0.45); color: var(--danger);" data-order-id="${orderId}" data-i18n="btn_unable_to_fulfill">Unable to Fulfill</button>
+                <div style="display: flex; gap: 12px;">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()" data-i18n="btn_cancel">Cancel</button>
+                    <button type="submit" class="btn btn-primary" data-i18n="btn_confirm_approve">Confirm Approval</button>
+                </div>
             </div>
         </form>
     `;
-    
+
     openModal(window.t ? window.t('modal_approve_order') : 'Approve Order', htmlContent);
+
+    // APPROVAL_REVISION_PLAN.md Fase 1 (§3.4): recompute + show/hide the
+    // shortfall box on every keystroke in any of the 3 fulfillment inputs —
+    // must react while typing, not just at submit time. Wired once per row
+    // here rather than inside the existing .inp-prod listener below, since
+    // that one only concerns machine/origin-row visibility and firing this
+    // off it too would couple two unrelated behaviors together.
+    function refreshShortfallWarning(row) {
+        const requested = parseInt(row.getAttribute('data-requested')) || 0;
+        const fVal = parseInt(row.querySelector('.inp-fulfill').value) || 0;
+        const bVal = parseInt(row.querySelector('.inp-bulk').value) || 0;
+        const pVal = parseInt(row.querySelector('.inp-prod').value) || 0;
+        const shortfall = Math.max(0, requested - (fVal + bVal + pVal));
+        const box = row.querySelector('.shortfall-warning');
+        if (!box) return;
+        if (shortfall > 0) {
+            const processed = requested - shortfall;
+            const qtyLbl = (window.t ? window.t('hint_shortfall_qty') : '{shortfall} of {requested} will not be processed')
+                .replace('{shortfall}', shortfall).replace('{processed}', processed).replace('{requested}', requested);
+            box.querySelector('.shortfall-warning-qty').textContent = qtyLbl;
+            box.classList.remove('hidden');
+        } else {
+            box.classList.add('hidden');
+        }
+    }
+    document.querySelectorAll('.approval-item-row').forEach(row => {
+        refreshShortfallWarning(row); // initial state matches the pre-filled proposal
+        ['inp-fulfill', 'inp-bulk', 'inp-prod'].forEach(cls => {
+            const inp = row.querySelector('.' + cls);
+            if (inp) inp.addEventListener('input', () => refreshShortfallWarning(row));
+        });
+    });
+
+    // APPROVAL_REVISION_PLAN.md Fase 4 — Unable to Fulfill from the approval
+    // modal (§3.2: this button, not a table-row action). Reads the same
+    // optional Reason box as a shortfall approval (§3.5).
+    const btnUnableToFulfill = document.getElementById('btn-unable-to-fulfill');
+    if (btnUnableToFulfill) {
+        btnUnableToFulfill.addEventListener('click', async () => {
+            const reasonEl = document.getElementById('approve-decision-reason');
+            const reason = reasonEl ? reasonEl.value.trim() : '';
+            await markOrderUnableToFulfill(orderId, reason || null);
+        });
+    }
 
     // Swaps the read-only proposal sentence for the 3-input manual edit
     // panel (and back). Re-syncs the machine/origin rows' visibility to
@@ -1920,6 +2197,14 @@ async function approveSalesOrder(orderId) {
             item.item_status = fQty >= (parseInt(item.quantity_requested) || 0)
                 ? 'Ready for Handover'
                 : (pQty > 0 ? 'Planned' : 'Packing');
+
+            // APPROVAL_REVISION_PLAN.md Fase 2 / §4 — SAVED, not derived from
+            // (requested - allocated - pending) at read time: those two keep
+            // changing as packing progresses, so a live subtraction stops
+            // meaning "deliberately not processed" within hours of approval.
+            // This is the one moment that quantity is actually decided, so
+            // it's the one moment it gets written down.
+            item.quantity_unfulfilled = Math.max(0, (parseInt(item.quantity_requested) || 0) - (fQty + bQty + pQty));
 
             await saveData('request_order_items', item);
             
@@ -2057,14 +2342,171 @@ async function approveSalesOrder(orderId) {
             }
         }
         
+        // APPROVAL_REVISION_PLAN.md §3.5 / Fase 2 — same optional Reason box
+        // Unable to Fulfill reads (§3.5: one column, both write paths).
+        // decided_by_* is stamped here too, even for a fully-fulfilled
+        // approval with no shortfall, so "who approved this" is on the
+        // record the same way Purchase Request already records it —
+        // harmless to fill in when there's nothing to explain.
+        const reasonElOnSubmit = document.getElementById('approve-decision-reason');
+        const reasonOnSubmit = reasonElOnSubmit ? reasonElOnSubmit.value.trim() : '';
+
         order.status = 'Preparing';
+        order.decided_by_id = currentUser ? currentUser.id : null;
+        order.decided_by_name = currentUser ? currentUser.name : null;
+        order.decided_at = new Date().toISOString();
+        order.decision_note = reasonOnSubmit || null;
         await saveData('request_orders', order);
-        
+
         modalContainer.classList.add('hidden');
-        
+
         loadHandoverSection();
         scheduleDashboardRefresh();
     });
+}
+
+// ============================================================
+// APPROVAL_REVISION_PLAN.md Fase 4 — UNABLE TO FULFILL (from approval)
+// ============================================================
+// Called from the "Unable to Fulfill" button inside the Approve modal
+// (§3.2) — reached BEFORE anything is processed: no packed stock cut, no
+// bulk reservation, no roasting plan. That's what makes this safe to do
+// with a plain write and no unwind logic, unlike the packing-side version
+// of the same status in js/packing.js (which DOES have to unwind work
+// already done — see stopOrderFromPacking there).
+async function markOrderUnableToFulfill(orderId, reason) {
+    // §7.3 — re-checked here, not just by hiding the button, same pattern
+    // as decidePurchaseRequest in js/purchasing.js.
+    if (!hasPermission('dispatch_approval_approve')) {
+        await showWarningModal(window.t ? window.t('alert_unable_to_fulfill_denied') : "You don't have permission to decide this order.", false);
+        return;
+    }
+
+    const [{ data: orders }, { data: items }] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items')
+    ]);
+    const order = (orders || []).find(o => o.id === orderId);
+    if (!order) return;
+    const orderItemsForThis = (items || []).filter(i => i.request_order_id === orderId);
+
+    order.status = 'Unable to Fulfill';
+    order.decided_by_id = currentUser ? currentUser.id : null;
+    order.decided_by_name = currentUser ? currentUser.name : null;
+    order.decided_at = new Date().toISOString();
+    order.decision_note = reason || null;
+    const { error } = await saveData('request_orders', order);
+    if (error) {
+        alert((window.t ? window.t('alert_order_failed') : "Ordering failed: {msg}").replace("{msg}", error.message));
+        return;
+    }
+
+    // §3.6 — the whole order is unfulfilled, so every item is, by
+    // definition, short its ENTIRE requested quantity. quantity_allocated /
+    // quantity_pending / quantity_prepared are left untouched — they were
+    // never set for a still-Pending order in the first place (§7.4).
+    for (const item of orderItemsForThis) {
+        item.quantity_unfulfilled = parseInt(item.quantity_requested) || 0;
+        await saveData('request_order_items', item);
+    }
+
+    const modalCloseBtn = document.getElementById('btn-close-modal');
+    if (modalCloseBtn) modalCloseBtn.click();
+
+    loadHandoverSection();
+    scheduleDashboardRefresh();
+}
+
+// ============================================================
+// APPROVAL_REVISION_PLAN.md §3.7 / §5.1 — REOPEN
+// ============================================================
+// Reverses an Unable to Fulfill order back to Pending Approval, but ONLY if
+// nothing downstream has happened since — see the three checks below.
+// Called from openOrderDetailPopup's footer. The button there is already
+// only rendered when all three come back empty (so a leader normally never
+// even sees a Reopen that would fail) — this function re-runs the exact
+// same three checks anyway per §7.1, because the write path must never
+// trust that the button's render-time state is still true by the time it's
+// clicked.
+async function canReopenOrder(orderId) {
+    const { data: items } = await fetchData('request_order_items');
+    const orderItemIds = (items || []).filter(i => i.request_order_id === orderId).map(i => i.id);
+    if (orderItemIds.length === 0) return true; // nothing to have touched
+
+    const { data: orders } = await fetchData('request_orders');
+    const order = (orders || []).find(o => o.id === orderId);
+    const orderNumber = order ? order.order_number : null;
+
+    // Direct filtered queries, not fetchData — these ledger/reservation
+    // tables can be large and are only ever needed here as an existence
+    // check for one order's items. Same query shape js/packing.js already
+    // uses to read packed_stock_movements for undo classification.
+    const [movementsRes, reservationsRes, plansRes] = await Promise.all([
+        window.supabaseClient.from('packed_stock_movements').select('delta_pcs, packed_coffee_lot_id')
+            .eq('ref_table', 'request_order_items').in('ref_id', orderItemIds),
+        window.supabaseClient.from('bulk_reservations').select('id')
+            .in('request_order_item_id', orderItemIds).limit(1),
+        orderNumber
+            ? window.supabaseClient.from('roasting_plans').select('id').eq('order_ref', orderNumber).limit(1)
+            : Promise.resolve({ data: [] })
+    ]);
+
+    // Net per lot, not "did a row ever exist" — a lot that was consumed then
+    // fully refunded (net 0) must NOT block Reopen. Only an outstanding (net
+    // negative) balance means stock is still actually cut. Mirrors the
+    // outstanding = -net convention committedQtyBreakdown uses in
+    // js/packing.js.
+    const netByLot = new Map();
+    for (const m of (movementsRes.data || [])) {
+        if (!m.packed_coffee_lot_id) continue;
+        netByLot.set(m.packed_coffee_lot_id, (netByLot.get(m.packed_coffee_lot_id) || 0) + (parseInt(m.delta_pcs) || 0));
+    }
+    const hasOutstandingMovement = [...netByLot.values()].some(net => net < 0);
+
+    const hasReservations = (reservationsRes.data || []).length > 0;
+    const hasPlans = (plansRes.data || []).length > 0;
+    return !hasOutstandingMovement && !hasReservations && !hasPlans;
+}
+
+async function reopenOrder(orderId) {
+    if (!hasPermission('dispatch_approval_approve')) {
+        await showWarningModal(window.t ? window.t('alert_unable_to_fulfill_denied') : "You don't have permission to decide this order.", false);
+        return;
+    }
+
+    const canReopen = await canReopenOrder(orderId);
+    if (!canReopen) {
+        await showWarningModal(window.t ? window.t('alert_reopen_denied') : "This order can no longer be reopened — packing or roasting has already started on it.", false);
+        return;
+    }
+
+    const { data: orders } = await fetchData('request_orders');
+    const order = (orders || []).find(o => o.id === orderId);
+    if (!order || order.status !== 'Unable to Fulfill') return;
+
+    order.status = 'Pending Approval';
+    order.decided_by_id = null;
+    order.decided_by_name = null;
+    order.decided_at = null;
+    order.decision_note = null;
+    const { error } = await saveData('request_orders', order);
+    if (error) {
+        alert((window.t ? window.t('alert_order_failed') : "Ordering failed: {msg}").replace("{msg}", error.message));
+        return;
+    }
+
+    const { data: items } = await fetchData('request_order_items');
+    const orderItemsForThis = (items || []).filter(i => i.request_order_id === orderId);
+    for (const item of orderItemsForThis) {
+        item.quantity_unfulfilled = 0;
+        await saveData('request_order_items', item);
+    }
+
+    const popup = document.getElementById('order-detail-overlay');
+    if (popup) popup.classList.add('hidden');
+
+    loadHandoverSection();
+    scheduleDashboardRefresh();
 }
 
 // ============================================================
