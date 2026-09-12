@@ -1,6 +1,6 @@
 # Rencana: Field Customer Bisa Diketik (Typeahead) di Modal Sales Request
 
-**Status:** Rencana, siap dikerjakan — **tapi harus menunggu**, lihat §7.1.
+**Status:** Rencana, siap dikerjakan. Tidak bertabrakan isi dengan pekerjaan lain — baca §7.1 soal urutan penulisan berkas.
 **Tanggal:** 2026-09-12
 
 ---
@@ -113,8 +113,10 @@ Perbarui callback `openAddCustomerShortcutModal` sesuai §5.3.
 
 ## 7. Ranjau yang harus diwaspadai
 
-**7.1 — TUNGGU pekerjaan revisi approval selesai lebih dulu.**
-Saat rencana ini ditulis, `APPROVAL_REVISION_PLAN.md` sedang dikerjakan dan sudah menambah ~422 baris di `js/sales.js` yang belum di-commit, termasuk di dalam handler submit `openSalesRequestModal` — file dan fungsi yang sama persis dengan yang disentuh rencana ini. Mengerjakan keduanya bersamaan berarti salah satu menimpa yang lain. **Mulai hanya setelah pekerjaan itu ter-commit.**
+**7.1 — Tunggu pekerjaan revisi approval ter-commit dulu — tapi bukan karena bentrok logika.**
+Sudah diperiksa 2026-09-12: dari ~422 baris yang ditambahkan `APPROVAL_REVISION_PLAN.md` ke `js/sales.js`, **nol** menyentuh `m-req-customer`, `buildCustomerOptionsHtml`, `selectedCustomerId`, maupun `visibleCustomersForDropdown`. Dua penyebutan `openSalesRequestModal` di sana hanyalah satu komentar dan satu baris konteks yang tidak berubah. Pekerjaannya ada di `loadDispatchApprovalTable`, `loadSalesDispatchRequestsTable`, dan fungsi-fungsi penghentian order yang baru.
+
+Jadi rencana ini **tidak bertabrakan secara isi**. Yang tetap berbahaya hanyalah dua penyunting menulis ke satu berkas di satu direktori kerja pada saat bersamaan — penyimpanan file menimpa seisi berkas, bukan menggabung per fungsi. Cukup pastikan hanya satu yang menulis pada satu waktu; kalau perlu paralel, pakai `git worktree` supaya masing-masing punya direktorinya sendiri.
 
 **7.2 — Datalist hanya menyarankan, tidak membatasi.**
 Elemen `<input>` menerima teks apa pun. Yang menegakkan aturan "harus terdaftar" adalah kode di §4, bukan elemennya. Jangan berasumsi browser yang menjaga.
