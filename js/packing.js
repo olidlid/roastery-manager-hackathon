@@ -5288,6 +5288,12 @@ async function loadPackingHistorySection() {
     const historyOrders = [...orders]
         .filter(o => {
             if (o.status === 'Dispatched') return true;
+            // Checked on the ORDER, never inferred from items: a stopped
+            // order's item_status can still read 'Ready for Handover' (orders
+            // stopped before c7fa3e8, or a later roasting-plan status sync),
+            // and would otherwise surface here with a Print Waybill button
+            // for stock that was already returned.
+            if (o.status === 'Unable to Fulfill') return false;
             // Include orders where ALL items are Ready for Handover
             const items = (orderItems || []).filter(i => i.request_order_id === o.id);
             if (items.length > 0 && items.every(i => i.item_status === 'Ready for Handover')) return true;
