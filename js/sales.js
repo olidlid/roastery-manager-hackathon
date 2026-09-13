@@ -898,7 +898,10 @@ async function loadSalesDispatchRequestsTable() {
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
             
-            const statusBadge = getItemStatusBadge(item.item_status);
+            // An Unable to Fulfill order resets item_status to the neutral
+            // 'Pending Approval', which reads as a contradiction beside the
+            // order's own badge — so the item pill is hidden for that status.
+            const statusBadge = order.status === 'Unable to Fulfill' ? '' : getItemStatusBadge(item.item_status);
             
             const itemMach = item.machine_id ? (machines || []).find(m => m.id === item.machine_id) : null;
             const machTag = itemMach ? `<span style="font-size:0.72rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:1px 6px; border-radius:4px; margin-left:6px;">${itemMach.name}</span>` : '';
@@ -1085,7 +1088,10 @@ async function loadDispatchApprovalTable() {
             const itemMach = item.machine_id ? (machines || []).find(m => m.id === item.machine_id) : null;
             const machTag = itemMach ? `<span style="font-size:0.72rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:1px 6px; border-radius:4px; margin-left:6px;">${itemMach.name}</span>` : '';
             
-            const statusBadge = getItemStatusBadge(item.item_status);
+            // An Unable to Fulfill order resets item_status to the neutral
+            // 'Pending Approval', which reads as a contradiction beside the
+            // order's own badge — so the item pill is hidden for that status.
+            const statusBadge = order.status === 'Unable to Fulfill' ? '' : getItemStatusBadge(item.item_status);
             
             itemsHtml += `
                 <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.02); padding: 8px; border-radius: 4px; border: 1px solid var(--border-color);">
