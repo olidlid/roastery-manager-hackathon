@@ -1,6 +1,6 @@
 # Rencana: Field Customer Bisa Diketik (Typeahead) di Modal Sales Request
 
-**Status:** Rencana, siap dikerjakan. Tidak bertabrakan isi dengan pekerjaan lain — baca §7.1 soal urutan penulisan berkas.
+**Status:** SELESAI 2026-09-13 — dikerjakan langsung, lihat commit `feat: field customer bisa diketik`. Fase 1–4 diuji; resolver diuji terhadap 13 kasus termasuk batas kategori.
 **Tanggal:** 2026-09-12
 
 ---

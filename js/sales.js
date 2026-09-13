@@ -94,8 +94,8 @@ async function loadCustomersSection(filterType) {
     filtered.forEach(c => {
         // CUSTOMER_CATEGORY_ROLE_PLAN.md: Supermarket added as a third
         // badge color (blue) distinct from Wholesale's green and Retail's
-        // amber, using the same lookup CUSTOMER_TYPE_BADGES that
-        // buildCustomerOptionsHtml below also reads, so the two never drift.
+        // amber, using the same lookup CUSTOMER_TYPE_BADGES that the order
+        // tables' order_type badges also read, so the two never drift.
         const typeBadge = CUSTOMER_TYPE_BADGES[c.type] || CUSTOMER_TYPE_BADGES['Retail'];
         
         const tr = document.createElement('tr');
@@ -131,21 +131,50 @@ async function loadCustomersSection(filterType) {
 // Field markup shared by the full Customer Directory Add/Edit modal and the
 // inline "+ Add Customer" shortcut opened from other forms (e.g. Submit
 // Sales Request Order) — kept in one place so the two never drift apart.
-// Wholesale/Retail grouped <option> list for a customer <select> — shared
-// by the initial Submit Sales Request Order render and the refresh that
-// runs after the "+ Add Customer" shortcut creates one, so both stay in
-// exactly the same shape/order.
-function buildCustomerOptionsHtml(customersList, selectedId) {
-    let html = '';
-    CUSTOMER_TYPES.forEach(type => {
-        const group = (customersList || []).filter(c => c.type === type && c.is_active !== false);
-        if (!group.length) return;
-        const meta = CUSTOMER_TYPE_META[type];
-        html += `<optgroup label="${meta.icon} ${type}">`;
-        html += group.map(c => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${c.customer_id} - ${c.name}</option>`).join('');
-        html += '</optgroup>';
-    });
-    return html;
+// Customer typeahead for Submit Sales Request Order (CUSTOMER_TYPEAHEAD_PLAN.md).
+// A plain <input list> + <datalist>, the same convention as the Found Item
+// modal (openFoundItemModal in js/app.js): every option's value is
+// "CODE — NAME", so the browser's own substring filtering matches a typed
+// name and a typed customer number alike. Shared by the initial render and
+// the refresh after the "+ Add Customer" shortcut creates one.
+//
+// The datalist only SUGGESTS — an <input> accepts any text (§7.2).
+// resolveCustomerInput below is what enforces that an order's customer
+// must already be registered.
+function customerDisplayText(c) {
+    return `${c.customer_id} — ${c.name}`;
+}
+
+// Customer names are user-entered, so they're escaped before landing in a
+// value="..." attribute (§7.4).
+function escapeCustomerAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function buildCustomerDatalistHtml(customersList) {
+    return (customersList || [])
+        .slice()
+        .sort((a, b) => String(a.customer_id).localeCompare(String(b.customer_id), undefined, { numeric: true }))
+        .map(c => `<option value="${escapeCustomerAttr(customerDisplayText(c))}"></option>`)
+        .join('');
+}
+
+// Typed text → customer row, or null (§4). Exact option text first (the
+// normal case: picked from the list), then the part before the separator as
+// a customer number, so typing "WHL-002" and stopping without picking still
+// resolves. Never by name alone — names aren't unique and can change.
+//
+// Only ever searches the list it's handed, which the caller builds from
+// filterCustomersByAccess — so a category a role can't see can't be reached
+// by typing its code either (§7.3).
+function resolveCustomerInput(text, customersList) {
+    const typed = (text || '').trim();
+    if (!typed) return null;
+    const list = customersList || [];
+    const exact = list.find(c => customerDisplayText(c) === typed);
+    if (exact) return exact;
+    const code = typed.split(/\s+[—-]\s+/)[0].trim().toLowerCase();
+    return list.find(c => String(c.customer_id).toLowerCase() === code) || null;
 }
 
 // `typeOptions` (CUSTOMER_CATEGORY_ROLE_PLAN.md Fase 3, Grup A) restricts
@@ -3003,18 +3032,26 @@ async function openSalesRequestModal(orderId = null) {
         .sort((a, b) => (parseFloat(a.gram) || 0) - (parseFloat(b.gram) || 0));
     const sizeOptionsHtml = visibleSizes.map(s => `<option value="${s.gram}">${s.label}</option>`).join('');
 
-    // Customer options — restricted to the current role's allowed categories.
-    // When editing an existing order, the order's own customer is always kept
-    // in the list even if outside the allowed categories, so re-saving an
-    // edit can never silently null out or swap the order's customer_id (the
-    // <select> would otherwise land on no matching <option> and submit empty).
+    // Selectable customers — restricted to the current role's allowed
+    // categories and to active customers. When editing an existing order, the
+    // order's own customer is always kept in the list even if it's outside
+    // the allowed categories or has since been deactivated, so re-saving an
+    // edit can never fail validation or silently swap the order's customer_id
+    // (§5.2). This one list feeds BOTH the datalist suggestions and
+    // resolveCustomerInput, so what's offered and what's accepted can't drift.
     const { data: customersList } = await fetchData('customers');
-    let visibleCustomersForDropdown = filterCustomersByAccess(customersList);
-    if (existingOrder && existingOrder.customer_id != null && !visibleCustomersForDropdown.some(c => c.id === existingOrder.customer_id)) {
-        const existingCust = (customersList || []).find(c => c.id === existingOrder.customer_id);
-        if (existingCust) visibleCustomersForDropdown = [...visibleCustomersForDropdown, existingCust];
-    }
-    const customerOptionsHtml = buildCustomerOptionsHtml(visibleCustomersForDropdown, existingOrder?.customer_id ?? null);
+    const computeSelectableCustomers = (allCustomers) => {
+        let list = filterCustomersByAccess(allCustomers).filter(c => c.is_active !== false);
+        if (existingOrder && existingOrder.customer_id != null && !list.some(c => c.id === existingOrder.customer_id)) {
+            const existingCust = (allCustomers || []).find(c => c.id === existingOrder.customer_id);
+            if (existingCust) list = [...list, existingCust];
+        }
+        return list;
+    };
+    let selectableCustomers = computeSelectableCustomers(customersList);
+    const existingOrderCustomer = existingOrder && existingOrder.customer_id != null
+        ? selectableCustomers.find(c => c.id === existingOrder.customer_id)
+        : null;
 
     // SALES_ORDER_REDESIGN_PLAN.md Fase 0/1: two-column layout (.so-grid,
     // added css/styles.css alongside Stock Release's .sr-grid) — left column
@@ -3044,10 +3081,8 @@ async function openSalesRequestModal(orderId = null) {
                     <div class="form-group mt-3">
                         <label class="form-label" data-i18n="lbl_req_customer">Customer</label>
                         <div style="display: flex; gap: 8px; align-items: stretch;">
-                            <select id="m-req-customer" class="form-control" required style="flex: 1;">
-                                <option value="" disabled selected>-- Select Customer --</option>
-                                ${customerOptionsHtml}
-                            </select>
+                            <input type="text" id="m-req-customer" class="form-control" list="m-req-customer-list" required autocomplete="off" style="flex: 1; min-width: 0;" placeholder="Type a customer name or number" data-i18n-placeholder="ph_req_customer_search" value="${existingOrderCustomer ? escapeCustomerAttr(customerDisplayText(existingOrderCustomer)) : ''}">
+                            <datalist id="m-req-customer-list">${buildCustomerDatalistHtml(selectableCustomers)}</datalist>
                             <button type="button" id="btn-req-add-customer" class="btn btn-add-customer" style="flex: 0 0 auto; white-space: nowrap;" title="Add new customer" data-i18n="btn_req_add_customer">Add New</button>
                         </div>
                     </div>
@@ -3142,25 +3177,29 @@ async function openSalesRequestModal(orderId = null) {
 
     const agentInput = document.getElementById('m-req-sales');
     const orderNoInput = document.getElementById('m-req-orderno');
-    const customerSelect = document.getElementById('m-req-customer');
+    const customerInput = document.getElementById('m-req-customer');
 
     // "+ Add Customer" shortcut — opens in its own stacked overlay (see
     // openAddCustomerShortcutModal) so this Request Order form and whatever
     // the user already filled in stay open underneath. Once saved, the new
-    // customer is added to the dropdown and selected automatically.
+    // customer is added to the suggestions AND to selectableCustomers (so it
+    // passes resolveCustomerInput at submit, §5.3), and filled in.
     document.getElementById('btn-req-add-customer').addEventListener('click', () => {
         openAddCustomerShortcutModal((newCustomer) => {
             if (!newCustomer) return;
             fetchData('customers').then(({ data: freshCustomers }) => {
                 // newCustomer was just created via openAddCustomerShortcutModal, which
                 // already restricts the type choice to allowedCustomerTypes() — so it's
-                // always inside the filtered set below, and selection right after is safe.
-                const visibleFreshCustomers = filterCustomersByAccess(freshCustomers);
-                customerSelect.innerHTML = `
-                    <option value="" disabled>-- Select Customer --</option>
-                    ${buildCustomerOptionsHtml(visibleFreshCustomers, newCustomer.id)}
-                `;
-                customerSelect.value = newCustomer.id;
+                // always inside the filtered set below.
+                selectableCustomers = computeSelectableCustomers(freshCustomers);
+                const listEl = document.getElementById('m-req-customer-list');
+                if (listEl) listEl.innerHTML = buildCustomerDatalistHtml(selectableCustomers);
+                const created = selectableCustomers.find(c => c.id === newCustomer.id);
+                if (created) {
+                    customerInput.value = customerDisplayText(created);
+                    // Clears any "not in list" bubble left from an earlier attempt.
+                    customerInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
             });
         });
     });
@@ -3716,20 +3755,27 @@ async function openSalesRequestModal(orderId = null) {
     // field, instead of a blocking native alert() (found via user feedback
     // 2026-08-31: the browser's own "Field is required!" dialog for a
     // missing Machine selection was jarring and didn't point at the field).
-    function showFieldWarn(el) {
+    // `message` is optional — omitted, it's the usual "Field is required!".
+    // A custom message can be a full sentence, so it wraps and anchors from
+    // the top instead: the fixed bottom offset would make a two-line bubble
+    // grow upward over the field it's pointing at.
+    function showFieldWarn(el, message) {
         if (!el) return;
         el.parentElement.style.position = 'relative';
         const existing = el.parentElement.querySelector('.custom-empty-warn');
         if (existing) existing.remove();
         const warnBubble = document.createElement('div');
         warnBubble.className = 'custom-empty-warn';
-        warnBubble.style = 'position: absolute; bottom: -28px; left: 0; background: var(--danger); color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; z-index: 10; white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);';
+        warnBubble.style = message
+            ? 'position: absolute; top: calc(100% + 6px); left: 0; background: var(--danger); color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 0.72rem; font-weight: 700; z-index: 10; white-space: normal; width: max-content; max-width: min(360px, 100%); line-height: 1.35; box-shadow: 0 2px 5px rgba(0,0,0,0.25);'
+            : 'position: absolute; bottom: -28px; left: 0; background: var(--danger); color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; z-index: 10; white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.25);';
         // No literal warning emoji here: alert_field_required already starts
         // with one in both en and ar, so prepending a second rendered
         // "⚠️ ⚠️ Field is required!" (found live 2026-09-06). js/roasting.js
         // never had this bug — matched to it. The fallback carries the emoji
         // so the no-i18n path still shows exactly one.
-        warnBubble.innerHTML = `${window.t ? window.t('alert_field_required') : '⚠️ Field is required!'}<div style="position: absolute; top: -4px; left: 10px; width: 8px; height: 8px; background: var(--danger); transform: rotate(45deg);"></div>`;
+        const text = message || (window.t ? window.t('alert_field_required') : '⚠️ Field is required!');
+        warnBubble.innerHTML = `${text}<div style="position: absolute; top: -4px; left: 10px; width: 8px; height: 8px; background: var(--danger); transform: rotate(45deg);"></div>`;
         el.parentElement.appendChild(warnBubble);
         const removeHandler = () => { if (warnBubble.parentNode) warnBubble.remove(); };
         el.addEventListener('input', removeHandler, { once: true });
@@ -3870,6 +3916,20 @@ async function openSalesRequestModal(orderId = null) {
         });
         if (!isValid) return;
 
+        // CUSTOMER_TYPEAHEAD_PLAN.md §4 — the customer field is free text, so
+        // non-empty isn't enough: it must resolve to a registered customer
+        // this role can see. On success the text is normalised to the
+        // canonical "CODE — NAME", so a bare "WHL-002" visibly becomes the
+        // customer it matched before the review step shows it.
+        const resolvedCustomer = resolveCustomerInput(customerInput.value, selectableCustomers);
+        if (!resolvedCustomer) {
+            showFieldWarn(customerInput, window.t
+                ? window.t('alert_customer_not_in_list')
+                : '⚠️ Please pick a customer from the list — orders can only go to a registered customer. New customer? Use Add New first.');
+            return;
+        }
+        customerInput.value = customerDisplayText(resolvedCustomer);
+
         if (cart.size === 0) {
             alert(window.t ? (window.t('alert_min_one_item') || 'At least one item is required.') : 'At least one item is required.');
             return;
@@ -3923,8 +3983,8 @@ async function openSalesRequestModal(orderId = null) {
     // same as the assembler screen behind it.
     function showConfirmStep() {
         const t = (key, fallback) => window.t ? window.t(key) : fallback;
-        const custSel = document.getElementById('m-req-customer');
-        const customerText = custSel && custSel.selectedIndex >= 0 ? custSel.options[custSel.selectedIndex].text : '';
+        const reviewCustomer = resolveCustomerInput(customerInput.value, selectableCustomers);
+        const customerText = reviewCustomer ? escapeCustomerAttr(customerDisplayText(reviewCustomer)) : '';
         const dash = '<span style="color:var(--text-muted);">—</span>';
         const metaRow = (label, value) => `
             <div>
@@ -4059,7 +4119,8 @@ async function openSalesRequestModal(orderId = null) {
         // since changed — that's the whole point). If the customer_id is being
         // changed on this save, order_type is re-snapshotted from the newly
         // selected customer's current type, exactly like a brand-new order would.
-        const selectedCustomerId = parseInt(document.getElementById('m-req-customer')?.value) || null;
+        const resolvedForSave = resolveCustomerInput(customerInput.value, selectableCustomers);
+        const selectedCustomerId = resolvedForSave ? resolvedForSave.id : null;
         const selectedCustomerForType = selectedCustomerId ? (customersList || []).find(c => c.id === selectedCustomerId) : null;
         const customerUnchanged = existingOrder && existingOrder.customer_id === selectedCustomerId;
 
