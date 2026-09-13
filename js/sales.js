@@ -2506,8 +2506,16 @@ async function reopenOrder(orderId) {
 
     const { data: items } = await fetchData('request_order_items');
     const orderItemsForThis = (items || []).filter(i => i.request_order_id === orderId);
+    // Restore each item to exactly its submit-time state. quantity_pending
+    // must go back to quantity_requested, not stay at the 0 that
+    // markOrderUnableToFulfill set: openSalesRequestModal subtracts every
+    // Pending/Preparing order's quantity_pending from available packed stock,
+    // so a reopened order left at 0 would silently stop claiming its stock.
     for (const item of orderItemsForThis) {
         item.quantity_unfulfilled = 0;
+        item.quantity_allocated = 0;
+        item.quantity_pending = parseInt(item.quantity_requested) || 0;
+        item.quantity_prepared = 0;
         item.item_status = 'Pending Approval';
         await saveData('request_order_items', item);
     }
