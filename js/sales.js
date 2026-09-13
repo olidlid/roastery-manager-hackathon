@@ -2070,6 +2070,7 @@ async function approveSalesOrder(orderId) {
     const btnUnableToFulfill = document.getElementById('btn-unable-to-fulfill');
     if (btnUnableToFulfill) {
         btnUnableToFulfill.addEventListener('click', async () => {
+            if (!await showWarningModal(window.t ? window.t('confirm_unable_to_fulfill') : 'Mark this order Unable to Fulfill? The whole order will stop being processed.', true)) return;
             const reasonEl = document.getElementById('approve-decision-reason');
             const reason = reasonEl ? reasonEl.value.trim() : '';
             await markOrderUnableToFulfill(orderId, reason || null);
@@ -2402,11 +2403,19 @@ async function markOrderUnableToFulfill(orderId, reason) {
     }
 
     // §3.6 — the whole order is unfulfilled, so every item is, by
-    // definition, short its ENTIRE requested quantity. quantity_allocated /
-    // quantity_pending / quantity_prepared are left untouched — they were
-    // never set for a still-Pending order in the first place (§7.4).
+    // definition, short its ENTIRE requested quantity. quantity_pending IS
+    // already set at submit time (js/sales.js's order-creation code sets it
+    // for every new item), so it must be zeroed here along with
+    // quantity_allocated / quantity_prepared — nothing was actually
+    // processed for a still-Pending order, so none of the three describe
+    // real work. Same reset stopOrderFromPacking in js/packing.js already
+    // does for the packing-side version of this status.
     for (const item of orderItemsForThis) {
         item.quantity_unfulfilled = parseInt(item.quantity_requested) || 0;
+        item.quantity_allocated = 0;
+        item.quantity_pending = 0;
+        item.quantity_prepared = 0;
+        item.item_status = 'Pending Approval';
         await saveData('request_order_items', item);
     }
 
@@ -2499,6 +2508,7 @@ async function reopenOrder(orderId) {
     const orderItemsForThis = (items || []).filter(i => i.request_order_id === orderId);
     for (const item of orderItemsForThis) {
         item.quantity_unfulfilled = 0;
+        item.item_status = 'Pending Approval';
         await saveData('request_order_items', item);
     }
 

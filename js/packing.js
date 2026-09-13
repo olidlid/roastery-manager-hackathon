@@ -2141,6 +2141,7 @@ async function stopOrderFromPacking(breakdown, reason) {
         item.quantity_allocated = 0;
         item.quantity_pending = 0;
         item.quantity_prepared = 0;
+        item.item_status = 'Pending Approval';
         await saveData('request_order_items', item);
     }
 
