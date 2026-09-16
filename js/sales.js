@@ -2738,6 +2738,18 @@ async function openSalesRequestModal(orderId = null) {
     const activeOrderIds = activeOrders.map(o => o.id);
     const committedPackedMap = {};
     const committedPackedMapByMachine = {};
+    // Trade-name claims, keyed by CODE instead of origin id:
+    // {type}-{code}-{size}-{machineId}. Every order line created by the
+    // current Sales Request modal is a trade-name line — coffee_code set,
+    // single_coffee_id / blend_recipe_id both null (verified on production
+    // 2026-09-16: all 121 lines since 2026-08-01). The id-keyed maps above
+    // could never match those, so until this map existed NO active order
+    // was ever subtracted from the stock sales sees here — two agents could
+    // promise the same bags and it only surfaced at approval. A trade-name
+    // claim can be filled from any origin sharing the code, so it's
+    // subtracted from the code GROUP's total (netCodeGroupStock below), not
+    // from any one origin.
+    const committedCodeByMachine = {};
     (requestOrderItems || []).forEach(item => {
         if (activeOrderIds.includes(item.request_order_id)) {
             if (orderId !== null && item.request_order_id === orderId) return;
@@ -2763,6 +2775,17 @@ async function openSalesRequestModal(orderId = null) {
             const qty = item.item_status === 'Ready for Handover'
                 ? 0
                 : Math.max(0, (parseInt(item.quantity_requested) || 0) - (parseInt(item.quantity_prepared) || 0) - (parseInt(item.quantity_unfulfilled) || 0));
+            if (item.coffee_code) {
+                // Machine-partitioned like every other claim here. A line
+                // with no machine can't be pinned to one machine's stock, so
+                // it isn't subtracted anywhere — same rule the id branch
+                // below has always applied.
+                if (item.machine_id) {
+                    const cKey = `${item.coffee_type}-${item.coffee_code}-${parseFloat(item.bag_size_g)}-${item.machine_id}`;
+                    committedCodeByMachine[cKey] = (committedCodeByMachine[cKey] || 0) + qty;
+                }
+                return;
+            }
             const key = `${item.coffee_type}-${cId}-${item.bag_size_g}`;
             committedPackedMap[key] = (committedPackedMap[key] || 0) + qty;
             if (item.machine_id) {
@@ -2778,6 +2801,19 @@ async function openSalesRequestModal(orderId = null) {
     Object.keys(perMachinePackedStocks).forEach(k => {
         perMachinePackedStocks[k] = Math.max(0, perMachinePackedStocks[k] - (committedPackedMapByMachine[k] || 0));
     });
+
+    // Packed stock sales can still promise for a trade-name code on one
+    // machine+size: the sum over every origin sharing the code, minus what
+    // active orders for that same code+machine+size still claim. The ONE
+    // place trade-name availability is computed — the Stock Check table,
+    // the Available stock table, and the packed-vs-production split all call
+    // this, so they can't disagree about a number.
+    const netCodeGroupStock = (type, code, ids, sizeG, machineId) => {
+        const size = parseFloat(sizeG);
+        const raw = (ids || []).reduce((sum, gid) => sum + (perMachinePackedStocks[`${type}-${gid}-${size}-${machineId}`] || 0), 0);
+        const claimed = code ? (committedCodeByMachine[`${type}-${code}-${size}-${machineId}`] || 0) : 0;
+        return Math.max(0, raw - claimed);
+    };
 
     // Bulk (already-roasted, not-yet-packed) stock is intentionally NOT
     // shown or computed anywhere in this modal (SALES_ORDER_REDESIGN_PLAN.md
@@ -2939,7 +2975,7 @@ async function openSalesRequestModal(orderId = null) {
             const sizeCells = machineList.map(m =>
                 visibleSizes.map((s, i) => {
                     const sz = parseFloat(s.gram);
-                    const stock = row.ids.reduce((sum, gid) => sum + (perMachinePackedStocks[`${row.type}-${gid}-${sz}-${m.id}`] || 0), 0);
+                    const stock = netCodeGroupStock(row.type, row.code, row.ids, sz, m.id);
                     return `<td style="text-align:center; padding:4px 6px; font-size:0.78rem; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${stock}</td>`;
                 }).join('')
             ).join('');
@@ -2947,8 +2983,7 @@ async function openSalesRequestModal(orderId = null) {
             // across every machine instead of scoped to one.
             const totalCells = visibleSizes.map((s, i) => {
                 const sz = parseFloat(s.gram);
-                const total = machineList.reduce((sum, m) =>
-                    sum + row.ids.reduce((s2, gid) => s2 + (perMachinePackedStocks[`${row.type}-${gid}-${sz}-${m.id}`] || 0), 0), 0);
+                const total = machineList.reduce((sum, m) => sum + netCodeGroupStock(row.type, row.code, row.ids, sz, m.id), 0);
                 return `<td style="text-align:center; padding:4px 6px; font-size:0.78rem; font-weight:700; ${i === 0 ? 'border-left:1px solid var(--border);' : ''}">${total}</td>`;
             }).join('');
             const yieldKg = row.gbKg * 0.85;
@@ -3404,7 +3439,7 @@ async function openSalesRequestModal(orderId = null) {
             visibleSizes.forEach(s => {
                 const sz = parseFloat(s.gram);
                 const rawMachStock = isGroup
-                    ? groupIds.reduce((sum, gid) => sum + (perMachinePackedStocks[`${type}-${gid}-${sz}-${m.id}`] || 0), 0)
+                    ? netCodeGroupStock(type, idStr.slice(5), groupIds, sz, m.id)
                     : (perMachinePackedStocks[`${type}-${coffeeId}-${sz}-${m.id}`] || 0);
                 const allocKey = `${coffeeVal}-${sz}-${m.id}`;
                 const totalAllocForKey = totalAlloc[allocKey] || 0;
@@ -3454,7 +3489,7 @@ async function openSalesRequestModal(orderId = null) {
             const otherAlloc = Math.max(0, totalAllocForThisSize - allocByThis);
             const totalPacked = selectedMachineId
                 ? (isGroup
-                    ? groupIds.reduce((sum, gid) => sum + (perMachinePackedStocks[`${type}-${gid}-${sizeG}-${selectedMachineId}`] || 0), 0)
+                    ? netCodeGroupStock(type, idStr.slice(5), groupIds, sizeG, selectedMachineId)
                     : (perMachinePackedStocks[`${type}-${coffeeId}-${sizeG}-${selectedMachineId}`] || 0))
                 : 0;
             currentSizeAvailPacked = Math.max(0, totalPacked - otherAlloc);
