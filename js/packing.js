@@ -1716,7 +1716,8 @@ async function loadPackingRequestsSection() {
         { data: recipes },
         { data: machines },
         { data: customers },
-        { data: codeDefinitions }
+        { data: codeDefinitions },
+        { data: dispatchLotItemsForCards }
     ] = await Promise.all([
         fetchData('request_orders'),
         fetchData('request_order_items'),
@@ -1724,8 +1725,18 @@ async function loadPackingRequestsSection() {
         fetchData('blend_recipes'),
         fetchData('machines'),
         fetchData('customers'),
-        fetchData('code_definitions')
+        fetchData('code_definitions'),
+        fetchData('dispatch_lot_items')
     ]);
+
+    // Pcs per order line that left through a PACKING checkout — the same
+    // rule openDispatchCheckoutModal's packingOutQty/orderMode use, so the
+    // card and the modal never disagree about whether an order is "partially
+    // dispatched". Approval-time deductions don't write this table.
+    const packingOutByItem = new Map();
+    (dispatchLotItemsForCards || []).forEach(d => {
+        packingOutByItem.set(d.request_order_item_id, (packingOutByItem.get(d.request_order_item_id) || 0) + (parseInt(d.qty) || 0));
+    });
 
     const container = document.getElementById('packing-requests-cards');
     const emptyEl = document.getElementById('packing-requests-empty');
@@ -1773,12 +1784,14 @@ async function loadPackingRequestsSection() {
         const allDone = items.length > 0 && items.every(isLineDone);
         const totalRequested = items.reduce((s, i) => s + (parseInt(i.quantity_requested) || 0), 0);
         const totalPrepared = items.reduce((s, i) => s + (parseInt(i.quantity_prepared) || 0), 0);
-        // "Sebagian keluar" — some stock is genuinely already out for this
-        // order, but at least one line still needs more. Deliberately NOT
-        // gated on how that stock got out (checkout vs. approval-time
-        // allocation) — see openDispatchCheckoutModal's orderMode() for the
-        // same reasoning applied to the modal's own single/two-panel switch.
-        const isPartial = !allDone && totalPrepared > 0;
+        // "Partially dispatched" — an order that has been checked out FROM
+        // PACKING at least once but still has a line to fill. Same rule as the
+        // modal's orderMode (user decision 2026-09-16): stock deducted at
+        // approval alone doesn't count, otherwise nearly every approved order
+        // would wear this status (68 of 94 recent lines were fully covered at
+        // approval with no packing checkout at all).
+        const totalPackingOut = items.reduce((s, i) => s + (packingOutByItem.get(i.id) || 0), 0);
+        const isPartial = !allDone && totalPackingOut > 0;
 
         const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
 
@@ -1814,7 +1827,7 @@ async function loadPackingRequestsSection() {
                 linesHtml += `
                     <div>
                         <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.82rem;">
-                            <span style="font-weight: 600;">${coffeeName}${alreadyPrepared > 0 ? `<span class="dc-card-badge-dispatched" data-i18n="card_badge_dispatched">${window.t ? window.t('card_badge_dispatched') : 'Dispatched'}</span>` : ''}</span>
+                            <span style="font-weight: 600;">${coffeeName}${(packingOutByItem.get(item.id) || 0) > 0 ? `<span class="dc-card-badge-dispatched" data-i18n="card_badge_dispatched">${window.t ? window.t('card_badge_dispatched') : 'Dispatched'}</span>` : ''}</span>
                             <span style="font-weight: 600; color: ${shortfall > 0 ? 'var(--danger)' : 'var(--success)'}; white-space: nowrap; flex-shrink: 0; text-align:right;">${alreadyPrepared} / ${totalRequestedLine}${shortfall > 0 ? `<span style="display:block; font-size:0.68rem; font-weight:500; color:var(--text-muted);">kurang ${shortfall}</span>` : ''}</span>
                         </div>
                         <div style="color: var(--text-muted); font-size: 0.76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</div>
@@ -1830,7 +1843,7 @@ async function loadPackingRequestsSection() {
                 linesHtml += `
                     <div>
                         <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.82rem;">
-                            <span style="font-weight: 600;">${coffeeName}${alreadyPrepared > 0 ? `<span class="dc-card-badge-dispatched" data-i18n="card_badge_dispatched">${window.t ? window.t('card_badge_dispatched') : 'Dispatched'}</span>` : ''}</span>
+                            <span style="font-weight: 600;">${coffeeName}${(packingOutByItem.get(item.id) || 0) > 0 ? `<span class="dc-card-badge-dispatched" data-i18n="card_badge_dispatched">${window.t ? window.t('card_badge_dispatched') : 'Dispatched'}</span>` : ''}</span>
                             <span style="font-weight: 600; color: ${isCompleted ? 'var(--success)' : 'var(--danger)'}; white-space: nowrap; flex-shrink: 0;">${alreadyPrepared} / ${totalRequestedLine}</span>
                         </div>
                         <div style="color: var(--text-muted); font-size: 0.76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</div>
@@ -2497,17 +2510,53 @@ async function openDispatchCheckoutModal(orderId) {
     // item_status or quantity_unfulfilled: either of those already shows up
     // as zero shortfall once itemTarget accounts for them.
     const itemIsClosed = (item) => itemShortfall(item) <= 0;
-    const stockForItem = (itemId) => (lotsByItem[itemId] || []).reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
+    // STOCK column = what this line can actually be filled from without a
+    // judgement call: every lot for a trade-name item, only the requested
+    // machine's lots otherwise. That is exactly the pool Autofill draws from
+    // (fifoLotForItemMachine), so the number the operator reads and the
+    // number Autofill can deliver are the same number. Summing every machine
+    // here (as this used to) could show stock that Autofill then refuses to
+    // take, with no hint why. Other-machine stock is still counted, just
+    // shown separately (stockLabelHtml) — it can still be Taken manually,
+    // behind the existing mismatch warning.
+    const lotUsableForItem = (item, lot) => !!item.coffee_code || lot.machineId === item.machine_id;
+    const stockForItem = (itemId) => {
+        const item = items.find(i => i.id === itemId);
+        return (lotsByItem[itemId] || []).filter(l => lotUsableForItem(item, l)).reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
+    };
+    const otherMachineStockForItem = (itemId) => {
+        const item = items.find(i => i.id === itemId);
+        return (lotsByItem[itemId] || []).filter(l => !lotUsableForItem(item, l)).reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
+    };
+    const stockLabelHtml = (itemId) => {
+        const other = otherMachineStockForItem(itemId);
+        return `${stockForItem(itemId)}${other > 0 ? `<span class="dc-stock-other" title="${other} pcs on another machine — can still be taken manually">+${other}</span>` : ''}`;
+    };
 
-    // Two-panel ("continuing") mode triggers the moment ANY line already has
-    // stock out for this order — whether from a previous packing checkout OR
-    // from packed stock claimed at approval time (both leave the same
-    // quantity_prepared trail, so there's no way to tell them apart, and no
-    // need to: either way that stock is genuinely already committed). This
-    // also naturally covers the pre-existing "Edit a fully-ready order to
-    // correct it" capability — a fully-done order reopens with an empty left
-    // pane and every line listed (with Reset) on the right.
-    const orderMode = () => (items.some(i => itemPreparedQty(i) > 0) ? 'continuing' : 'fresh');
+    // How much of a line left stock through a PACKING checkout, as opposed to
+    // being deducted at approval. Only a packing checkout writes
+    // dispatch_lot_items (approval's consume_packed_lot never does), so that
+    // table is the clean way to tell the two apart. Right-pane Reset
+    // decrements these rows (syncDispatchLotItems) and marks drained ones
+    // _undone, so this stays accurate within a session too.
+    const packingOutQty = (itemId) => dispatchLotItemsAll
+        .filter(d => d.request_order_item_id === itemId && !d._undone)
+        .reduce((s, d) => s + (parseInt(d.qty) || 0), 0);
+    const approvalOutQty = (item) => Math.max(0, itemPreparedQty(item) - packingOutQty(item.id));
+
+    // Two-panel ("continuing") mode only for an order that has actually been
+    // checked out partially FROM PACKING — user decision 2026-09-16
+    // (CHECKOUT_AUTOFILL_PLAN.md §1 decision 6), applied literally.
+    //
+    // It used to also trigger on approval-time deductions. Measured on
+    // production 2026-09-16: 68 of 94 recent order lines were covered in full
+    // at approval and never went through a packing checkout at all, so that
+    // rule opened almost every approved order in two panels and the
+    // single-column view in the mockup was practically never seen. Stock
+    // deducted at approval is still shown in the single-column view — see
+    // approvalNoteHtml and the lot list in renderItemLots — because those
+    // bags still have to be physically picked.
+    const orderMode = () => (items.some(i => packingOutQty(i.id) > 0) ? 'continuing' : 'fresh');
 
     const RESET_ICON_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/></svg>';
 
@@ -2523,7 +2572,10 @@ async function openDispatchCheckoutModal(orderId) {
         const stock = stockForItem(item.id);
         const remainingToFill = Math.max(0, shortfall - cartQty);
         const isShort = stock < remainingToFill;
-        const showDispatchedBadge = prepared > 0;
+        // "Dispatched" = left through a packing checkout (user: "item yang
+        // sudah keluar/checkout"), the same rule orderMode uses.
+        const showDispatchedBadge = packingOutQty(item.id) > 0;
+        const approvalQty = orderMode() === 'fresh' ? approvalOutQty(item) : 0;
         const hasFifoLot = !!fifoLotForItemMachine(item.id);
 
         let actionHtml;
@@ -2551,9 +2603,10 @@ async function openDispatchCheckoutModal(orderId) {
                     <span class="dc-title">${coffeeLabel(item)}</span>
                     <span class="dc-size">${item.bag_size_g}g</span>
                     ${showDispatchedBadge ? '<span class="dc-badge-dispatched">Dispatched</span>' : ''}
+                    ${approvalQty > 0 ? `<span class="dc-approval-note" title="Deducted from stock at approval — still to be picked from the lots listed when this row is opened">+${approvalQty} from approval</span>` : ''}
                 </span>
                 ${showMachine ? `<span class="dc-mach">${item.coffee_code ? '-' : machineName(item.machine_id)}</span>` : ''}
-                <span class="dc-stock" id="dc-stock-${item.id}" style="${isShort ? 'color: var(--warning, #d97706);' : ''}">${stock}</span>
+                <span class="dc-stock" id="dc-stock-${item.id}" style="${isShort ? 'color: var(--warning, #d97706);' : ''}">${stockLabelHtml(item.id)}</span>
                 <span class="dc-ready" id="dc-ready-${item.id}" style="color: ${cartQty >= shortfall ? 'var(--success)' : 'var(--danger)'};">${cartQty} / ${shortfall}</span>
                 <span class="dc-act" id="dc-act-${item.id}">${actionHtml}</span>
             </div>
@@ -2574,11 +2627,25 @@ async function openDispatchCheckoutModal(orderId) {
         const prepared = itemPreparedQty(item);
         const shortfall = itemShortfall(item);
 
-        // Suggested qty for a not-yet-taken lot = remaining shortfall for this
-        // line, split across lots in the order they'd naturally fill (FIFO
-        // first) — mirrors what addCartEntry's own spill would do, so what's
-        // pre-filled matches what actually happens on Take.
-        let toCover = Math.max(0, shortfall - alreadyInCartForItem(itemId));
+        // Stock already deducted for this line at approval, with the lots it
+        // came from — shown in the single-column view only, where there's no
+        // right pane to carry it. Those bags are gone from the system count
+        // but still sit on the shelf and must be picked; without this list
+        // the operator would see "0 / 6" for a 10-bag line and have no way to
+        // know which 4 bags to add. In this mode no packing checkout has
+        // happened for the order, so every outstanding ledger lot for the
+        // item IS the approval deduction.
+        let approvalHtml = '';
+        const approvalQty = orderMode() === 'fresh' ? approvalOutQty(item) : 0;
+        if (approvalQty > 0) {
+            const { ledgerLots, untrackedQty } = committedQtyBreakdown(itemId);
+            const lotLines = ledgerLots.map(e => `<div><span class="dc-committed-lot-code">${lotLabel(e.lotId)}</span><span class="dc-committed-lot-qty">${e.outstanding} pcs</span></div>`).join('');
+            approvalHtml = `
+                <div class="dc-approval-block">
+                    <div><b>${approvalQty} pcs</b> already deducted at approval — pick these too:</div>
+                    <div class="dc-committed-lots">${lotLines}${untrackedQty > 0 ? `<div><span class="dc-committed-lot-code" style="opacity:0.7;">lot not recorded</span><span class="dc-committed-lot-qty">${untrackedQty} pcs</span></div>` : ''}</div>
+                </div>`;
+        }
 
         // lotsByItem carries every lot for this coffee/size, empty ones
         // included, but the "is there anything to pick" decision is made
@@ -2594,18 +2661,13 @@ async function openDispatchCheckoutModal(orderId) {
             const avail = (liveRemaining[l.id] || 0) + taken;
             const mismatch = !item.coffee_code && l.machineId !== item.machine_id;
             const isFifo = (fifoLotForItemMachine(itemId) || {}).id === l.id;
-            // Only the lots that actually cover the remaining shortfall get a
-            // suggested qty; every lot past that point is left BLANK.
-            // Drawing extra stock is a deliberate act: type a number, and
-            // only then does Take become clickable.
-            let suggestQty = '';
-            if (!cartRow) {
-                const cover = Math.min(toCover, liveRemaining[l.id] || 0);
-                if (cover > 0) {
-                    suggestQty = cover;
-                    toCover -= cover;
-                }
-            }
+            // No suggested quantity, on any lot — CHECKOUT_AUTOFILL_PLAN.md §1
+            // decision 1 ("semua kolom jumlah mulai dari 0"). A number appears
+            // only once the operator types one or presses Autofill; Take stays
+            // disabled until then (onModalBodyInput enables it on typing).
+            // 7af6953 still pre-filled the lots covering the shortfall here,
+            // with Take already enabled, which is the accidental-draw risk the
+            // decision was made to remove.
             return `
                 <div class="dc-lot${mismatch ? ' dc-lot-mismatch' : ''}${taken > 0 ? ' dc-lot-taken' : ''}" data-item="${itemId}" data-lot="${l.id}">
                     <div class="dc-lot-main">
@@ -2615,8 +2677,8 @@ async function openDispatchCheckoutModal(orderId) {
                     <span class="dc-lot-stock">${avail}</span>
                     <span class="dc-lot-add">
                         <span class="dc-lot-check" ${taken > 0 ? '' : 'hidden'}>&#10003;</span>
-                        <input type="number" class="dc-lot-qty" min="1" placeholder="0" value="${taken > 0 ? taken : suggestQty}" ${avail <= 0 && taken === 0 ? 'disabled' : ''}>
-                        <button type="button" class="btn btn-primary btn-sm dc-lot-take" ${taken > 0 ? 'hidden' : ''} ${(avail <= 0 || (taken === 0 && suggestQty === '')) ? 'disabled' : ''}>Take</button>
+                        <input type="number" class="dc-lot-qty" min="1" placeholder="0" value="${taken > 0 ? taken : ''}" ${avail <= 0 && taken === 0 ? 'disabled' : ''}>
+                        <button type="button" class="btn btn-primary btn-sm dc-lot-take" ${taken > 0 ? 'hidden' : ''} ${(avail <= 0 || taken === 0) ? 'disabled' : ''}>Take</button>
                         <button type="button" class="btn btn-sm dc-lot-cancel" style="border:1px solid var(--border); background:none; color: var(--danger);" ${taken > 0 ? '' : 'hidden'}>Cancel</button>
                     </span>
                 </div>
@@ -2624,7 +2686,7 @@ async function openDispatchCheckoutModal(orderId) {
         }).join('') || `<div class="dc-lot-empty">No packed stock available for this coffee/size.</div>`;
 
         const lotsEl = document.getElementById(`dc-lots-${itemId}`);
-        if (lotsEl) lotsEl.innerHTML = rowsHtml;
+        if (lotsEl) lotsEl.innerHTML = approvalHtml + rowsHtml;
     }
 
     function refreshItemRowState(itemId) {
@@ -2641,7 +2703,7 @@ async function openDispatchCheckoutModal(orderId) {
         const stockEl = document.getElementById(`dc-stock-${itemId}`);
         const readyEl = document.getElementById(`dc-ready-${itemId}`);
         const actEl = document.getElementById(`dc-act-${itemId}`);
-        if (stockEl) { stockEl.textContent = stock; stockEl.style.color = isShort ? 'var(--warning, #d97706)' : ''; }
+        if (stockEl) { stockEl.innerHTML = stockLabelHtml(itemId); stockEl.style.color = isShort ? 'var(--warning, #d97706)' : ''; }
         if (readyEl) { readyEl.textContent = `${cartQty} / ${shortfall}`; readyEl.style.color = cartQty >= shortfall ? 'var(--success)' : 'var(--danger)'; }
         if (actEl) {
             const hasFifoLot = !!fifoLotForItemMachine(itemId);
@@ -3514,6 +3576,10 @@ const DISPATCH_CHECKOUT_STYLE = `
        attribute — without this, a hidden Take/Cancel button stays visible
        instead of actually disappearing. */
     #dispatch-checkout-body [hidden] { display: none !important; }
+    #dispatch-checkout-body .dc-stock-other { font-size: 0.68rem; font-weight: 600; color: var(--text-muted); margin-left: 4px; }
+    #dispatch-checkout-body .dc-approval-note { font-size: 0.62rem; font-weight: 600; color: var(--text-muted); border: 1px dashed var(--border); border-radius: 4px; padding: 1px 6px; flex: 0 0 auto; white-space: nowrap; }
+    #dispatch-checkout-body .dc-approval-block { font-size: 0.78rem; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; background: rgba(255,255,255,0.03); display: flex; flex-direction: column; gap: 6px; }
+    #dispatch-checkout-body .dc-committed-lots > div { display: flex; justify-content: space-between; gap: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.74rem; }
     #modal-container:has(#dispatch-checkout-body) .overlay-card > div:has(> #modal-title) {
         padding-bottom: 6px !important;
         margin-bottom: 8px !important;
