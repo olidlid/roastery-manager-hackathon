@@ -1821,10 +1821,16 @@ async function loadPackingRequestsSection() {
                     </div>
                 `;
             } else {
+                // Dispatched badge shown here too, not just in the isPartial
+                // branch above — a fully-done order's card used this plain
+                // layout and never got the badge at all, even though its
+                // lines have stock out just as genuinely (found in review
+                // after 7af6953: "user meminta badge untuk item yang keluar
+                // sebagian maupun penuh").
                 linesHtml += `
                     <div>
                         <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.82rem;">
-                            <span style="font-weight: 600;">${coffeeName}</span>
+                            <span style="font-weight: 600;">${coffeeName}${alreadyPrepared > 0 ? `<span class="dc-card-badge-dispatched" data-i18n="card_badge_dispatched">${window.t ? window.t('card_badge_dispatched') : 'Dispatched'}</span>` : ''}</span>
                             <span style="font-weight: 600; color: ${isCompleted ? 'var(--success)' : 'var(--danger)'}; white-space: nowrap; flex-shrink: 0;">${alreadyPrepared} / ${totalRequestedLine}</span>
                         </div>
                         <div style="color: var(--text-muted); font-size: 0.76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</div>
@@ -2476,12 +2482,21 @@ async function openDispatchCheckoutModal(orderId) {
     const itemRequested = (item) => parseInt(item.quantity_requested) || 0;
     const itemPreparedQty = (item) => parseInt(item.quantity_prepared) || 0;
     const itemUnfulfilledQty = (item) => parseInt(item.quantity_unfulfilled) || 0;
-    // A line with nothing left to pick — either it was fully checked out
-    // (status flips to Ready for Handover, same as before this feature), or
-    // an earlier Checkout finalized its shortfall as unfulfilled (§4 Pilihan
-    // 1). Either way, Reset (§5) is the only thing that can reopen it.
-    const itemIsClosed = (item) => item.item_status === 'Ready for Handover' || itemUnfulfilledQty(item) > 0;
-    const itemShortfall = (item) => Math.max(0, itemRequested(item) - itemPreparedQty(item));
+    // §5.3 fix (found live 2026-09-16 testing 7af6953): quantity_unfulfilled
+    // isn't only written by this modal's own Pilihan 1 — the LEADER can also
+    // write it at approval time via a partial fulfillment (a leader approving
+    // 3 of 10 bags). The two are indistinguishable from the column alone, so
+    // "how much this line is actually still asked to deliver" is
+    // requested MINUS whatever's been excused, not requested outright.
+    // Every other measure in this modal derives from that one target now —
+    // there is no second formula anywhere else to keep in sync with this one.
+    const itemTarget = (item) => Math.max(0, itemRequested(item) - itemUnfulfilledQty(item));
+    const itemShortfall = (item) => Math.max(0, itemTarget(item) - itemPreparedQty(item));
+    // A line with nothing left to pick, full stop — closed is just
+    // "shortfall is zero" under the definition above. No separate check on
+    // item_status or quantity_unfulfilled: either of those already shows up
+    // as zero shortfall once itemTarget accounts for them.
+    const itemIsClosed = (item) => itemShortfall(item) <= 0;
     const stockForItem = (itemId) => (lotsByItem[itemId] || []).reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
 
     // Two-panel ("continuing") mode triggers the moment ANY line already has
@@ -2518,8 +2533,18 @@ async function openDispatchCheckoutModal(orderId) {
             actionHtml = `<button type="button" class="btn btn-primary btn-sm dc-row-autofill" data-item="${item.id}" ${(remainingToFill <= 0 || !hasFifoLot) ? 'disabled' : ''}>Autofill</button>`;
         }
 
+        // A <button> for the row (as this used to be) can't contain the
+        // Autofill/Reset <button> next to it — the HTML parser closes the
+        // outer button at the first nested one, so the inner button ends up
+        // as a stray sibling BELOW the row instead of inside it (found live
+        // testing 7af6953: clicking the row's own Autofill did nothing —
+        // that click landed on the row toggle, not the button, because the
+        // real button had already been ejected outside it by the parser).
+        // A plain div with role="button" avoids the nesting rule entirely;
+        // Enter/Space are wired in the keydown handler below to keep it
+        // keyboard-operable.
         return `
-            <button type="button" class="dc-item-row${showMachine ? '' : ' dc-item-row-compact'}" data-item="${item.id}" aria-expanded="false" aria-controls="dc-lots-${item.id}">
+            <div role="button" tabindex="0" class="dc-item-row${showMachine ? '' : ' dc-item-row-compact'}" data-item="${item.id}" aria-expanded="false" aria-controls="dc-lots-${item.id}">
                 <span class="dc-item-name">
                     <span class="dc-chev">&#9656;</span>
                     ${itemCode(item) !== '-' ? `<span class="dc-code">${itemCode(item)}</span>` : ''}
@@ -2530,8 +2555,8 @@ async function openDispatchCheckoutModal(orderId) {
                 ${showMachine ? `<span class="dc-mach">${item.coffee_code ? '-' : machineName(item.machine_id)}</span>` : ''}
                 <span class="dc-stock" id="dc-stock-${item.id}" style="${isShort ? 'color: var(--warning, #d97706);' : ''}">${stock}</span>
                 <span class="dc-ready" id="dc-ready-${item.id}" style="color: ${cartQty >= shortfall ? 'var(--success)' : 'var(--danger)'};">${cartQty} / ${shortfall}</span>
-                <span class="dc-act" id="dc-act-${item.id}" onclick="event.stopPropagation()">${actionHtml}</span>
-            </button>
+                <span class="dc-act" id="dc-act-${item.id}">${actionHtml}</span>
+            </div>
             <div id="dc-lots-${item.id}" class="dc-lots hidden"></div>
         `;
     }
@@ -2664,12 +2689,19 @@ async function openDispatchCheckoutModal(orderId) {
         const rows = items.map(item => {
             const requested = itemRequested(item);
             const prepared = itemPreparedQty(item);
+            const unfulfilled = itemUnfulfilledQty(item);
             const shortfall = itemShortfall(item);
             const canReset = prepared > 0;
+            // A leader's partial approval (or an earlier Pilihan 1) can leave
+            // quantity_unfulfilled > 0 while this row still shows a nonzero
+            // Kurang against a SMALLER target — e.g. Diminta 10, Keluar 0,
+            // Kurang 3, with 7 excused. Without this note that reads like a
+            // math error; said explicitly here instead.
+            const excusedNote = unfulfilled > 0 ? `<div class="dc-sum-meta">${unfulfilled} tidak terpenuhi</div>` : '';
             return `
                 <tr>
                     <td>${coffeeLabel(item)}<div class="dc-sum-meta">${item.bag_size_g}g</div></td>
-                    <td>${requested}</td>
+                    <td>${requested}${excusedNote}</td>
                     <td class="${shortfall === 0 ? 'dc-sum-ok' : ''}">${prepared}</td>
                     <td class="${shortfall > 0 ? 'dc-sum-short' : ''}">${shortfall > 0 ? shortfall : '&mdash;'}</td>
                     <td class="dc-sum-act">${canReset ? `<button type="button" class="btn dc-icon-btn dc-icon-btn-danger dc-committed-reset" data-item="${item.id}" title="Kembalikan ke stok">${RESET_ICON_SVG}</button>` : ''}</td>
@@ -2716,7 +2748,10 @@ async function openDispatchCheckoutModal(orderId) {
     // ------------------------------------------------------------------
     function render() {
         const mode = orderMode();
-        const titleSuffix = mode === 'continuing' ? ' &middot; Continued' : '';
+        // openModal sets textContent, not innerHTML — an HTML entity here
+        // would render as the literal text "&middot;" (found live testing
+        // 7af6953). Use the character directly.
+        const titleSuffix = mode === 'continuing' ? ' · Continued' : '';
         const orderInfoHtml = `
             <div class="dc-order-info">
                 <div>
@@ -2944,6 +2979,16 @@ async function openDispatchCheckoutModal(orderId) {
         const prepared = itemPreparedQty(item);
         if (prepared <= 0) return;
 
+        // Guard claimed BEFORE the confirmation dialog, not after (found live
+        // testing 7af6953): showWarningModal binds a fresh keydown listener
+        // on every call, so two of its dialogs open at once could both be
+        // dismissed by one Enter press — and refund_packed_lot has no upper
+        // bound (§5.5.2), so a double-fire here would double the refund.
+        // Released again below if the operator cancels.
+        resettingItems.add(itemId);
+        const iconBtn = document.querySelector(`.dc-committed-reset[data-item="${itemId}"]`);
+        if (iconBtn) iconBtn.disabled = true;
+
         const breakdown = committedQtyBreakdown(itemId);
         const lines = [
             ...breakdown.ledgerLots.map(e => `${lotLabel(e.lotId)} — ${e.outstanding} pcs`),
@@ -2956,14 +3001,18 @@ async function openDispatchCheckoutModal(orderId) {
             // the operator isn't surprised the number below doesn't fall to 0.
             msg += `${breakdown.untrackedQty} pcs tidak punya catatan lot dan tidak bisa dikembalikan otomatis.\n\n`;
         }
-        msg += `Total akan kembali ke lot asalnya dan tercatat di buku besar. Item ini akan muncul lagi di daftar kiri dengan target penuh (${item.quantity_requested} pcs).`;
+        // Target here is itemTarget, not the raw quantity_requested — a line
+        // the leader already partially excused (quantity_unfulfilled from
+        // approval) reopens to THAT target, not to the original full order
+        // quantity, since Reset never touches quantity_unfulfilled (below).
+        msg += `Total akan kembali ke lot asalnya dan tercatat di buku besar. Item ini akan muncul lagi di daftar kiri dengan target penuh (${itemTarget(item)} pcs).`;
 
         const ok = await showWarningModal(msg, true, 'Reset Stock?', 'Yes, Return to Stock');
-        if (!ok) return;
-
-        resettingItems.add(itemId);
-        const iconBtn = document.querySelector(`.dc-committed-reset[data-item="${itemId}"]`);
-        if (iconBtn) iconBtn.disabled = true;
+        if (!ok) {
+            resettingItems.delete(itemId);
+            if (iconBtn && document.body.contains(iconBtn)) iconBtn.disabled = false;
+            return;
+        }
 
         try {
             let refunded = 0;
@@ -3033,12 +3082,16 @@ async function openDispatchCheckoutModal(orderId) {
             const newPrepared = Math.max(0, prepared - refunded);
             item.quantity_prepared = newPrepared;
             item.quantity_allocated = Math.min(parseInt(item.quantity_allocated) || 0, newPrepared);
-            // Reset always reopens the line fully, even one an earlier
-            // Checkout (Pilihan 1) had formally closed as unfulfilled — this
-            // reversal undoes that decision too, on purpose (§5.4).
-            item.quantity_unfulfilled = 0;
+            // §5.3, as written: quantity_unfulfilled is NOT touched by Reset.
+            // It can hold a LEADER's decision from a partial approval, and
+            // Reset is a stock action, not a fulfillment decision — bringing
+            // stock back for a line the leader excused part of must not also
+            // erase that exclusion (found live testing 7af6953: it did,
+            // silently raising the line's target back to the full order
+            // quantity and letting Autofill overdraw past what was approved).
+            const unfulfilled = itemUnfulfilledQty(item);
             const requested = itemRequested(item);
-            item.item_status = newPrepared >= requested ? 'Ready for Handover' : 'Packing';
+            item.item_status = (newPrepared + unfulfilled) >= requested ? 'Ready for Handover' : 'Packing';
             await saveData('request_order_items', item);
 
             if (sawUnknownLot) {
@@ -3081,9 +3134,12 @@ async function openDispatchCheckoutModal(orderId) {
 
         // Predict, from current DB state + the cart (nothing written yet),
         // which lines would still be short after this checkout — decides
-        // whether the choice dialog is needed at all.
+        // whether the choice dialog is needed at all. Through itemShortfall,
+        // not a second formula — a line the leader already excused part of
+        // via quantity_unfulfilled must not come back here asking for the
+        // full original quantity_requested.
         const shortAfter = items
-            .map(item => ({ item, short: Math.max(0, itemRequested(item) - itemPreparedQty(item) - alreadyInCartForItem(item.id)) }))
+            .map(item => ({ item, short: Math.max(0, itemShortfall(item) - alreadyInCartForItem(item.id)) }))
             .filter(x => x.short > 0 && !itemIsClosed(x.item));
 
         if (shortAfter.length === 0) {
@@ -3210,29 +3266,36 @@ async function openDispatchCheckoutModal(orderId) {
         // operator never added anything for can still be short and still
         // needs finalizing under Pilihan 1 (§4 point 1: "setiap baris").
         //
-        // A line already permanently closed by an EARLIER Pilihan 1 round
-        // (quantity_unfulfilled > 0 from before this call) is skipped
-        // entirely — otherwise picking "proses sebagian" on THIS round's
-        // other lines would silently reopen it by recomputing item_status
-        // from a fresh row that still reads short.
+        // No skip for a line that already carries quantity_unfulfilled > 0
+        // from before this call (removed after 7af6953's live test) — under
+        // itemShortfall's unified target, such a line simply has nothing in
+        // the cart to begin with (the UI never offered it), so touching it
+        // here is a no-op in the common case, and stops being a silent gap
+        // the day a scan or another path credits it directly.
+        //
+        // Bug 1 fix (found live testing 7af6953): quantity_unfulfilled can
+        // already carry a LEADER's decision from a partial approval — adding
+        // to it, never overwriting it, is what keeps that decision intact.
         let stillShort = false;
         for (const item of items) {
             const fresh = (freshItems || []).find(i => i.id === item.id);
             if (!fresh) continue;
-            if ((parseInt(fresh.quantity_unfulfilled) || 0) > 0) continue;
 
             const checkoutQty = qtyByItem.get(item.id) || 0;
             const requested = parseInt(fresh.quantity_requested) || 0;
+            const unfulfilledOld = parseInt(fresh.quantity_unfulfilled) || 0;
             const newPrepared = (parseInt(fresh.quantity_prepared) || 0) + checkoutQty;
             fresh.quantity_prepared = newPrepared;
-            const shortAfterThis = Math.max(0, requested - newPrepared);
 
-            if (choice === 'finish' && shortAfterThis > 0) {
-                fresh.quantity_unfulfilled = shortAfterThis;
-                fresh.item_status = 'Ready for Handover';
+            if (choice === 'finish') {
+                const shortAfterThis = Math.max(0, requested - unfulfilledOld - newPrepared);
+                if (shortAfterThis > 0) fresh.quantity_unfulfilled = unfulfilledOld + shortAfterThis;
+                const unfulfilledNew = parseInt(fresh.quantity_unfulfilled) || 0;
+                fresh.item_status = (newPrepared + unfulfilledNew) >= requested ? 'Ready for Handover' : 'Packing';
             } else {
-                fresh.item_status = newPrepared >= requested ? 'Ready for Handover' : 'Packing';
-                if (shortAfterThis > 0) stillShort = true;
+                const done = (newPrepared + unfulfilledOld) >= requested;
+                fresh.item_status = done ? 'Ready for Handover' : 'Packing';
+                if (!done) stillShort = true;
             }
             await saveData('request_order_items', fresh);
         }
@@ -3266,6 +3329,20 @@ async function openDispatchCheckoutModal(orderId) {
 
     const modalBody = document.getElementById('modal-body-content');
 
+    // Bug 2 fix (found live testing 7af6953): .dc-item-row is a div with
+    // role="button", not a real <button> (real buttons can't nest the
+    // Autofill/Reset button next to them — see itemRowHtml's comment), so
+    // Enter/Space have to be wired by hand for it to stay keyboard-operable.
+    function toggleItemRow(headerEl) {
+        const itemEl = headerEl.closest('.dc-item');
+        const list = document.getElementById(headerEl.getAttribute('aria-controls'));
+        if (!list) return;
+        const open = list.classList.toggle('hidden') === false;
+        headerEl.setAttribute('aria-expanded', open ? 'true' : 'false');
+        itemEl.classList.toggle('open', open);
+        if (open) renderItemLots(parseInt(headerEl.getAttribute('data-item')));
+    }
+
     modalBody.addEventListener('click', async (e) => {
         const autofillBtn = e.target.closest('.dc-row-autofill');
         if (autofillBtn && !autofillBtn.disabled) {
@@ -3288,15 +3365,14 @@ async function openDispatchCheckoutModal(orderId) {
             return;
         }
 
+        // Checked AFTER the action buttons above on purpose: with
+        // stopPropagation gone from .dc-act (Bug 2 fix), a click on Autofill/
+        // Reset also bubbles up to here, but those three checks already
+        // `return` first, so this only ever fires for a click elsewhere on
+        // the row.
         const headerBtn = e.target.closest('.dc-item-row');
         if (headerBtn) {
-            const itemEl = headerBtn.closest('.dc-item');
-            const list = document.getElementById(headerBtn.getAttribute('aria-controls'));
-            if (!list) return;
-            const open = list.classList.toggle('hidden') === false;
-            headerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-            itemEl.classList.toggle('open', open);
-            if (open) renderItemLots(parseInt(headerBtn.getAttribute('data-item')));
+            toggleItemRow(headerBtn);
             return;
         }
 
@@ -3359,6 +3435,19 @@ async function openDispatchCheckoutModal(orderId) {
         // "avail" shown on the row = liveRemaining + taken, a constant pool
         // size regardless of how newQty splits it — unchanged by this edit.
         lotEl.querySelector('.dc-lot-stock').textContent = maxAvail;
+    });
+
+    // Enter/Space activation for .dc-item-row (Bug 2 fix — see toggleItemRow
+    // above). The action buttons inside it are real <button> elements, so
+    // they already get their own native Enter/Space handling from the
+    // browser and must not also trigger the row toggle underneath them.
+    modalBody.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const headerEl = e.target.closest('.dc-item-row');
+        if (!headerEl) return;
+        if (e.target.closest('.dc-act')) return;
+        e.preventDefault();
+        toggleItemRow(headerEl);
     });
 
     // V2 barcode label fix: a RMP:9{lotId:05d}{sizeG:04d}{mult:02d} barcode
