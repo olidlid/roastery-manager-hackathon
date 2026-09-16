@@ -1726,7 +1726,7 @@ async function loadPackingRequestsSection() {
         fetchData('customers'),
         fetchData('code_definitions')
     ]);
-    
+
     const container = document.getElementById('packing-requests-cards');
     const emptyEl = document.getElementById('packing-requests-empty');
     if (!container) return;
@@ -1744,7 +1744,23 @@ async function loadPackingRequestsSection() {
     // Sort by order_date descending
     preparingOrders.sort((a, b) => new Date(b.order_date) - new Date(a.order_date) || b.id - a.id);
     const limitedPreparingOrders = preparingOrders.slice(0, 50);
-    
+
+    // CHECKOUT_AUTOFILL_PLAN.md §4/§8/§9 — a line is "done" once nothing more
+    // will ever be prepared for it: either it's genuinely fully packed, OR
+    // an earlier Checkout finalized its shortfall as unfulfilled (Pilihan 1).
+    // Without accounting for quantity_unfulfilled here, a Pilihan-1-finalized
+    // order would keep showing "Prepare" forever with no way to reach
+    // Dispatch, even though every line's item_status is already
+    // 'Ready for Handover' — this is what makes "order keluar dari daftar
+    // packing lewat jalur yang sudah ada" (the plan's own §4 point 4 and §9)
+    // literally true, using the EXISTING Dispatch/dispatchOrder() flow.
+    const isLineDone = (i) => {
+        const req = parseInt(i.quantity_requested) || 0;
+        const prep = parseInt(i.quantity_prepared) || 0;
+        const unful = parseInt(i.quantity_unfulfilled) || 0;
+        return (prep + unful) >= req;
+    };
+
     // V2 1G: cards instead of a table row per order — per-line "Ready"
     // inputs are gone, replaced by the "Prepare" button opening the POS
     // checkout modal (openDispatchCheckoutModal) where fulfillment happens
@@ -1754,11 +1770,17 @@ async function loadPackingRequestsSection() {
     for (const order of limitedPreparingOrders) {
         const items = (orderItems || []).filter(i => i.request_order_id === order.id);
 
-        const allItemsReady = items.length > 0 && items.every(i => {
-            const req = parseInt(i.quantity_requested) || 0;
-            const prep = parseInt(i.quantity_prepared) || 0;
-            return prep >= req;
-        });
+        const allDone = items.length > 0 && items.every(isLineDone);
+        const totalRequested = items.reduce((s, i) => s + (parseInt(i.quantity_requested) || 0), 0);
+        const totalPrepared = items.reduce((s, i) => s + (parseInt(i.quantity_prepared) || 0), 0);
+        // "Sebagian keluar" — some stock is genuinely already out for this
+        // order, but at least one line still needs more. Deliberately NOT
+        // gated on how that stock got out (checkout vs. approval-time
+        // allocation) — see openDispatchCheckoutModal's orderMode() for the
+        // same reasoning applied to the modal's own single/two-panel switch.
+        const isPartial = !allDone && totalPrepared > 0;
+
+        const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
 
         let linesHtml = '';
         for (const item of items) {
@@ -1779,42 +1801,73 @@ async function loadPackingRequestsSection() {
 
             const itemMachine = item.machine_id ? (machines || []).find(m => m.id === item.machine_id) : null;
 
-            const totalRequested = parseInt(item.quantity_requested) || 0;
+            const totalRequestedLine = parseInt(item.quantity_requested) || 0;
             const alreadyPrepared = parseInt(item.quantity_prepared) || 0;
-            const isCompleted = alreadyPrepared >= totalRequested;
+            const isCompleted = isLineDone(item);
 
-            linesHtml += `
-                <div>
-                    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.82rem;">
-                        <span style="font-weight: 600;">${coffeeName}</span>
-                        <span style="font-weight: 600; color: ${isCompleted ? 'var(--success)' : 'var(--danger)'}; white-space: nowrap; flex-shrink: 0;">${alreadyPrepared} / ${totalRequested}</span>
+            if (isPartial) {
+                // §8 — item-level view for a still-open, partially-dispatched
+                // order: Keluar/Diminta instead of a plain fraction, a
+                // shortfall note, and a Dispatched badge on any line that has
+                // stock out at all — never on a line that's untouched.
+                const shortfall = Math.max(0, totalRequestedLine - alreadyPrepared);
+                linesHtml += `
+                    <div>
+                        <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.82rem;">
+                            <span style="font-weight: 600;">${coffeeName}${alreadyPrepared > 0 ? `<span class="dc-card-badge-dispatched" data-i18n="card_badge_dispatched">${window.t ? window.t('card_badge_dispatched') : 'Dispatched'}</span>` : ''}</span>
+                            <span style="font-weight: 600; color: ${shortfall > 0 ? 'var(--danger)' : 'var(--success)'}; white-space: nowrap; flex-shrink: 0; text-align:right;">${alreadyPrepared} / ${totalRequestedLine}${shortfall > 0 ? `<span style="display:block; font-size:0.68rem; font-weight:500; color:var(--text-muted);">kurang ${shortfall}</span>` : ''}</span>
+                        </div>
+                        <div style="color: var(--text-muted); font-size: 0.76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</div>
                     </div>
-                    <div style="color: var(--text-muted); font-size: 0.76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</div>
-                </div>
-            `;
+                `;
+            } else {
+                linesHtml += `
+                    <div>
+                        <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.82rem;">
+                            <span style="font-weight: 600;">${coffeeName}</span>
+                            <span style="font-weight: 600; color: ${isCompleted ? 'var(--success)' : 'var(--danger)'}; white-space: nowrap; flex-shrink: 0;">${alreadyPrepared} / ${totalRequestedLine}</span>
+                        </div>
+                        <div style="color: var(--text-muted); font-size: 0.76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</div>
+                    </div>
+                `;
+            }
         }
-
-        const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
 
         // A fully-ready order used to only show Dispatch, with no way back
         // into the checkout modal to correct a wrong fulfillment (found
         // 2026-07-27: an order auto-marked "Ready" from stale packed stock
         // at approval had no path to reopen and fix it). Edit reopens the
         // same checkout modal regardless of ready state.
-        const actionBtnHtml = allItemsReady
+        const actionBtnHtml = allDone
             ? `<button class="btn btn-secondary btn-sm btn-edit-ready-order" data-order="${order.id}" style="flex: 0 0 auto; padding-left: 14px; padding-right: 14px;" title="Edit / correct fulfillment" ${hasPermission('packing_dispatch_checkout') ? '' : 'disabled title="No permission to edit orders"'}>Edit</button><button class="btn btn-success btn-sm btn-dispatch-order" data-order="${order.id}" style="flex: 1; font-weight: 700;">Dispatch</button>`
-            : `<button class="btn btn-primary btn-sm btn-prepare-order" data-order="${order.id}" style="flex: 1; font-weight: 700;" ${hasPermission('packing_dispatch_checkout') ? '' : 'disabled title="No permission to checkout orders"'}>Prepare</button>`;
+            : `<button class="btn btn-primary btn-sm btn-prepare-order" data-order="${order.id}" style="flex: 1; font-weight: 700;" ${hasPermission('packing_dispatch_checkout') ? '' : 'disabled title="No permission to checkout orders"'}>${isPartial ? (window.t ? window.t('btn_continue_packing') : 'Continue') : 'Prepare'}</button>`;
+
+        const statusBadgeHtml = isPartial
+            ? `<span style="font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; background: rgba(239,68,68,0.12); color: var(--danger); font-weight: 600; white-space: nowrap;">${window.t ? window.t('status_partially_dispatched') : 'Partially Dispatched'}</span>`
+            : `<span style="font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; background: rgba(217,119,6,0.12); color: #d97706; font-weight: 600; white-space: nowrap;">Preparing</span>`;
+
+        // §8 — a summary strip with a progress bar, shown only for a still-
+        // open partially-dispatched order. This is the one number ops staff
+        // keep having to hunt for today (how much of THIS order already left
+        // the shelf) — see CHECKOUT_AUTOFILL_PLAN.md §8.
+        const outStripHtml = isPartial
+            ? `<div class="dc-card-out-strip">
+                    <b>${totalPrepared}</b> dari <b>${totalRequested}</b> pcs sudah keluar dari stok &middot; sisa <b>${Math.max(0, totalRequested - totalPrepared)}</b> pcs
+                    <div class="dc-card-bar"><i style="width:${totalRequested > 0 ? Math.min(100, Math.round((totalPrepared / totalRequested) * 100)) : 0}%;"></i></div>
+               </div>`
+            : '';
 
         cardsHtml += `
-            <div class="card" style="padding: 16px 18px; margin: 0;">
+            <div class="card" style="padding: 16px 18px; margin: 0; ${isPartial ? 'border-color: rgba(239,68,68,0.35);' : ''}">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
                     <div>
                         <div style="font-weight: 600; font-size: 0.95rem;"><code>${order.order_number || '#ORD-' + order.id}</code></div>
                         <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">${order.sales_name}${cust ? ` &middot; ${cust.name}` : ''}</div>
                     </div>
-                    <span style="font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; background: rgba(217,119,6,0.12); color: #d97706; font-weight: 600; white-space: nowrap;">Preparing</span>
+                    ${statusBadgeHtml}
                 </div>
-                <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;">
+                ${outStripHtml}
+                <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; ${isPartial ? 'margin-top: 12px;' : ''}">
                     ${linesHtml}
                 </div>
                 <div style="display: flex; gap: 8px;">
@@ -1829,9 +1882,25 @@ async function loadPackingRequestsSection() {
     }
     container.innerHTML = cardsHtml;
 
+    // Scoped once per render, alongside the cards it styles — cheap for a
+    // handful of ops-facing cards, and keeps the badge/strip styling right
+    // next to the markup that uses it instead of a separate global rule.
+    if (!container.querySelector('#dc-card-partial-style')) {
+        const styleEl = document.createElement('style');
+        styleEl.id = 'dc-card-partial-style';
+        styleEl.textContent = `
+            .dc-card-badge-dispatched { display:inline-block; font-size:0.6rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; color:var(--danger); background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.32); border-radius:4px; padding:1px 6px; margin-left:6px; vertical-align:1px; }
+            .dc-card-out-strip { border:1px solid rgba(239,68,68,0.28); background:rgba(239,68,68,0.07); border-radius:6px; padding:8px 10px; font-size:0.74rem; color:var(--text-secondary); }
+            .dc-card-out-strip b { color:var(--text-primary); font-variant-numeric:tabular-nums; }
+            .dc-card-bar { height:4px; border-radius:999px; background:rgba(127,127,127,0.18); margin-top:7px; overflow:hidden; }
+            .dc-card-bar > i { display:block; height:100%; background:var(--danger); border-radius:999px; }
+        `;
+        container.appendChild(styleEl);
+    }
+
     // EVENT DELEGATION
     container.onclick = async function(e) {
-        // Handle Prepare button — opens the POS checkout modal
+        // Handle Prepare/Lanjutkan button — opens the POS checkout modal
         const btnPrepare = e.target.closest('.btn-prepare-order');
         if (btnPrepare) {
             const orderId = parseInt(btnPrepare.getAttribute('data-order'));
@@ -1877,7 +1946,7 @@ async function loadPackingRequestsSection() {
 // ==========================================================================
 // APPROVAL_REVISION_PLAN.md Fase 6 — UNABLE TO FULFILL FROM PACKING
 // ==========================================================================
-// Standalone from openDispatchCheckoutModal's undoCommittedQty on purpose:
+// Standalone from openDispatchCheckoutModal's resetCommittedItem on purpose:
 // this runs from the Order Requests card, not from inside that modal's
 // closure, and always unwinds the FULL committed amount for every item of
 // the order at once — not a partial, operator-typed undo. §5.3.
@@ -1886,8 +1955,8 @@ async function loadPackingRequestsSection() {
 // writing anything yet — used both to render the confirmation dialog and,
 // on confirm, to drive the actual refund/delete calls, so the numbers shown
 // to the operator are exactly the numbers acted on (same reasoning as
-// committedQtyBreakdown being shared between display and undo in
-// undoCommittedQty above).
+// committedQtyBreakdown being shared between display and reset in
+// resetCommittedItem above).
 async function buildOrderUnwindBreakdown(orderId) {
     const [{ data: orders }, { data: itemsAll }] = await Promise.all([
         fetchData('request_orders'),
@@ -2193,7 +2262,7 @@ async function openDispatchCheckoutModal(orderId) {
     if (!order) return;
     const items = (orderItemsAll || []).filter(i => i.request_order_id === orderId);
     const cust = order.customer_id ? (customers || []).find(c => c.id === order.customer_id) : null;
-    // Which lot(s) a checkout session in THIS modal drew from — Undo prefers
+    // Which lot(s) a checkout session in THIS modal drew from — Reset prefers
     // the ledger (packedMovementsAll below) and only falls back to this trail
     // for pre-Phase-3 rows the ledger query can't see (no ref on their row).
     let dispatchLotItemsAll = (dispatchLotItemsData || []).filter(d => items.some(i => i.id === d.request_order_item_id));
@@ -2215,11 +2284,7 @@ async function openDispatchCheckoutModal(orderId) {
     // an approval-time deduction (js/sales.js consume_packed_lot) leave a
     // row here, tagged ref_table='request_order_items'. Fetched once for
     // the whole order (not per item, not on every render) and read
-    // synchronously by committedQtyBreakdown below. Found 2026-09-04: the
-    // "can't be auto-restored" message was WRONG for an approval-fulfilled
-    // line — the ledger already had exactly what it needed, only the
-    // display (this comment's previous version) had never been updated to
-    // look here instead of dispatch_lot_items.
+    // synchronously by committedQtyBreakdown below.
     let packedMovementsAll = [];
     if (items.length > 0) {
         const { data: pmData, error: pmErr } = await window.supabaseClient
@@ -2227,17 +2292,16 @@ async function openDispatchCheckoutModal(orderId) {
             .select('id, packed_coffee_lot_id, delta_pcs, ref_id')
             .eq('ref_table', 'request_order_items')
             .in('ref_id', items.map(i => i.id));
-        if (pmErr) console.error('Failed to read packed_stock_movements for undo classification:', pmErr);
+        if (pmErr) console.error('Failed to read packed_stock_movements for reset classification:', pmErr);
         packedMovementsAll = pmData || [];
     }
 
     // Shared by the display (renderItemLots) and the actual restore
-    // (undoCommittedQty) so they can never drift apart again — that drift
-    // is exactly what caused the 2026-09-04 bug. Returns, for one order
-    // item: which lots the ledger can restore from (newest movement first,
-    // per STOCK_LEDGER_PLAN.md Phase 5), the legacy dispatch_lot_items rows
-    // for anything pre-ledger, and whatever's left over that genuinely has
-    // no record anywhere.
+    // (resetCommittedItem) so they can never drift apart. Returns, for one
+    // order item: which lots the ledger can restore from (newest movement
+    // first, per STOCK_LEDGER_PLAN.md Phase 5), the legacy dispatch_lot_items
+    // rows for anything pre-ledger, and whatever's left over that genuinely
+    // has no record anywhere (CHECKOUT_AUTOFILL_PLAN.md §5.1).
     function committedQtyBreakdown(itemId) {
         const perLot = new Map();
         for (const m of packedMovementsAll) {
@@ -2347,20 +2411,13 @@ async function openDispatchCheckoutModal(orderId) {
             }
             return [p.id, identity || { name: 'Unknown', code: '' }];
         }));
-        // Deliberately NOT filtered to remaining_pcs > 0 here. This array is
-        // built once when the modal opens and is the only place a lot's
-        // metadata (code, date, machine, origin) exists for this session — so
-        // a lot excluded now can never come back, even after its stock does.
-        //
-        // That was the bug reported 2026-09-08: a lot drained to 0 sat outside
-        // this list, Undo refunded it into liveRemaining, but the header STOCK
-        // sums over THIS array — so it kept reading 0 and the row never
-        // reappeared. The stock had genuinely been restored in the database;
-        // only this modal's view was stale, which is why reopening it showed
-        // the right number and made the refund look delayed rather than lost.
-        //
-        // Emptiness is now decided per render from liveRemaining instead (see
-        // renderItemLots), which is the value Take/Cancel/Undo actually move.
+        // Deliberately NOT filtered to remaining_pcs > 0 here — see §6.2 of
+        // CHECKOUT_AUTOFILL_PLAN.md. This array is built once when the modal
+        // opens and is the only place a lot's metadata (code, date, machine,
+        // origin) exists for this session, so a lot excluded now can never
+        // come back, even after its stock does. Emptiness is decided per
+        // render from liveRemaining instead (see visibleLots below), which is
+        // the value Take/Cancel/Autofill/Reset actually move.
         const lots = (packedLots || [])
             .filter(l => packedIds.has(l.packed_coffee_id))
             .map(l => ({
@@ -2378,19 +2435,23 @@ async function openDispatchCheckoutModal(orderId) {
     });
 
     // Live per-lot remaining stock for this checkout session — decremented as
-    // cart rows are added, so a second add sees what the first one already
-    // took, without needing another DB round-trip.
+    // cart rows are added and incremented back by Cancel/Autofill-undo and by
+    // a successful Reset, so a second add/reset sees what earlier ones
+    // already did, without needing another DB round-trip. CHECKOUT_AUTOFILL_
+    // PLAN.md §6.1: every stock change in this modal MUST update this map —
+    // it, not a fresh fetch, is what the STOCK column reads.
     const liveRemaining = {};
     Object.values(lotsByItem).flat().forEach(l => { liveRemaining[l.id] = l.remaining; });
 
     // Cart rows keyed by "orderItemId:lotId" — scanning/adding the same
-    // coffee+lot+size again increments the existing row.
+    // coffee+lot+size again increments the existing row. Nothing in `cart`
+    // has touched the database yet.
     const cart = new Map();
 
     const machineName = (id) => { const m = (machines || []).find(mm => mm.id === id); return m ? m.name : 'Unknown'; };
     const fifoLotForItemMachine = (itemId) => {
         const item = items.find(i => i.id === itemId);
-        // Only recommend/flag a lot that still has live stock — otherwise a
+        // Only recommend a lot that still has live stock — otherwise a
         // fully-taken lot (liveRemaining 0, not yet persisted since Checkout
         // hasn't been clicked) keeps winning "oldest" and triggers the FIFO
         // warning against itself, contradicting its own "0 left" message.
@@ -2406,110 +2467,99 @@ async function openDispatchCheckoutModal(orderId) {
         return sum;
     };
 
-    // Header row for one order line — Code / Coffee (+size) / Machine / Stock
-    // / Ready, click to expand its lots. A coffee_code (trade-name) line has
-    // no single machine (it can draw from any origin sharing the code), so
-    // that column shows '-'.
-    function itemHeaderHtml(item) {
-        const lots = lotsByItem[item.id] || [];
-        const stock = lots.reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
-        const requested = parseInt(item.quantity_requested) || 0;
-        const ready = (parseInt(item.quantity_prepared) || 0) + alreadyInCartForItem(item.id);
-        const short = stock < (requested - (parseInt(item.quantity_prepared) || 0));
+    // ------------------------------------------------------------------
+    // CHECKOUT_AUTOFILL_PLAN.md — shared item-state helpers. One formula,
+    // used everywhere in this modal, so "how much does this line still
+    // need" can never drift between the header row, the two-panel split,
+    // and the checkout dialog.
+    // ------------------------------------------------------------------
+    const itemRequested = (item) => parseInt(item.quantity_requested) || 0;
+    const itemPreparedQty = (item) => parseInt(item.quantity_prepared) || 0;
+    const itemUnfulfilledQty = (item) => parseInt(item.quantity_unfulfilled) || 0;
+    // A line with nothing left to pick — either it was fully checked out
+    // (status flips to Ready for Handover, same as before this feature), or
+    // an earlier Checkout finalized its shortfall as unfulfilled (§4 Pilihan
+    // 1). Either way, Reset (§5) is the only thing that can reopen it.
+    const itemIsClosed = (item) => item.item_status === 'Ready for Handover' || itemUnfulfilledQty(item) > 0;
+    const itemShortfall = (item) => Math.max(0, itemRequested(item) - itemPreparedQty(item));
+    const stockForItem = (itemId) => (lotsByItem[itemId] || []).reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
+
+    // Two-panel ("continuing") mode triggers the moment ANY line already has
+    // stock out for this order — whether from a previous packing checkout OR
+    // from packed stock claimed at approval time (both leave the same
+    // quantity_prepared trail, so there's no way to tell them apart, and no
+    // need to: either way that stock is genuinely already committed). This
+    // also naturally covers the pre-existing "Edit a fully-ready order to
+    // correct it" capability — a fully-done order reopens with an empty left
+    // pane and every line listed (with Reset) on the right.
+    const orderMode = () => (items.some(i => itemPreparedQty(i) > 0) ? 'continuing' : 'fresh');
+
+    const RESET_ICON_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/></svg>';
+
+    // Header + expandable lot list for one order line. `showMachine` drops
+    // the Machine column in the two-panel left pane (mockup: 4 columns
+    // there, 5 in the single-panel view) to make room for the action button
+    // without the row getting cramped.
+    function itemRowHtml(item, showMachine) {
+        const requested = itemRequested(item);
+        const prepared = itemPreparedQty(item);
+        const shortfall = itemShortfall(item);
+        const cartQty = alreadyInCartForItem(item.id);
+        const stock = stockForItem(item.id);
+        const remainingToFill = Math.max(0, shortfall - cartQty);
+        const isShort = stock < remainingToFill;
+        const showDispatchedBadge = prepared > 0;
+        const hasFifoLot = !!fifoLotForItemMachine(item.id);
+
+        let actionHtml;
+        if (cartQty > 0) {
+            actionHtml = `<button type="button" class="btn dc-icon-btn dc-row-reset" data-item="${item.id}" title="Kosongkan baris ini">${RESET_ICON_SVG}</button>`;
+        } else {
+            actionHtml = `<button type="button" class="btn btn-primary btn-sm dc-row-autofill" data-item="${item.id}" ${(remainingToFill <= 0 || !hasFifoLot) ? 'disabled' : ''}>Autofill</button>`;
+        }
+
         return `
-            <button type="button" class="dc-item-row" data-item="${item.id}" aria-expanded="false" aria-controls="dc-lots-${item.id}">
+            <button type="button" class="dc-item-row${showMachine ? '' : ' dc-item-row-compact'}" data-item="${item.id}" aria-expanded="false" aria-controls="dc-lots-${item.id}">
                 <span class="dc-item-name">
                     <span class="dc-chev">&#9656;</span>
                     ${itemCode(item) !== '-' ? `<span class="dc-code">${itemCode(item)}</span>` : ''}
                     <span class="dc-title">${coffeeLabel(item)}</span>
                     <span class="dc-size">${item.bag_size_g}g</span>
+                    ${showDispatchedBadge ? '<span class="dc-badge-dispatched">Dispatched</span>' : ''}
                 </span>
-                <span class="dc-mach">${item.coffee_code ? '-' : machineName(item.machine_id)}</span>
-                <span class="dc-stock" id="dc-stock-${item.id}" style="${short ? 'color: var(--warning, #d97706);' : ''}">${stock}</span>
-                <span class="dc-ready" id="dc-ready-${item.id}" style="color: ${ready >= requested ? 'var(--success)' : 'var(--danger)'};">${ready} / ${requested}</span>
+                ${showMachine ? `<span class="dc-mach">${item.coffee_code ? '-' : machineName(item.machine_id)}</span>` : ''}
+                <span class="dc-stock" id="dc-stock-${item.id}" style="${isShort ? 'color: var(--warning, #d97706);' : ''}">${stock}</span>
+                <span class="dc-ready" id="dc-ready-${item.id}" style="color: ${cartQty >= shortfall ? 'var(--success)' : 'var(--danger)'};">${cartQty} / ${shortfall}</span>
+                <span class="dc-act" id="dc-act-${item.id}" onclick="event.stopPropagation()">${actionHtml}</span>
             </button>
             <div id="dc-lots-${item.id}" class="dc-lots hidden"></div>
         `;
     }
 
     // Rebuilds ONE item's lot list from current cart/liveRemaining state —
-    // called after every Take/Cancel/qty edit so a Take that spills across
-    // several lots (addCartEntry's existing FIFO-spill logic, unchanged)
-    // shows correctly without hand-patching individual rows.
+    // called after every Take/Cancel/Autofill/qty edit so a Take that spills
+    // across several lots (addCartEntry's existing FIFO-spill logic,
+    // unchanged) shows correctly without hand-patching individual rows. The
+    // "already checked out earlier" breakdown that used to live here moved
+    // to the right-hand pane (renderRightPane) — this list is cart-only now.
     function renderItemLots(itemId) {
         const item = items.find(i => i.id === itemId);
         const lots = lotsByItem[itemId] || [];
-        const prepared = parseInt(item.quantity_prepared) || 0;
-        const requested = parseInt(item.quantity_requested) || 0;
-
-        // Ledger + legacy trail together are what Undo can actually restore
-        // (see committedQtyBreakdown) — using dispatch_lot_items alone here
-        // undercounted an approval-time deduction and wrongly told the user
-        // it "can't be auto-restored" when the ledger already had it.
-        const breakdown = committedQtyBreakdown(itemId);
-        const trailQty = breakdown.ledgerQty + breakdown.legacyQty;
-        const untrackedQty = breakdown.untrackedQty;
-        // An inline expand-in-place form, not a second openModal() — the
-        // checkout body already occupies the app's single shared modal slot,
-        // so stacking another openModal() on top would wipe out this modal's
-        // own DOM instead of layering over it. A plain prompt() was tried
-        // first but froze the page during testing (native dialogs block the
-        // renderer this app's automation drives) and is inconsistent with
-        // the rest of the UI besides, so this follows the same
-        // hidden-attribute expand/collapse pattern as .dc-lots.
-        // Which lots that earlier checkout actually drew from. The breakdown
-        // already carried this per-lot detail (ledgerLots / legacyRows) but
-        // only its TOTAL was ever printed, so "50 / 50" told the operator the
-        // line was covered without saying by what — the exact gap reported
-        // 2026-09-08. Shown always, not behind a toggle, per user decision.
-        //
-        // untrackedQty is the one part with genuinely no lot trail: stock
-        // deducted at order-approval time before the movement ledger existed.
-        // It gets its own line saying so rather than being silently omitted,
-        // so the numbers on screen still add up to `prepared`.
-        const committedLines = [
-            ...breakdown.ledgerLots.map(e => ({ label: lotLabel(e.lotId), qty: e.outstanding })),
-            ...breakdown.legacyRows.map(d => ({ label: lotLabel(d.packed_coffee_lot_id), qty: parseInt(d.qty) || 0 }))
-        ].filter(e => e.qty > 0);
-
-        const committedDetailHtml = (committedLines.length || untrackedQty > 0)
-            ? `<div class="dc-committed-lots">
-                    ${committedLines.map(e => `<div><span class="dc-committed-lot-code">${e.label}</span><span class="dc-committed-lot-qty">${e.qty} pcs</span></div>`).join('')}
-                    ${untrackedQty > 0 ? `<div><span class="dc-committed-lot-code" style="opacity:0.7;">from order approval — lot not recorded</span><span class="dc-committed-lot-qty">${untrackedQty} pcs</span></div>` : ''}
-               </div>`
-            : '';
-
-        const committedHtml = prepared > 0
-            ? `<div class="dc-committed">
-                    <div>
-                        Already checked out earlier: <b>${prepared}</b>
-                        <span style="opacity:0.75;">(${untrackedQty > 0 ? `${trailQty} restorable, ${untrackedQty} not` : 'restorable'})</span>
-                        <button type="button" class="dc-committed-undo-toggle" data-item="${itemId}">Undo&hellip;</button>
-                    </div>
-                    ${committedDetailHtml}
-                    <div class="dc-committed-undo-form hidden" data-item="${itemId}">
-                        ${trailQty > 0 ? `<div class="dc-undo-note">${trailQty} from tracked lots — stock will be restored</div>` : ''}
-                        ${untrackedQty > 0 ? `<div class="dc-undo-note">${untrackedQty} from order approval — stock already deducted, can't be auto-restored</div>` : ''}
-                        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-                            <input type="number" class="dc-undo-qty" min="1" max="${prepared}" value="${prepared}">
-                            <button type="button" class="btn btn-danger btn-sm dc-committed-undo-confirm" data-item="${itemId}">Undo</button>
-                            <button type="button" class="btn btn-secondary btn-sm dc-committed-undo-cancel" data-item="${itemId}">Cancel</button>
-                        </div>
-                    </div>
-               </div>`
-            : '';
+        const requested = itemRequested(item);
+        const prepared = itemPreparedQty(item);
+        const shortfall = itemShortfall(item);
 
         // Suggested qty for a not-yet-taken lot = remaining shortfall for this
         // line, split across lots in the order they'd naturally fill (FIFO
         // first) — mirrors what addCartEntry's own spill would do, so what's
         // pre-filled matches what actually happens on Take.
-        let shortfall = Math.max(0, requested - prepared - alreadyInCartForItem(itemId));
+        let toCover = Math.max(0, shortfall - alreadyInCartForItem(itemId));
 
-        // lotsByItem now carries every lot for this coffee/size, empty ones
-        // included (see its build above), so the "is there anything to pick"
-        // decision moves here — and is made against liveRemaining, which Undo
-        // updates. A lot with nothing left still renders while it's held in
-        // the cart, otherwise its Cancel button would vanish mid-session.
+        // lotsByItem carries every lot for this coffee/size, empty ones
+        // included, but the "is there anything to pick" decision is made
+        // against liveRemaining, which Reset/Cancel update. A lot with
+        // nothing left still renders while it's held in the cart, otherwise
+        // its Cancel button would vanish mid-session.
         const visibleLots = lots.filter(l => (liveRemaining[l.id] || 0) > 0 || cart.has(`${itemId}:${l.id}`));
 
         const rowsHtml = visibleLots.map(l => {
@@ -2521,20 +2571,14 @@ async function openDispatchCheckoutModal(orderId) {
             const isFifo = (fifoLotForItemMachine(itemId) || {}).id === l.id;
             // Only the lots that actually cover the remaining shortfall get a
             // suggested qty; every lot past that point is left BLANK.
-            //
-            // The old expression ended in `|| 1`, so once the shortfall hit 0
-            // it fell through to 1 for EVERY remaining row — on a line that
-            // was already fully fulfilled that meant nine rows each showing 1
-            // next to a live Take button, any one of which would deduct a bag
-            // nobody ordered (user report 2026-09-08). Drawing extra stock is
-            // now a deliberate act: type a number, and only then does Take
-            // become clickable (see the input handler further down).
+            // Drawing extra stock is a deliberate act: type a number, and
+            // only then does Take become clickable.
             let suggestQty = '';
             if (!cartRow) {
-                const cover = Math.min(shortfall, liveRemaining[l.id] || 0);
+                const cover = Math.min(toCover, liveRemaining[l.id] || 0);
                 if (cover > 0) {
                     suggestQty = cover;
-                    shortfall -= cover;
+                    toCover -= cover;
                 }
             }
             return `
@@ -2554,193 +2598,126 @@ async function openDispatchCheckoutModal(orderId) {
             `;
         }).join('') || `<div class="dc-lot-empty">No packed stock available for this coffee/size.</div>`;
 
-        document.getElementById(`dc-lots-${itemId}`).innerHTML = committedHtml + rowsHtml;
+        const lotsEl = document.getElementById(`dc-lots-${itemId}`);
+        if (lotsEl) lotsEl.innerHTML = rowsHtml;
+    }
+
+    function refreshItemRowState(itemId) {
+        const item = items.find(i => i.id === itemId);
+        if (!item) return;
+        const requested = itemRequested(item);
+        const prepared = itemPreparedQty(item);
+        const shortfall = itemShortfall(item);
+        const cartQty = alreadyInCartForItem(itemId);
+        const stock = stockForItem(itemId);
+        const remainingToFill = Math.max(0, shortfall - cartQty);
+        const isShort = stock < remainingToFill;
+
+        const stockEl = document.getElementById(`dc-stock-${itemId}`);
+        const readyEl = document.getElementById(`dc-ready-${itemId}`);
+        const actEl = document.getElementById(`dc-act-${itemId}`);
+        if (stockEl) { stockEl.textContent = stock; stockEl.style.color = isShort ? 'var(--warning, #d97706)' : ''; }
+        if (readyEl) { readyEl.textContent = `${cartQty} / ${shortfall}`; readyEl.style.color = cartQty >= shortfall ? 'var(--success)' : 'var(--danger)'; }
+        if (actEl) {
+            const hasFifoLot = !!fifoLotForItemMachine(itemId);
+            actEl.innerHTML = cartQty > 0
+                ? `<button type="button" class="btn dc-icon-btn dc-row-reset" data-item="${itemId}" title="Kosongkan baris ini">${RESET_ICON_SVG}</button>`
+                : `<button type="button" class="btn btn-primary btn-sm dc-row-autofill" data-item="${itemId}" ${(remainingToFill <= 0 || !hasFifoLot) ? 'disabled' : ''}>Autofill</button>`;
+        }
     }
 
     function renderAllHeaders() {
-        items.forEach(item => {
-            const lots = lotsByItem[item.id] || [];
-            const stock = lots.reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
-            const requested = parseInt(item.quantity_requested) || 0;
-            const prepared = parseInt(item.quantity_prepared) || 0;
-            const ready = prepared + alreadyInCartForItem(item.id);
-            const short = stock < (requested - prepared);
-            const stockEl = document.getElementById(`dc-stock-${item.id}`);
-            const readyEl = document.getElementById(`dc-ready-${item.id}`);
-            if (stockEl) { stockEl.textContent = stock; stockEl.style.color = short ? 'var(--warning, #d97706)' : ''; }
-            if (readyEl) { readyEl.textContent = `${ready} / ${requested}`; readyEl.style.color = ready >= requested ? 'var(--success)' : 'var(--danger)'; }
-        });
-
-        const anyRemaining = items.some(item => {
-            const requested = parseInt(item.quantity_requested) || 0;
-            const fulfilled = (parseInt(item.quantity_prepared) || 0) + alreadyInCartForItem(item.id);
-            return fulfilled < requested;
-        });
-        const warnEl = document.getElementById('dc-warning');
-        if (anyRemaining && cart.size > 0) {
-            warnEl.classList.remove('hidden');
-            warnEl.style.display = '';
-            warnEl.textContent = 'Some lines are still short — checking out now leaves this order partially open, to finish later.';
-        } else {
-            warnEl.classList.add('hidden');
-            warnEl.style.display = 'none';
-        }
+        items.forEach(item => refreshItemRowState(item.id));
 
         let totalTaken = 0;
         cart.forEach(row => { totalTaken += row.qty; });
         const totalEl = document.getElementById('dc-total-taken');
         if (totalEl) totalEl.textContent = totalTaken;
+
+        updateCheckoutButtonState();
+    }
+
+    function updateCheckoutButtonState() {
+        const btn = document.getElementById('dc-btn-checkout');
+        if (btn) btn.disabled = cart.size === 0;
+    }
+
+    function renderAllOpenLots() {
+        items.forEach(item => {
+            const lotsEl = document.getElementById(`dc-lots-${item.id}`);
+            if (lotsEl && !lotsEl.classList.contains('hidden')) renderItemLots(item.id);
+        });
     }
 
     function renderAll() {
-        items.forEach(item => renderItemLots(item.id));
+        renderAllOpenLots();
         renderAllHeaders();
     }
 
-    // Lets a wrongly-fulfilled line be walked back even after the order shows
-    // fully "Ready" (see actionBtnHtml's Edit button).
-    //
-    // STOCK_LEDGER_PLAN.md Phase 5: source of truth is now the movement
-    // ledger (packed_stock_movements), not dispatch_lot_items — that table
-    // only ever recorded checkout draws, so the approval-fulfilled portion
-    // (F4) had no record anywhere and could never be restored, only have
-    // its counted quantity reduced. Every draw tagged with
-    // ref_table='request_order_items'/ref_id=itemId since Phase 3 (both
-    // 'dispatch' and 'approval_fulfil') is undoable here, newest-first per
-    // lot. Net delta per lot already accounts for any earlier undo (its own
-    // refund carries the same ref), so this can't double-refund.
-    //
-    // Draws from before Phase 3 shipped have no ref on their ledger row, so
-    // step 1 can't see them — step 2 falls back to the original
-    // dispatch_lot_items trail for whatever step 1 didn't cover (checkout
-    // draws only; a pre-Phase-3 approval-fulfil draw still has no record
-    // anywhere and falls through to the quantity_allocated adjustment at
-    // the end, same as before this phase).
-    async function undoCommittedQty(itemId, requestedUndoQty) {
-        const item = items.find(i => i.id === itemId);
-        if (!item) return;
-        const prepared = parseInt(item.quantity_prepared) || 0;
-        if (prepared <= 0) return;
-
-        let undoQty = parseInt(requestedUndoQty) || 0;
-        if (undoQty <= 0) return;
-        if (undoQty > prepared) undoQty = prepared;
-        let remaining = undoQty;
-
-        // Decrements/deletes this item's dispatch_lot_items rows for one lot
-        // so the modal's "already committed" display stays in sync with a
-        // refund made via the ledger path. Loops across rows because
-        // multiple checkout sessions can each leave their own row for the
-        // same lot.
-        const syncDispatchLotItems = async (lotId, takeTotal) => {
-            let left = takeTotal;
-            const rows = dispatchLotItemsAll.filter(x => x.request_order_item_id === itemId && x.packed_coffee_lot_id === lotId && !x._undone);
-            for (const d of rows) {
-                if (left <= 0) break;
-                const dQty = parseInt(d.qty) || 0;
-                if (dQty <= 0) continue;
-                const t = Math.min(dQty, left);
-                const newDQty = dQty - t;
-                if (newDQty <= 0) {
-                    await deleteData('dispatch_lot_items', d.id);
-                    d.qty = 0;
-                    d._undone = true;
-                } else {
-                    d.qty = newDQty;
-                    await saveData('dispatch_lot_items', { id: d.id, qty: newDQty });
-                }
-                left -= t;
-            }
-        };
-
-        // Same classification the display already used to decide what to
-        // show (committedQtyBreakdown) — restoring exactly what was
-        // promised there is what this bug was about (2026-09-04: the two
-        // had drifted apart).
-        const { ledgerLots, legacyRows } = committedQtyBreakdown(itemId);
-        // Recorded as each refund actually succeeds, then appended to
-        // packedMovementsAll once below — packedMovementsAll was fetched
-        // ONCE at modal-open (unlike the old per-undo network query this
-        // replaced), so without this a second Undo on the same item in the
-        // same modal session would still see the pre-refund balance.
-        const justRefunded = [];
-
-        // 1) Ledger-tracked draws (STOCK_LEDGER_PLAN.md Phase 5) — covers
-        // BOTH a checkout draw and an approval-time deduction
-        // (js/sales.js consume_packed_lot), since both leave a row here.
-        for (const { lotId, outstanding } of ledgerLots) {
-            if (remaining <= 0) break;
-            const take = Math.min(outstanding, remaining);
-            if (take <= 0) continue;
-            // packed_coffee.quantity is trigger-derived from this lots write
-            // (sync_packed_coffee_quantity) — no separate packed_coffee write needed.
-            const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
-                p_lot_id: lotId, p_pcs: take,
-                p_operation: 'undo', p_ref_table: 'request_order_items', p_ref_id: itemId,
-                p_reason: `Undo for request_order_items #${itemId}`, p_user: (currentUser && currentUser.name) || null
-            });
-            if (refundErr) { console.error('refund_packed_lot RPC failed:', refundErr); continue; }
-            liveRemaining[lotId] = (liveRemaining[lotId] || 0) + take;
-            await syncDispatchLotItems(lotId, take);
-            justRefunded.push({ lotId, take });
-            remaining -= take;
-        }
-
-        // 2) Legacy fallback for pre-Phase-3 checkout draws the ledger query
-        // can't see (no ref on their movement row).
-        if (remaining > 0 && legacyRows.length) {
-            const { data: freshLots } = await fetchData('packed_coffee_lots');
-            for (const d of legacyRows) {
-                if (remaining <= 0) break;
-                const dQty = parseInt(d.qty) || 0;
-                if (dQty <= 0) continue;
-                const take = Math.min(dQty, remaining);
-                if (d.packed_coffee_lot_id) {
-                    const lot = (freshLots || []).find(l => l.id === d.packed_coffee_lot_id);
-                    if (lot) {
-                        const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
-                            p_lot_id: lot.id, p_pcs: take,
-                            p_operation: 'undo', p_ref_table: 'request_order_items', p_ref_id: itemId,
-                            p_reason: `Undo of dispatch_lot_items #${d.id}`, p_user: (currentUser && currentUser.name) || null
-                        });
-                        if (refundErr) console.error('refund_packed_lot RPC failed:', refundErr);
-                        liveRemaining[lot.id] = (liveRemaining[lot.id] || 0) + take;
-                    }
-                }
-                await syncDispatchLotItems(d.packed_coffee_lot_id, take);
-                remaining -= take;
-            }
-        }
-        dispatchLotItemsAll = dispatchLotItemsAll.filter(d => !d._undone);
-        // committedQtyBreakdown only looks at NET delta per lot, so a
-        // synthetic positive-delta row per actual refund keeps this
-        // session's own breakdown accurate without a re-fetch.
-        for (const { lotId, take } of justRefunded) {
-            packedMovementsAll.push({ id: Date.now() + Math.random(), packed_coffee_lot_id: lotId, delta_pcs: take, ref_id: itemId });
-        }
-
-        const newPrepared = Math.max(0, prepared - undoQty);
-        item.quantity_prepared = newPrepared;
-        if (remaining > 0) {
-            // Leftover after both sources are exhausted has no record
-            // anywhere (pre-ledger draw) — at least stop counting it as
-            // allocated, same fallback as before this phase.
-            item.quantity_allocated = Math.max(0, (parseInt(item.quantity_allocated) || 0) - remaining);
-        }
-        const requested = parseInt(item.quantity_requested) || 0;
-        item.item_status = newPrepared >= requested ? 'Ready for Handover' : 'Packing';
-        await saveData('request_order_items', item);
-
-        renderAll();
-        await loadPackingRequestsSection();
-        scheduleDashboardRefresh();
-        await showWarningModal(`Undid ${undoQty} unit(s) for ${coffeeLabel(item)}.`, false, null, null, 'success');
+    // ------------------------------------------------------------------
+    // Right-hand "Sudah keluar" pane — every item on the order (open or
+    // closed), Diminta/Keluar/Kurang, with a Reset icon on any row that has
+    // stock out (CHECKOUT_AUTOFILL_PLAN.md §5, §8). Only rendered in
+    // 'continuing' mode.
+    // ------------------------------------------------------------------
+    function buildRightPaneHtml() {
+        const rows = items.map(item => {
+            const requested = itemRequested(item);
+            const prepared = itemPreparedQty(item);
+            const shortfall = itemShortfall(item);
+            const canReset = prepared > 0;
+            return `
+                <tr>
+                    <td>${coffeeLabel(item)}<div class="dc-sum-meta">${item.bag_size_g}g</div></td>
+                    <td>${requested}</td>
+                    <td class="${shortfall === 0 ? 'dc-sum-ok' : ''}">${prepared}</td>
+                    <td class="${shortfall > 0 ? 'dc-sum-short' : ''}">${shortfall > 0 ? shortfall : '&mdash;'}</td>
+                    <td class="dc-sum-act">${canReset ? `<button type="button" class="btn dc-icon-btn dc-icon-btn-danger dc-committed-reset" data-item="${item.id}" title="Kembalikan ke stok">${RESET_ICON_SVG}</button>` : ''}</td>
+                </tr>
+            `;
+        }).join('');
+        const totalRequested = items.reduce((s, i) => s + itemRequested(i), 0);
+        const totalPrepared = items.reduce((s, i) => s + itemPreparedQty(i), 0);
+        const totalShort = items.reduce((s, i) => s + itemShortfall(i), 0);
+        return `
+            <div class="dc-pane">
+                <div class="dc-pane-head"><span>Sudah keluar</span><span>Order ini</span></div>
+                <table class="dc-sum-table">
+                    <thead><tr><th>Item</th><th>Diminta</th><th>Keluar</th><th>Kurang</th><th></th></tr></thead>
+                    <tbody>${rows}</tbody>
+                    <tfoot><tr><td>Total</td><td>${totalRequested}</td><td class="dc-sum-ok">${totalPrepared}</td><td class="${totalShort > 0 ? 'dc-sum-short' : ''}">${totalShort > 0 ? totalShort : '&mdash;'}</td><td></td></tr></tfoot>
+                </table>
+                <div class="dc-pane-note">Angka di kolom Keluar sudah benar-benar berkurang dari stok. Tombol reset memulangkan seluruh jumlah item itu ke lot asalnya lewat jalur resmi, tercatat di buku besar, lalu item itu kembali ke daftar kiri dengan target penuh.</div>
+            </div>
+        `;
     }
 
-    const itemsListHtml = items.map(item => `<div class="dc-item" id="dc-item-${item.id}">${itemHeaderHtml(item)}</div>`).join('');
+    function buildLeftPaneHtml(openItems) {
+        const totalShort = openItems.reduce((s, i) => s + itemShortfall(i), 0);
+        const itemsHtml = openItems.length
+            ? openItems.map(item => `<div class="dc-item" id="dc-item-${item.id}">${itemRowHtml(item, false)}</div>`).join('')
+            : `<div class="dc-lot-empty">Semua item sudah lengkap — tidak ada yang perlu diambil lagi.</div>`;
+        return `
+            <div class="dc-pane">
+                <div class="dc-pane-head"><span>Masih kurang &middot; ${openItems.length} item</span><span>${totalShort} pcs</span></div>
+                <div>${itemsHtml}</div>
+            </div>
+        `;
+    }
 
-    const html = `
-        <div id="dispatch-checkout-body">
+    // ------------------------------------------------------------------
+    // Top-level render — decides single-panel vs two-panel and rebuilds the
+    // whole modal body. Re-invoked after every mutation (cart edit, Autofill,
+    // Reset, coming back from the choice dialog) rather than patched in
+    // place, so there is exactly one source of truth for what's on screen.
+    // Safe to call repeatedly: openModal() only reassigns #modal-body-
+    // content's innerHTML, so the ONE delegated listener bound below
+    // (outside this function) survives every re-render.
+    // ------------------------------------------------------------------
+    function render() {
+        const mode = orderMode();
+        const titleSuffix = mode === 'continuing' ? ' &middot; Continued' : '';
+        const orderInfoHtml = `
             <div class="dc-order-info">
                 <div>
                     <div class="dc-order-info-value"><code>${order.order_number || '#ORD-' + order.id}</code></div>
@@ -2748,98 +2725,83 @@ async function openDispatchCheckoutModal(orderId) {
                 </div>
                 <div class="dc-order-info-value">${order.order_date || '-'}</div>
             </div>
-            <div class="dc-col-head">
-                <span>Coffee</span><span>Machine</span><span class="text-right">Stock</span><span class="text-right">Ready</span>
-            </div>
-            <div id="dc-item-list" style="margin-bottom:16px;">${itemsListHtml}</div>
+        `;
 
-            <div style="display:flex; gap:8px; margin-bottom:6px;">
-                <input type="text" id="dc-scan-input" class="form-control" placeholder="Scan a package or carton barcode (coming soon)" autocomplete="off" style="flex:1;" disabled>
-            </div>
-            <p style="font-size:0.78rem; color:var(--text-muted); margin: 0 0 12px;">Scanning isn't wired up yet — pick lots from the list above for now.</p>
+        let bodyHtml;
+        if (mode === 'fresh') {
+            const itemsListHtml = items.map(item => `<div class="dc-item" id="dc-item-${item.id}">${itemRowHtml(item, true)}</div>`).join('');
+            bodyHtml = `
+                ${orderInfoHtml}
+                <div class="dc-col-head">
+                    <span>Coffee</span><span>Machine</span><span class="text-right">Stock</span><span class="text-right">Ready</span><span></span>
+                </div>
+                <div id="dc-item-list" style="margin-bottom:16px;">${itemsListHtml}</div>
+            `;
+        } else {
+            const openItems = items.filter(i => !itemIsClosed(i));
+            bodyHtml = `
+                ${orderInfoHtml}
+                <div class="dc-split">
+                    <div>
+                        <div class="dc-col-head dc-col-head-compact">
+                            <span>Coffee</span><span class="text-right">Stock</span><span class="text-right">Ready</span><span></span>
+                        </div>
+                        <div id="dc-item-list">${buildLeftPaneHtml(openItems)}</div>
+                    </div>
+                    <div>${buildRightPaneHtml()}</div>
+                </div>
+            `;
+        }
 
-            <div id="dc-warning" class="hidden" style="background: rgba(217,119,6,0.12); border: 1px solid #d97706; color: #d97706; padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; margin-bottom: 12px;"></div>
+        const anyRemaining = items.some(i => !itemIsClosed(i) && itemShortfall(i) - alreadyInCartForItem(i.id) > 0);
+        const footMsg = anyRemaining
+            ? (mode === 'fresh'
+                ? 'Belum ada yang disiapkan. Tekan Autofill di baris yang diinginkan, atau buka daftar lot untuk memilih sendiri.'
+                : 'Masih ada item yang kurang. Tekan Checkout untuk memutuskan langkah selanjutnya.')
+            : 'Semua baris sudah terisi.';
 
-            <div class="modal-footer-actions-lg" style="justify-content:space-between;">
-                <span style="font-size:0.82rem; color:var(--text-muted);">Total taken: <strong id="dc-total-taken" style="color:var(--text-primary);">0</strong></span>
-                <div style="display:flex; gap:10px;">
-                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
-                    <button type="button" id="dc-btn-checkout" class="btn btn-primary">Checkout</button>
+        const html = `
+            <div id="dispatch-checkout-body">
+                ${bodyHtml}
+
+                <div style="display:flex; gap:8px; margin-bottom:6px; margin-top:4px;">
+                    <input type="text" id="dc-scan-input" class="form-control" placeholder="Scan a package or carton barcode (coming soon)" autocomplete="off" style="flex:1;" disabled>
+                </div>
+                <p style="font-size:0.78rem; color:var(--text-muted); margin: 0 0 12px;">Scanning isn't wired up yet — pick lots from the list above for now.</p>
+
+                <div class="modal-footer-actions-lg" style="justify-content:space-between;">
+                    <span id="dc-foot-msg" style="font-size:0.8rem; color:var(--text-muted); max-width:48ch;">${footMsg}</span>
+                    <div style="display:flex; align-items:center; gap:14px;">
+                        <span style="font-size:0.82rem; color:var(--text-muted);">Total taken: <strong id="dc-total-taken" style="color:var(--text-primary);">0</strong></span>
+                        <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">Cancel</button>
+                        <button type="button" id="dc-btn-checkout" class="btn btn-primary" disabled>Checkout</button>
+                    </div>
                 </div>
             </div>
-        </div>
-        <style>
-            /* .btn sets display:inline-flex, which beats the bare [hidden]
-               attribute (author CSS always outranks the UA default that
-               makes [hidden] work) — without this, a hidden Take/Cancel
-               button stays visible instead of actually disappearing. */
-            #dispatch-checkout-body [hidden] { display: none !important; }
-            /* The shared modal header carries inline padding/margin (see
-               index.html), so only !important can tighten it — and :has()
-               keeps it scoped to THIS modal, reverting on its own for
-               every other modal that reuses the same shell. */
-            #modal-container:has(#dispatch-checkout-body) .overlay-card > div:has(> #modal-title) {
-                padding-bottom: 6px !important;
-                margin-bottom: 8px !important;
-            }
-            #dispatch-checkout-body .dc-order-info { display:flex; justify-content:space-between; align-items:flex-start; padding:0 12px 8px; margin-bottom:8px; border-bottom:1px solid var(--border); }
-            #dispatch-checkout-body .dc-order-info-value { font-weight:600; font-size:0.86rem; color:var(--text-primary); }
-            #dispatch-checkout-body .dc-order-info-sub { font-size:0.76rem; color:var(--text-muted); margin-top:1px; }
-            #dispatch-checkout-body .dc-col-head { display:grid; grid-template-columns:1fr 130px 70px 70px; gap:10px; padding:0 12px 6px; font-size:0.66rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); }
-            #dispatch-checkout-body .dc-col-head span:nth-child(3), #dispatch-checkout-body .dc-col-head span:nth-child(4) { text-align:right; }
-            #dispatch-checkout-body .dc-item { border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:10px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
-            #dispatch-checkout-body .dc-item-row { display:grid; grid-template-columns:1fr 130px 70px 70px; gap:10px; align-items:center; width:100%; padding:14px 14px; background:var(--bg-card, none); border:none; text-align:left; cursor:pointer; font-family:inherit; font-size:0.86rem; color:var(--text-primary); }
-            #dispatch-checkout-body .dc-item-row:hover { background:var(--bg-app); }
-            #dispatch-checkout-body .dc-item-name { display:flex; align-items:center; gap:9px; min-width:0; }
-            #dispatch-checkout-body .dc-chev { display:inline-block; color:var(--text-muted); font-size:0.7rem; transition:transform 0.15s ease; }
-            #dispatch-checkout-body .dc-item.open .dc-chev { transform:rotate(90deg); }
-            #dispatch-checkout-body .dc-code { font-family:monospace; font-weight:800; font-size:0.76rem; color:var(--primary); background:var(--primary-glow); border:1px solid var(--primary); border-radius:6px; padding:2px 7px; letter-spacing:0.3px; flex:0 0 auto; }
-            #dispatch-checkout-body .dc-title { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-            #dispatch-checkout-body .dc-size { font-family:monospace; font-size:0.76rem; color:var(--text-muted); flex:0 0 auto; background:var(--bg-app); border-radius:5px; padding:2px 6px; }
-            #dispatch-checkout-body .dc-mach { font-size:0.78rem; color:var(--text-muted); }
-            #dispatch-checkout-body .dc-stock { font-family:monospace; font-size:0.85rem; text-align:right; }
-            #dispatch-checkout-body .dc-ready { font-family:monospace; font-weight:700; font-size:0.85rem; text-align:right; }
-            #dispatch-checkout-body .dc-lots { border-top:1px solid var(--border); background:var(--bg-app); padding:6px; }
-            #dispatch-checkout-body .dc-committed { font-size:0.76rem; color:var(--text-muted); background:none; border:1px solid var(--border); border-radius:6px; padding:7px 9px; margin:2px 3px 6px; }
-            #dispatch-checkout-body .dc-committed-undo-toggle { margin-left:8px; background:none; border:none; padding:0; cursor:pointer; color:var(--danger); text-decoration:underline; font-size:0.76rem; font-family:inherit; }
-            #dispatch-checkout-body .dc-committed-undo-form { margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
-            #dispatch-checkout-body .dc-undo-note { font-size:0.72rem; color:var(--text-muted); margin-top:2px; }
-            #dispatch-checkout-body .dc-undo-qty { width:60px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--bg-app); color:var(--text-primary); font-size:0.78rem; text-align:right; font-family:monospace; }
-            #dispatch-checkout-body .dc-lot-empty { font-size:0.8rem; color:var(--text-muted); padding:10px; text-align:center; }
-            #dispatch-checkout-body .dc-lot { display:grid; grid-template-columns:1fr 64px 190px; gap:10px; align-items:center; padding:8px 9px; border-radius:6px; font-size:0.82rem; }
-            #dispatch-checkout-body .dc-lot + .dc-lot { margin-top:2px; }
-            #dispatch-checkout-body .dc-lot:hover { background:rgba(127,127,127,0.08); }
-            #dispatch-checkout-body .dc-lot-mismatch { background:rgba(190,72,52,0.1); box-shadow:inset 2px 0 0 rgba(190,72,52,0.55); }
-            #dispatch-checkout-body .dc-lot-taken { background:rgba(45,106,79,0.12); box-shadow:inset 2px 0 0 var(--primary); }
-            #dispatch-checkout-body .dc-lot-mismatch.dc-lot-taken { box-shadow:inset 2px 0 0 var(--primary), inset 0 0 0 1px rgba(190,72,52,0.4); }
-            #dispatch-checkout-body .dc-lot-main { display:flex; flex-direction:column; gap:2px; min-width:0; }
-            #dispatch-checkout-body .dc-lot-code { font-family:monospace; font-size:0.78rem; }
-            #dispatch-checkout-body .dc-lot-meta { font-size:0.7rem; color:var(--text-muted); }
-            #dispatch-checkout-body .dc-lot-stock { font-family:monospace; font-size:0.8rem; text-align:right; color:var(--text-muted); }
-            #dispatch-checkout-body .dc-pill { font-size:0.6rem; font-weight:700; padding:1px 6px; border-radius:9999px; white-space:nowrap; }
-            #dispatch-checkout-body .dc-pill-fifo { color:var(--primary); background:var(--primary-glow); }
-            #dispatch-checkout-body .dc-pill-mismatch { color:var(--danger); background:rgba(190,72,52,0.14); }
-            #dispatch-checkout-body .dc-lot-add { display:flex; gap:6px; justify-content:flex-end; align-items:center; }
-            #dispatch-checkout-body .dc-lot-check { color:var(--primary); font-weight:700; }
-            #dispatch-checkout-body .dc-lot-qty { width:52px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--bg-app); color:var(--text-primary); font-size:0.78rem; text-align:right; font-family:monospace; }
-            #dispatch-checkout-body .dc-committed-lots { margin-top:8px; padding-top:8px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:3px; }
-            #dispatch-checkout-body .dc-committed-lots > div { display:flex; justify-content:space-between; gap:12px; font-size:0.74rem; color:var(--text-secondary); }
-            #dispatch-checkout-body .dc-committed-lot-code { font-family:monospace; }
-            #dispatch-checkout-body .dc-committed-lot-qty { font-variant-numeric:tabular-nums; white-space:nowrap; }
-        </style>
-    `;
+            <style>${DISPATCH_CHECKOUT_STYLE}</style>
+        `;
 
-    openModal(`Checkout — ${order.order_number || '#ORD-' + order.id}`, html, '760px');
+        openModal(`Checkout — ${order.order_number || '#ORD-' + order.id}${titleSuffix}`, html, mode === 'continuing' ? '980px' : '760px');
+        wireCheckoutButton();
+        renderAll();
+    }
 
+    function wireCheckoutButton() {
+        const btnCheckout = document.getElementById('dc-btn-checkout');
+        if (!btnCheckout) return;
+        btnCheckout.addEventListener('click', onCheckoutClicked);
+    }
+
+    // ------------------------------------------------------------------
     // Core shared logic for both scan and manual add. Returns nothing; shows
     // its own alerts/warnings and re-renders on success.
+    // ------------------------------------------------------------------
     async function addCartEntry(itemId, lotId, qtyRequested) {
         const item = items.find(i => i.id === itemId);
         if (!item) { alert('That coffee is not on this order.'); return; }
 
-        const requested = parseInt(item.quantity_requested) || 0;
-        const prepared = parseInt(item.quantity_prepared) || 0;
-        const remainingForLine = requested - prepared - alreadyInCartForItem(itemId);
+        const shortfall = itemShortfall(item);
+        const remainingForLine = shortfall - alreadyInCartForItem(itemId);
         if (remainingForLine <= 0) {
             await showWarningModal(`This line (${coffeeLabel(item)}, ${item.bag_size_g}g) is already fully allocated.`, false);
             return;
@@ -2890,47 +2852,451 @@ async function openDispatchCheckoutModal(orderId) {
             }
         }
 
+        // Freshly expand this item's lot list if it wasn't already, so the
+        // operator immediately sees what Take (or Autofill) just did.
+        const lotsEl = document.getElementById(`dc-lots-${itemId}`);
+        const rowEl = document.getElementById(`dc-item-${itemId}`);
+        if (lotsEl && lotsEl.classList.contains('hidden')) {
+            lotsEl.classList.remove('hidden');
+            const headerBtn = rowEl ? rowEl.querySelector('.dc-item-row') : null;
+            if (headerBtn) { headerBtn.setAttribute('aria-expanded', 'true'); rowEl.classList.add('open'); }
+        }
         renderAll();
     }
 
-    renderAll();
+    // CHECKOUT_AUTOFILL_PLAN.md §5.5.4 / §10.5 — Autofill draws from the
+    // exact same FIFO recommendation and the exact same spill logic as a
+    // manual Take (addCartEntry), just started automatically from the
+    // recommended lot. It never picks a lot on a different machine and never
+    // needs to ask about skipping an older lot, because it only ever starts
+    // FROM the oldest matching lot — if that's null (no stock on the right
+    // machine), it takes nothing and leaves the line short for a human to
+    // decide.
+    async function autofillItem(itemId) {
+        const item = items.find(i => i.id === itemId);
+        if (!item) return;
+        const shortfall = itemShortfall(item);
+        const remaining = shortfall - alreadyInCartForItem(itemId);
+        if (remaining <= 0) return;
+        const fifoLot = fifoLotForItemMachine(itemId);
+        if (!fifoLot) return;
+        await addCartEntry(itemId, fifoLot.id, remaining);
+    }
 
-    // Expand/collapse — lazy nothing to compute, the lot list for every item
-    // was already rendered above, this only toggles visibility.
-    document.getElementById('dc-item-list').addEventListener('click', async (e) => {
+    // Empties the cart for one line — never touches the database. Shown as
+    // the row action once a line has anything in the cart (§10.6 / mockup
+    // screen 5's lighter confirmation, since no stock has moved).
+    async function resetCartForItem(itemId) {
+        const item = items.find(i => i.id === itemId);
+        const qty = alreadyInCartForItem(itemId);
+        if (!item || qty <= 0) return;
+        const ok = await showWarningModal(
+            `Kosongkan ${coffeeLabel(item)}? ${qty} pcs yang sudah diisi akan hilang dari keranjang. Belum ada yang dikeluarkan dari stok.`,
+            true
+        );
+        if (!ok) return;
+        for (const [key, row] of [...cart.entries()]) {
+            if (row.orderItemId === itemId) {
+                liveRemaining[row.lotId] = (liveRemaining[row.lotId] || 0) + row.qty;
+                cart.delete(key);
+            }
+        }
+        renderAll();
+    }
+
+    // Decrements/deletes this item's dispatch_lot_items rows for one lot so
+    // the right pane's numbers stay in sync with a refund made via the
+    // ledger path. Loops across rows because multiple checkout sessions can
+    // each leave their own row for the same lot.
+    async function syncDispatchLotItems(lotId, takeTotal) {
+        let left = takeTotal;
+        const rows = dispatchLotItemsAll.filter(x => x.packed_coffee_lot_id === lotId && !x._undone);
+        for (const d of rows) {
+            if (left <= 0) break;
+            const dQty = parseInt(d.qty) || 0;
+            if (dQty <= 0) continue;
+            const t = Math.min(dQty, left);
+            const newDQty = dQty - t;
+            if (newDQty <= 0) {
+                await deleteData('dispatch_lot_items', d.id);
+                d.qty = 0;
+                d._undone = true;
+            } else {
+                d.qty = newDQty;
+                await saveData('dispatch_lot_items', { id: d.id, qty: newDQty });
+            }
+            left -= t;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Reset (right pane) — CHECKOUT_AUTOFILL_PLAN.md §5. The one place in
+    // this modal that ADDS stock back. Always returns the item's FULL
+    // committed amount (§1 decision 9) and always reopens the line fully —
+    // clearing quantity_unfulfilled too, since reversing a dispatch is
+    // exactly what un-does an earlier "leave it short" decision (§4).
+    // ------------------------------------------------------------------
+    const resettingItems = new Set();
+    async function resetCommittedItem(itemId) {
+        if (resettingItems.has(itemId)) return; // §10.1 — in-flight guard
+        const item = items.find(i => i.id === itemId);
+        if (!item) return;
+        const prepared = itemPreparedQty(item);
+        if (prepared <= 0) return;
+
+        const breakdown = committedQtyBreakdown(itemId);
+        const lines = [
+            ...breakdown.ledgerLots.map(e => `${lotLabel(e.lotId)} — ${e.outstanding} pcs`),
+            ...breakdown.legacyRows.map(d => `${lotLabel(d.packed_coffee_lot_id)} — ${parseInt(d.qty) || 0} pcs`)
+        ];
+        let msg = `Kembalikan ${coffeeLabel(item)} (${item.bag_size_g}g) ke stok?\n\n`;
+        if (lines.length) msg += lines.join('\n') + '\n\n';
+        if (breakdown.untrackedQty > 0) {
+            // §5.5.3 — this part has no lot to send it back to; said here so
+            // the operator isn't surprised the number below doesn't fall to 0.
+            msg += `${breakdown.untrackedQty} pcs tidak punya catatan lot dan tidak bisa dikembalikan otomatis.\n\n`;
+        }
+        msg += `Total akan kembali ke lot asalnya dan tercatat di buku besar. Item ini akan muncul lagi di daftar kiri dengan target penuh (${item.quantity_requested} pcs).`;
+
+        const ok = await showWarningModal(msg, true, 'Reset Stock?', 'Yes, Return to Stock');
+        if (!ok) return;
+
+        resettingItems.add(itemId);
+        const iconBtn = document.querySelector(`.dc-committed-reset[data-item="${itemId}"]`);
+        if (iconBtn) iconBtn.disabled = true;
+
+        try {
+            let refunded = 0;
+            const justRefunded = [];
+
+            // 1) Ledger-tracked draws — covers both a checkout draw and an
+            // approval-time deduction, since both leave a row here.
+            for (const { lotId, outstanding } of breakdown.ledgerLots) {
+                const { data: newBalance, error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
+                    p_lot_id: lotId, p_pcs: outstanding,
+                    p_operation: 'undo', p_ref_table: 'request_order_items', p_ref_id: itemId,
+                    p_reason: `Reset for request_order_items #${itemId}`, p_user: (currentUser && currentUser.name) || null
+                });
+                // §5.5.1 — refund_packed_lot returns null (no error) when the
+                // lot row no longer exists. Treat that as a failed refund,
+                // not a silent success.
+                if (refundErr || newBalance === null || newBalance === undefined) {
+                    console.error('refund_packed_lot failed or lot missing:', lotId, refundErr);
+                    continue;
+                }
+                liveRemaining[lotId] = (liveRemaining[lotId] || 0) + outstanding;
+                await syncDispatchLotItems(lotId, outstanding);
+                justRefunded.push({ lotId, take: outstanding });
+                refunded += outstanding;
+            }
+
+            // 2) Legacy fallback for pre-ledger checkout draws.
+            for (const d of breakdown.legacyRows) {
+                const take = parseInt(d.qty) || 0;
+                if (take <= 0 || !d.packed_coffee_lot_id) continue;
+                const { data: newBalance, error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
+                    p_lot_id: d.packed_coffee_lot_id, p_pcs: take,
+                    p_operation: 'undo', p_ref_table: 'request_order_items', p_ref_id: itemId,
+                    p_reason: `Reset of dispatch_lot_items #${d.id}`, p_user: (currentUser && currentUser.name) || null
+                });
+                if (refundErr || newBalance === null || newBalance === undefined) {
+                    console.error('refund_packed_lot failed or lot missing:', d.packed_coffee_lot_id, refundErr);
+                    continue;
+                }
+                liveRemaining[d.packed_coffee_lot_id] = (liveRemaining[d.packed_coffee_lot_id] || 0) + take;
+                await syncDispatchLotItems(d.packed_coffee_lot_id, take);
+                justRefunded.push({ lotId: d.packed_coffee_lot_id, take });
+                refunded += take;
+            }
+
+            dispatchLotItemsAll = dispatchLotItemsAll.filter(d => !d._undone);
+            // committedQtyBreakdown only looks at NET delta per lot, so a
+            // synthetic positive-delta row per actual refund keeps this
+            // session's own breakdown accurate without a re-fetch (§10.3).
+            for (const { lotId, take } of justRefunded) {
+                packedMovementsAll.push({ id: Date.now() + Math.random(), packed_coffee_lot_id: lotId, delta_pcs: take, ref_id: itemId });
+            }
+
+            // §6.2 — if a refunded lot isn't one this modal already knows
+            // about (its metadata was never loaded, e.g. a trade-name item's
+            // code group changed after this modal opened), the STOCK column
+            // for that lot's item can't be trusted to include it. Reopen the
+            // whole modal fresh rather than show an undercounted number.
+            const knownLotIds = new Set((lotsByItem[itemId] || []).map(l => l.id));
+            const sawUnknownLot = justRefunded.some(r => !knownLotIds.has(r.lotId));
+
+            // §5.3 — written from `refunded` (what actually succeeded), never
+            // from the nominal `prepared`. quantity_allocated rides along as
+            // min(old, newPrepared): a partial-refund failure always leaves
+            // the newest (checkout) draws refunded first per §5.1 point 3, so
+            // this never wrongly zeroes out the approval-time portion.
+            const newPrepared = Math.max(0, prepared - refunded);
+            item.quantity_prepared = newPrepared;
+            item.quantity_allocated = Math.min(parseInt(item.quantity_allocated) || 0, newPrepared);
+            // Reset always reopens the line fully, even one an earlier
+            // Checkout (Pilihan 1) had formally closed as unfulfilled — this
+            // reversal undoes that decision too, on purpose (§5.4).
+            item.quantity_unfulfilled = 0;
+            const requested = itemRequested(item);
+            item.item_status = newPrepared >= requested ? 'Ready for Handover' : 'Packing';
+            await saveData('request_order_items', item);
+
+            if (sawUnknownLot) {
+                await showWarningModal(`Returned ${refunded} pcs for ${coffeeLabel(item)}. Reopening this order to refresh the stock figures.`, false, null, null, 'success');
+                window.activeDispatchCheckoutHandler = null;
+                document.getElementById('btn-close-modal').click();
+                await loadPackingRequestsSection();
+                scheduleDashboardRefresh();
+                await openDispatchCheckoutModal(order.id);
+                return;
+            }
+
+            if (refunded < prepared) {
+                await showWarningModal(`Only ${refunded} of ${prepared} pcs could be returned automatically — one or more lots no longer exist. The remaining ${prepared - refunded} pcs stay recorded as dispatched.`, false);
+            }
+
+            render();
+            await loadPackingRequestsSection();
+            scheduleDashboardRefresh();
+        } finally {
+            resettingItems.delete(itemId);
+            // Only reached if something threw before the success path's own
+            // render() rebuilt this button fresh — re-enable it rather than
+            // leave it stuck disabled with no way to retry.
+            if (iconBtn && document.body.contains(iconBtn)) iconBtn.disabled = false;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Checkout / the two-choice dialog — CHECKOUT_AUTOFILL_PLAN.md §4.
+    // ------------------------------------------------------------------
+    let checkoutInFlight = false;
+
+    async function onCheckoutClicked() {
+        if (checkoutInFlight) return;
+        if (cart.size === 0) {
+            await showWarningModal('Add at least one lot to the cart before checking out.', false);
+            return;
+        }
+
+        // Predict, from current DB state + the cart (nothing written yet),
+        // which lines would still be short after this checkout — decides
+        // whether the choice dialog is needed at all.
+        const shortAfter = items
+            .map(item => ({ item, short: Math.max(0, itemRequested(item) - itemPreparedQty(item) - alreadyInCartForItem(item.id)) }))
+            .filter(x => x.short > 0 && !itemIsClosed(x.item));
+
+        if (shortAfter.length === 0) {
+            checkoutInFlight = true;
+            const btn = document.getElementById('dc-btn-checkout');
+            if (btn) btn.disabled = true;
+            try { await runCheckout(null); }
+            finally {
+                checkoutInFlight = false;
+                // Only reached if runCheckout threw before closing the modal
+                // (the success path already closed it) — re-enable rather
+                // than leave the button stuck disabled.
+                if (btn && document.body.contains(btn)) btn.disabled = false;
+            }
+            return;
+        }
+
+        showChoiceDialog(shortAfter);
+    }
+
+    function showChoiceDialog(shortAfter) {
+        const totalShort = shortAfter.reduce((s, x) => s + x.short, 0);
+        const linesHtml = shortAfter.map(x => `
+            <div class="dc-short-line"><span>${coffeeLabel(x.item)} &middot; ${x.item.bag_size_g}g</span><span>kurang <b>${x.short}</b></span></div>
+        `).join('');
+        const html = `
+            <div id="dispatch-checkout-body">
+                <div class="dc-choice-dialog">
+                    <h4>${shortAfter.length === 1 ? '1 item belum lengkap' : `${shortAfter.length} item belum lengkap`}</h4>
+                    <div class="dc-short-list">${linesHtml}</div>
+                    <div class="dc-choice-list">
+                        <div class="dc-opt dc-opt-primary">
+                            <div class="dc-opt-title">Proses apa adanya, order selesai</div>
+                            <button type="button" class="btn btn-primary" id="dc-choice-finish">Pilih</button>
+                            <div class="dc-opt-desc">Yang sudah disiapkan dikeluarkan sekarang. Kekurangan ${totalShort} pcs dicatat sebagai tidak terpenuhi dan tidak ditunggu lagi. Order ini tidak akan muncul lagi di daftar packing setelah dikirim.</div>
+                        </div>
+                        <div class="dc-opt">
+                            <div class="dc-opt-title">Proses sebagian, order tetap terbuka</div>
+                            <button type="button" class="btn btn-secondary" id="dc-choice-continue">Pilih</button>
+                            <div class="dc-opt-desc">Yang sudah disiapkan dikeluarkan sekarang, sisanya tetap ditunggu. Order bertahan di daftar packing sampai ${totalShort} pcs itu terpenuhi.</div>
+                        </div>
+                    </div>
+                    <div class="dc-dialog-foot"><button type="button" class="btn btn-secondary" id="dc-choice-back">Kembali</button></div>
+                </div>
+            </div>
+            <style>${DISPATCH_CHECKOUT_STYLE}</style>
+        `;
+        openModal(`Beberapa Item Belum Lengkap`, html, '560px');
+
+        const finishBtn = document.getElementById('dc-choice-finish');
+        const continueBtn = document.getElementById('dc-choice-continue');
+        const backBtn = document.getElementById('dc-choice-back');
+        backBtn.addEventListener('click', () => render());
+        finishBtn.addEventListener('click', async () => {
+            if (checkoutInFlight) return;
+            checkoutInFlight = true;
+            finishBtn.disabled = true; continueBtn.disabled = true; backBtn.disabled = true;
+            try { await runCheckout('finish'); }
+            finally {
+                checkoutInFlight = false;
+                if (document.body.contains(finishBtn)) { finishBtn.disabled = false; continueBtn.disabled = false; backBtn.disabled = false; }
+            }
+        });
+        continueBtn.addEventListener('click', async () => {
+            if (checkoutInFlight) return;
+            checkoutInFlight = true;
+            finishBtn.disabled = true; continueBtn.disabled = true; backBtn.disabled = true;
+            try { await runCheckout('continue'); }
+            finally {
+                checkoutInFlight = false;
+                if (document.body.contains(finishBtn)) { finishBtn.disabled = false; continueBtn.disabled = false; backBtn.disabled = false; }
+            }
+        });
+    }
+
+    // The actual write path. `choice` is null when nothing was predicted
+    // short (ordinary full checkout, unchanged from before this feature),
+    // 'finish' for Pilihan 1 (§4), or 'continue' for Pilihan 2 (§4).
+    async function runCheckout(choice) {
+        // Snapshot and empty the cart before the first deduction, so any
+        // second entry into this function finds nothing left to consume
+        // rather than drawing the same lots twice (double-submit guard,
+        // same shape as cb599a4's fix for the old single-choice Checkout).
+        const cartRows = [...cart.values()];
+        cart.clear();
+
+        const [{ data: freshItems }, { data: freshLots }] = await Promise.all([
+            fetchData('request_order_items'),
+            fetchData('packed_coffee_lots')
+        ]);
+
+        // Deduct packed_coffee_lots (the per-lot source of truth) via the
+        // atomic RPC — clamps and locks in the DB instead of trusting a
+        // freshLots snapshot. quantity_prepared below is credited from the
+        // pcs ACTUALLY taken (qtyByItem), not the cart's requested amount —
+        // if a race clamps a take below what was requested, the order must
+        // not be credited for stock it never got.
+        const qtyByItem = new Map();
+        for (const row of cartRows) {
+            const lot = (freshLots || []).find(l => l.id === row.lotId);
+            if (!lot) continue;
+            const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', {
+                p_lot_id: lot.id, p_pcs: row.qty,
+                p_operation: 'dispatch', p_ref_table: 'request_order_items', p_ref_id: row.orderItemId,
+                p_reason: order && order.order_number ? `Checkout ${order.order_number}` : null,
+                p_user: (currentUser && currentUser.name) || null
+            });
+            if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+            const actualQty = parseInt(taken) || 0;
+            if (actualQty <= 0) continue;
+            qtyByItem.set(row.orderItemId, (qtyByItem.get(row.orderItemId) || 0) + actualQty);
+
+            await saveData('dispatch_lot_items', {
+                request_order_item_id: row.orderItemId,
+                packed_coffee_lot_id: row.lotId,
+                customer_id: cust ? cust.id : null,
+                qty: actualQty
+            });
+        }
+
+        // Credit each line, decide its status, and — for Pilihan 1 only —
+        // finalize any still-short line as unfulfilled. Every line is
+        // visited (not just ones this checkout touched), because a line the
+        // operator never added anything for can still be short and still
+        // needs finalizing under Pilihan 1 (§4 point 1: "setiap baris").
+        //
+        // A line already permanently closed by an EARLIER Pilihan 1 round
+        // (quantity_unfulfilled > 0 from before this call) is skipped
+        // entirely — otherwise picking "proses sebagian" on THIS round's
+        // other lines would silently reopen it by recomputing item_status
+        // from a fresh row that still reads short.
+        let stillShort = false;
+        for (const item of items) {
+            const fresh = (freshItems || []).find(i => i.id === item.id);
+            if (!fresh) continue;
+            if ((parseInt(fresh.quantity_unfulfilled) || 0) > 0) continue;
+
+            const checkoutQty = qtyByItem.get(item.id) || 0;
+            const requested = parseInt(fresh.quantity_requested) || 0;
+            const newPrepared = (parseInt(fresh.quantity_prepared) || 0) + checkoutQty;
+            fresh.quantity_prepared = newPrepared;
+            const shortAfterThis = Math.max(0, requested - newPrepared);
+
+            if (choice === 'finish' && shortAfterThis > 0) {
+                fresh.quantity_unfulfilled = shortAfterThis;
+                fresh.item_status = 'Ready for Handover';
+            } else {
+                fresh.item_status = newPrepared >= requested ? 'Ready for Handover' : 'Packing';
+                if (shortAfterThis > 0) stillShort = true;
+            }
+            await saveData('request_order_items', fresh);
+        }
+
+        window.activeDispatchCheckoutHandler = null;
+        const closeBtn = document.getElementById('btn-close-modal');
+        if (closeBtn) closeBtn.click();
+
+        const message = choice === 'finish'
+            ? 'Checkout saved. The remaining shortfall is recorded as unfulfilled — this order is done.'
+            : stillShort
+                ? 'Checkout saved. This order still has lines pending — it stays open for the remainder.'
+                : 'Checkout saved. All lines are fulfilled — ready to dispatch.';
+        await showWarningModal(message, false, null, null, 'success');
+
+        const printNow = await showWarningModal('Print the waybill now?', true);
+        if (printNow) await printOrderDetail(order.id);
+
+        await loadPackingRequestsSection();
+        scheduleDashboardRefresh();
+    }
+
+    // ------------------------------------------------------------------
+    // First paint, then one delegated listener bound directly to the modal's
+    // stable body container (#modal-body-content survives every openModal()
+    // call this function makes — only its innerHTML is reassigned) so it
+    // keeps working across every re-render, including the choice dialog and
+    // the fresh/continuing mode switch.
+    // ------------------------------------------------------------------
+    render();
+
+    const modalBody = document.getElementById('modal-body-content');
+
+    modalBody.addEventListener('click', async (e) => {
+        const autofillBtn = e.target.closest('.dc-row-autofill');
+        if (autofillBtn && !autofillBtn.disabled) {
+            const itemId = parseInt(autofillBtn.getAttribute('data-item'));
+            await autofillItem(itemId);
+            return;
+        }
+
+        const rowResetBtn = e.target.closest('.dc-row-reset');
+        if (rowResetBtn) {
+            const itemId = parseInt(rowResetBtn.getAttribute('data-item'));
+            await resetCartForItem(itemId);
+            return;
+        }
+
+        const committedResetBtn = e.target.closest('.dc-committed-reset');
+        if (committedResetBtn && !committedResetBtn.disabled) {
+            const itemId = parseInt(committedResetBtn.getAttribute('data-item'));
+            await resetCommittedItem(itemId);
+            return;
+        }
+
         const headerBtn = e.target.closest('.dc-item-row');
         if (headerBtn) {
             const itemEl = headerBtn.closest('.dc-item');
             const list = document.getElementById(headerBtn.getAttribute('aria-controls'));
+            if (!list) return;
             const open = list.classList.toggle('hidden') === false;
             headerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
             itemEl.classList.toggle('open', open);
-            return;
-        }
-
-        const undoToggle = e.target.closest('.dc-committed-undo-toggle');
-        if (undoToggle) {
-            const itemId = undoToggle.getAttribute('data-item');
-            const form = document.querySelector(`.dc-committed-undo-form[data-item="${itemId}"]`);
-            if (form) form.classList.toggle('hidden');
-            return;
-        }
-
-        const undoCancel = e.target.closest('.dc-committed-undo-cancel');
-        if (undoCancel) {
-            const form = undoCancel.closest('.dc-committed-undo-form');
-            if (form) form.classList.add('hidden');
-            return;
-        }
-
-        const undoConfirm = e.target.closest('.dc-committed-undo-confirm');
-        if (undoConfirm) {
-            const itemId = parseInt(undoConfirm.getAttribute('data-item'));
-            const form = undoConfirm.closest('.dc-committed-undo-form');
-            const qty = parseInt(form.querySelector('.dc-undo-qty').value) || 0;
-            if (qty <= 0) return;
-            if (!await showWarningModal(`Undo ${qty} unit(s) already checked out for this line?`, true)) return;
-            await undoCommittedQty(itemId, qty);
+            if (open) renderItemLots(parseInt(headerBtn.getAttribute('data-item')));
             return;
         }
 
@@ -2960,16 +3326,14 @@ async function openDispatchCheckoutModal(orderId) {
 
     // Editing the qty on an already-taken lot adjusts it directly — no need
     // to Cancel first just to fix a miscount.
-    document.getElementById('dc-item-list').addEventListener('input', (e) => {
+    modalBody.addEventListener('input', (e) => {
         const inp = e.target.closest('.dc-lot-qty');
         if (!inp) return;
         const lotEl = inp.closest('.dc-lot');
 
         // Not-yet-taken row: the qty box starts blank for any lot the order
         // doesn't actually need, and Take stays disabled until a real number
-        // is typed. This is the other half of the blank-by-default change
-        // above — without it the button would be permanently dead on those
-        // rows, and a deliberate extra draw would be impossible.
+        // is typed.
         if (!lotEl.classList.contains('dc-lot-taken')) {
             const takeBtnEl = lotEl.querySelector('.dc-lot-take');
             if (takeBtnEl && !takeBtnEl.hidden) {
@@ -3002,8 +3366,8 @@ async function openDispatchCheckoutModal(orderId) {
     // its lot_code text) while this modal is open — see
     // js/roasting.js handleBarcodeScan's PackLot dispatch branch. Scanning
     // itself isn't wired up in the UI yet (dc-scan-input is disabled — see
-    // openDispatchCheckoutModal's HTML), so this only fires if something
-    // else routes a scan here; left in place for when scanning ships.
+    // render()'s HTML), so this only fires if something else routes a scan
+    // here; left in place for when scanning ships.
     window.activeDispatchCheckoutHandler = async function (lotId, sizeG, multiplier) {
         const targetItem = items.find(item => {
             const lots = lotsByItem[item.id] || [];
@@ -3018,29 +3382,6 @@ async function openDispatchCheckoutModal(orderId) {
         await addCartEntry(targetItem.id, lot.id, multiplier || 1);
     };
 
-    // One click per cart. Every consume_packed_lot below deducts real stock,
-    // and the modal only closes once all of them have finished — so while the
-    // first write was in flight the button stayed live and a second click
-    // submitted the SAME cart again. Found live 2026-09-16 on order
-    // ما140926001: six lines were double-submitted inside one second, 71 pcs
-    // more than ordered left stock (each second pass clamped to whatever the
-    // lot still had), and the second pass also wrote quantity_prepared from
-    // its own stale pre-checkout read — so CHOCO BLEND showed 16 / 20 ready
-    // while 28 pcs had actually been deducted.
-    const btnCheckout = document.getElementById('dc-btn-checkout');
-    let checkoutInFlight = false;
-    btnCheckout.addEventListener('click', async () => {
-        if (checkoutInFlight) return;
-        checkoutInFlight = true;
-        btnCheckout.disabled = true;
-        try {
-            await submitDispatchCheckout(order, items, cart, cust);
-        } finally {
-            checkoutInFlight = false;
-            btnCheckout.disabled = false;
-        }
-    });
-
     // Clear the active-scan hook whenever this modal closes by any route
     // (Cancel, the shared × close button, or after a successful checkout).
     const modalCloseBtn = document.getElementById('btn-close-modal');
@@ -3049,102 +3390,94 @@ async function openDispatchCheckoutModal(orderId) {
     }
 }
 
+// Scoped styling for the checkout modal — embedded in every render() call
+// (cheap: a handful of ops staff use this modal, not a hot path) so it
+// travels with #dispatch-checkout-body through every openModal() re-render,
+// including the two-panel and choice-dialog views.
+const DISPATCH_CHECKOUT_STYLE = `
+    /* .btn sets display:inline-flex, which beats the bare [hidden]
+       attribute — without this, a hidden Take/Cancel button stays visible
+       instead of actually disappearing. */
+    #dispatch-checkout-body [hidden] { display: none !important; }
+    #modal-container:has(#dispatch-checkout-body) .overlay-card > div:has(> #modal-title) {
+        padding-bottom: 6px !important;
+        margin-bottom: 8px !important;
+    }
+    #dispatch-checkout-body .dc-order-info { display:flex; justify-content:space-between; align-items:flex-start; padding:0 12px 8px; margin-bottom:8px; border-bottom:1px solid var(--border); }
+    #dispatch-checkout-body .dc-order-info-value { font-weight:600; font-size:0.86rem; color:var(--text-primary); }
+    #dispatch-checkout-body .dc-order-info-sub { font-size:0.76rem; color:var(--text-muted); margin-top:1px; }
+    #dispatch-checkout-body .dc-col-head { display:grid; grid-template-columns:1fr 130px 70px 70px 96px; gap:10px; padding:0 12px 6px; font-size:0.66rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); }
+    #dispatch-checkout-body .dc-col-head span:nth-child(3), #dispatch-checkout-body .dc-col-head span:nth-child(4) { text-align:right; }
+    #dispatch-checkout-body .dc-col-head-compact { grid-template-columns:1fr 60px 70px 96px; }
+    #dispatch-checkout-body .dc-item { border:1px solid var(--border); border-radius:10px; overflow:hidden; margin-bottom:10px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+    #dispatch-checkout-body .dc-item-row { display:grid; grid-template-columns:1fr 130px 70px 70px 96px; gap:10px; align-items:center; width:100%; padding:14px 14px; background:var(--bg-card, none); border:none; text-align:left; cursor:pointer; font-family:inherit; font-size:0.86rem; color:var(--text-primary); }
+    #dispatch-checkout-body .dc-item-row-compact { grid-template-columns:1fr 60px 70px 96px; }
+    #dispatch-checkout-body .dc-item-row:hover { background:var(--bg-app); }
+    #dispatch-checkout-body .dc-item-name { display:flex; align-items:center; gap:9px; min-width:0; flex-wrap:wrap; }
+    #dispatch-checkout-body .dc-chev { display:inline-block; color:var(--text-muted); font-size:0.7rem; transition:transform 0.15s ease; }
+    #dispatch-checkout-body .dc-item.open .dc-chev { transform:rotate(90deg); }
+    #dispatch-checkout-body .dc-code { font-family:monospace; font-weight:800; font-size:0.76rem; color:var(--primary); background:var(--primary-glow); border:1px solid var(--primary); border-radius:6px; padding:2px 7px; letter-spacing:0.3px; flex:0 0 auto; }
+    #dispatch-checkout-body .dc-title { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #dispatch-checkout-body .dc-size { font-family:monospace; font-size:0.76rem; color:var(--text-muted); flex:0 0 auto; background:var(--bg-app); border-radius:5px; padding:2px 6px; }
+    #dispatch-checkout-body .dc-badge-dispatched { font-size:0.6rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; color:var(--danger); background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.32); border-radius:4px; padding:1px 6px; flex:0 0 auto; }
+    #dispatch-checkout-body .dc-mach { font-size:0.78rem; color:var(--text-muted); }
+    #dispatch-checkout-body .dc-stock { font-family:monospace; font-size:0.85rem; text-align:right; }
+    #dispatch-checkout-body .dc-ready { font-family:monospace; font-weight:700; font-size:0.85rem; text-align:right; }
+    #dispatch-checkout-body .dc-act { display:flex; justify-content:flex-end; }
+    #dispatch-checkout-body .dc-icon-btn { display:inline-flex; align-items:center; justify-content:center; width:30px; height:28px; border-radius:6px; background:none; border:1px solid rgba(239,68,68,0.42); color:var(--danger); padding:0; }
+    #dispatch-checkout-body .dc-icon-btn[disabled] { opacity:0.35; }
+    #dispatch-checkout-body .dc-icon-btn-danger { border-color:rgba(239,68,68,0.5); }
+    #dispatch-checkout-body .dc-lots { border-top:1px solid var(--border); background:var(--bg-app); padding:6px; }
+    #dispatch-checkout-body .dc-lot-empty { font-size:0.8rem; color:var(--text-muted); padding:14px; text-align:center; }
+    #dispatch-checkout-body .dc-lot { display:grid; grid-template-columns:1fr 64px 190px; gap:10px; align-items:center; padding:8px 9px; border-radius:6px; font-size:0.82rem; }
+    #dispatch-checkout-body .dc-lot + .dc-lot { margin-top:2px; }
+    #dispatch-checkout-body .dc-lot:hover { background:rgba(127,127,127,0.08); }
+    #dispatch-checkout-body .dc-lot-mismatch { background:rgba(190,72,52,0.1); box-shadow:inset 2px 0 0 rgba(190,72,52,0.55); }
+    #dispatch-checkout-body .dc-lot-taken { background:rgba(45,106,79,0.12); box-shadow:inset 2px 0 0 var(--primary); }
+    #dispatch-checkout-body .dc-lot-mismatch.dc-lot-taken { box-shadow:inset 2px 0 0 var(--primary), inset 0 0 0 1px rgba(190,72,52,0.4); }
+    #dispatch-checkout-body .dc-lot-main { display:flex; flex-direction:column; gap:2px; min-width:0; }
+    #dispatch-checkout-body .dc-lot-code { font-family:monospace; font-size:0.78rem; }
+    #dispatch-checkout-body .dc-lot-meta { font-size:0.7rem; color:var(--text-muted); }
+    #dispatch-checkout-body .dc-lot-stock { font-family:monospace; font-size:0.8rem; text-align:right; color:var(--text-muted); }
+    #dispatch-checkout-body .dc-pill { font-size:0.6rem; font-weight:700; padding:1px 6px; border-radius:9999px; white-space:nowrap; }
+    #dispatch-checkout-body .dc-pill-fifo { color:var(--primary); background:var(--primary-glow); }
+    #dispatch-checkout-body .dc-pill-mismatch { color:var(--danger); background:rgba(190,72,52,0.14); }
+    #dispatch-checkout-body .dc-lot-add { display:flex; gap:6px; justify-content:flex-end; align-items:center; }
+    #dispatch-checkout-body .dc-lot-check { color:var(--primary); font-weight:700; }
+    #dispatch-checkout-body .dc-lot-qty { width:52px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--bg-app); color:var(--text-primary); font-size:0.78rem; text-align:right; font-family:monospace; }
+    #dispatch-checkout-body .dc-split { display:grid; grid-template-columns:1.35fr 1fr; gap:14px; }
+    #dispatch-checkout-body .dc-pane { border:1px solid var(--border); border-radius:10px; padding:12px; background:var(--bg-app); }
+    #dispatch-checkout-body .dc-pane-head { display:flex; justify-content:space-between; gap:10px; font-size:0.68rem; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-muted); margin-bottom:10px; }
+    #dispatch-checkout-body .dc-sum-table { width:100%; border-collapse:collapse; font-size:0.78rem; }
+    #dispatch-checkout-body .dc-sum-table th { text-align:right; font-weight:500; color:var(--text-muted); font-size:0.64rem; letter-spacing:0.06em; text-transform:uppercase; padding-bottom:7px; }
+    #dispatch-checkout-body .dc-sum-table th:first-child { text-align:left; }
+    #dispatch-checkout-body .dc-sum-table td { padding:7px 0; border-top:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums; }
+    #dispatch-checkout-body .dc-sum-table td:first-child { text-align:left; }
+    #dispatch-checkout-body .dc-sum-meta { font-size:0.66rem; color:var(--text-muted); }
+    #dispatch-checkout-body .dc-sum-short { color:var(--warning, #d97706); font-weight:700; }
+    #dispatch-checkout-body .dc-sum-ok { color:var(--success); }
+    #dispatch-checkout-body .dc-sum-table tfoot td { font-weight:700; border-top:2px solid var(--border); }
+    #dispatch-checkout-body .dc-sum-act { width:38px; }
+    #dispatch-checkout-body .dc-pane-note { font-size:0.72rem; color:var(--text-muted); margin-top:12px; padding-top:10px; border-top:1px solid var(--border); }
+    #dispatch-checkout-body .dc-choice-dialog { display:flex; flex-direction:column; gap:14px; }
+    #dispatch-checkout-body .dc-choice-dialog h4 { margin:0; font-size:1rem; font-weight:700; color:var(--text-primary); }
+    #dispatch-checkout-body .dc-short-list { display:flex; flex-direction:column; gap:6px; border:1px solid rgba(255,209,102,0.35); background:rgba(255,209,102,0.08); border-radius:8px; padding:10px 12px; }
+    #dispatch-checkout-body .dc-short-line { display:flex; justify-content:space-between; gap:12px; font-size:0.82rem; color:var(--text-secondary); }
+    #dispatch-checkout-body .dc-short-line b { color:var(--warning, #d97706); font-family:monospace; }
+    #dispatch-checkout-body .dc-choice-list { display:flex; flex-direction:column; gap:10px; }
+    #dispatch-checkout-body .dc-opt { display:grid; grid-template-columns:1fr auto; gap:8px 14px; align-items:center; border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+    #dispatch-checkout-body .dc-opt-primary { border-color:var(--primary); background:var(--primary-glow); }
+    #dispatch-checkout-body .dc-opt-title { font-size:0.88rem; font-weight:700; color:var(--text-primary); }
+    #dispatch-checkout-body .dc-opt-desc { font-size:0.76rem; color:var(--text-muted); grid-column:1/-1; }
+    #dispatch-checkout-body .dc-dialog-foot { display:flex; justify-content:flex-end; }
+`;
+
 // V2 1G: persists the checkout modal's cart — supersedes the old single-line
 // "Ready" flow (markOrderItemReady), since fulfillment is now lot-level and
-// can touch multiple order lines from one screen. `items`/`cust` are the
-// snapshot captured when the modal opened; DB rows are re-fetched fresh here
-// since packed stock may have moved since then.
-async function submitDispatchCheckout(order, items, cart, cust) {
-    if (cart.size === 0) {
-        await showWarningModal('Add at least one lot to the cart before checking out.', false);
-        return;
-    }
-
-    const [{ data: freshItems }, { data: freshLots }] = await Promise.all([
-        fetchData('request_order_items'),
-        fetchData('packed_coffee_lots')
-    ]);
-
-    // Deduct packed_coffee_lots (the per-lot source of truth) via the atomic
-    // RPC (STOCK_LEDGER_PLAN.md Phase 1) — clamps and locks in the DB
-    // instead of trusting a freshLots snapshot, which is exactly what let
-    // two concurrent checkouts silently under-deduct a shared lot. The
-    // parent packed_coffee row's flattened total is trigger-derived
-    // (sync_packed_coffee_quantity) from this write, no separate write
-    // needed — then record the fulfillment for traceability. quantity_prepared
-    // below is credited from the pcs ACTUALLY taken (qtyByItem), not the
-    // cart's requested amount — if a race clamps a take below what was
-    // requested, the order must not be credited for stock it never got.
-    // Snapshot and empty the cart before the first deduction, so any second
-    // entry into this function — another caller, a re-fired event — finds
-    // nothing left to consume rather than drawing the same lots twice. The
-    // in-flight guard on the Checkout button is the first line of defence;
-    // this is the one that doesn't depend on which button was clicked.
-    const cartRows = [...cart.values()];
-    cart.clear();
-
-    const qtyByItem = new Map();
-    for (const row of cartRows) {
-        const lot = (freshLots || []).find(l => l.id === row.lotId);
-        if (!lot) continue;
-        const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', {
-            p_lot_id: lot.id, p_pcs: row.qty,
-            p_operation: 'dispatch', p_ref_table: 'request_order_items', p_ref_id: row.orderItemId,
-            p_reason: order && order.order_number ? `Checkout ${order.order_number}` : null,
-            p_user: (currentUser && currentUser.name) || null
-        });
-        if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
-        const actualQty = parseInt(taken) || 0;
-        if (actualQty <= 0) continue;
-        qtyByItem.set(row.orderItemId, (qtyByItem.get(row.orderItemId) || 0) + actualQty);
-
-        await saveData('dispatch_lot_items', {
-            request_order_item_id: row.orderItemId,
-            packed_coffee_lot_id: row.lotId,
-            customer_id: cust ? cust.id : null,
-            qty: actualQty
-        });
-    }
-
-    // Credit each order line's quantity_prepared; full lines go straight to
-    // 'Ready for Handover', partial lines stay 'Packing' so the order remains
-    // an active card (existing allItemsReady logic in
-    // loadPackingRequestsSection keeps it open until every line catches up).
-    let stillShort = false;
-    for (const [itemId, checkoutQty] of qtyByItem) {
-        const item = (freshItems || []).find(i => i.id === itemId);
-        if (!item) continue;
-        const requested = parseInt(item.quantity_requested) || 0;
-        const newPrepared = (parseInt(item.quantity_prepared) || 0) + checkoutQty;
-        item.quantity_prepared = newPrepared;
-        item.item_status = newPrepared >= requested ? 'Ready for Handover' : 'Packing';
-        if (newPrepared < requested) stillShort = true;
-        await saveData('request_order_items', item);
-    }
-    // Lines this checkout didn't touch at all might still be short too.
-    items.forEach(item => {
-        if (!qtyByItem.has(item.id) && (parseInt(item.quantity_prepared) || 0) < (parseInt(item.quantity_requested) || 0)) {
-            stillShort = true;
-        }
-    });
-
-    window.activeDispatchCheckoutHandler = null;
-    const closeBtn = document.getElementById('btn-close-modal');
-    if (closeBtn) closeBtn.click();
-
-    await showWarningModal(
-        stillShort
-            ? 'Checkout saved. This order still has lines pending — it stays open for the remainder.'
-            : 'Checkout saved. All lines are fulfilled — ready to dispatch.',
-        false, null, null, 'success'
-    );
-
-    const printNow = await showWarningModal('Print the waybill now?', true);
-    if (printNow) await printOrderDetail(order.id);
-
-    await loadPackingRequestsSection();
-    scheduleDashboardRefresh();
-}
+// can touch multiple order lines from one screen. The choice-driven finish
+// (Pilihan 1) / continue (Pilihan 2) split lives inside runCheckout, nested
+// in openDispatchCheckoutModal above, next to the render/cart state it needs
+// — CHECKOUT_AUTOFILL_PLAN.md §4.
 
 // ============================================================
 // PRINT ORDER DETAIL - Sales Order Request A4
@@ -6861,9 +7194,10 @@ async function openNewStockReleaseModal() {
 }
 
 // Validates, writes the header + one item row per cart line, and consumes the
-// lots — same consumption pattern as submitDispatchCheckout (decrement
-// packed_coffee_lots.remaining_pcs and the parent packed_coffee.quantity;
-// quantity_pcs is the lot's original size and is never touched).
+// lots — same consumption pattern as openDispatchCheckoutModal's runCheckout
+// (decrementing packed_coffee_lots.remaining_pcs and the parent
+// packed_coffee.quantity; quantity_pcs is the lot's original size and is
+// never touched).
 async function submitStockRelease({ date, category, salesName, notes, lines }) {
     if (!lines || lines.length === 0) {
         await showWarningModal('Add at least one item before recording the release.', false);

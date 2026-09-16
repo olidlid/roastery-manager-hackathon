@@ -2742,17 +2742,27 @@ async function openSalesRequestModal(orderId = null) {
         if (activeOrderIds.includes(item.request_order_id)) {
             if (orderId !== null && item.request_order_id === orderId) return;
             const cId = item.coffee_type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
-            // A fully-handed-over item commits nothing further, regardless of
-            // its (possibly legitimately 0) quantity_pending. Otherwise use
-            // quantity_pending if it's been set at all — including a real 0,
-            // which `|| quantity_requested` used to wrongly treat as "not set"
-            // (0 is falsy in JS) and fall back to the full original request,
-            // over-committing stock for orders that don't need any more of it
-            // (found live 2026-07-16: a "Ready for Handover" item with
-            // quantity_pending=0 was still reserving quantity_requested).
+            // A fully-handed-over item commits nothing further. Otherwise the
+            // outstanding claim is recomputed fresh from requested/prepared/
+            // unfulfilled — NOT read from quantity_pending, which is only
+            // ever set at submit and approval time and is never decremented
+            // by a later packing checkout (CHECKOUT_AUTOFILL_PLAN.md §7).
+            // Before this fix, a line sitting mid-checkout — some pcs already
+            // physically drawn from the lot, item_status still 'Packing' —
+            // was double-counted: the stock was genuinely already reduced,
+            // AND quantity_pending still reserved the old, larger amount on
+            // top of that. Harmless while that mid-checkout window was brief;
+            // the Autofill/two-panel checkout feature can now leave a line in
+            // that state for days, which is what surfaced this.
+            //
+            // This still carries forward the 2026-07-16 fix it replaces: a
+            // 'Ready for Handover' item reserves nothing further regardless
+            // of its own numbers, and a real 0 pcs still owed is never
+            // mistaken for "not computed yet" the way `|| quantity_requested`
+            // used to.
             const qty = item.item_status === 'Ready for Handover'
                 ? 0
-                : (item.quantity_pending != null ? (parseInt(item.quantity_pending) || 0) : (parseInt(item.quantity_requested) || 0));
+                : Math.max(0, (parseInt(item.quantity_requested) || 0) - (parseInt(item.quantity_prepared) || 0) - (parseInt(item.quantity_unfulfilled) || 0));
             const key = `${item.coffee_type}-${cId}-${item.bag_size_g}`;
             committedPackedMap[key] = (committedPackedMap[key] || 0) + qty;
             if (item.machine_id) {
