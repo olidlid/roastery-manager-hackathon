@@ -1,6 +1,6 @@
 # Rencana: Autofill, Checkout Bertanya, dan Setiap Akibatnya pada Stok
 
-**Status:** Rencana, siap dikerjakan setelah satu keputusan terakhir (§9). Diperiksa ulang 2026-09-16 terhadap definisi RPC dan kode yang ada — empat koreksi masuk di §5.5, satu benturan struktural di §9.
+**Status:** Siap dikerjakan. Semua keputusan sudah diambil. Diperiksa ulang 2026-09-16 terhadap definisi RPC dan kode yang ada — empat koreksi masuk di §5.5, satu benturan struktural di §9.
 **Tanggal:** 2026-09-16
 **Mockup:** https://claude.ai/artifact/GZRJRkeNaCCgQiPKdm67xa
 **Berkas yang tersentuh:** `js/packing.js` (modal checkout + kartu), `js/sales.js` (satu perhitungan ketersediaan), `js/translations.js`, `index.html`.
@@ -217,21 +217,21 @@ Sumber angkanya sudah ada: `loadPackingRequestsSection` membaca `quantity_prepar
 - Angka per item berarti **sudah keluar / diminta**, dengan keterangan kurang berapa.
 - Tombol `Prepare` berganti `Lanjutkan`. `Unable to Fulfill` tetap, dan tetap memakai `stopOrderFromPacking` yang sudah terbukti mengembalikan stok lot per lot.
 
+**Badge `Dispatched` per item.** Menempel pada setiap baris item yang `quantity_prepared > 0`, baik sebagian maupun penuh. Muncul di **dua tempat dengan syarat yang sama**: baris item di kartu ini, dan baris item di dalam modal checkout (daftar kiri pada tampilan dua panel).
+
+Satu batas yang tidak boleh kabur: badge ini **tidak** dipasang untuk angka yang baru masuk keranjang dan belum di-checkout. Keranjang belum menyentuh stok. Beda antara "sudah keluar" dan "baru di keranjang" justru hal terpenting yang dibaca operator di layar ini — menyamakan keduanya menghapus pembeda itu dan membuat orang membatalkan sesuatu yang dikiranya masih aman. Badge ikut hilang sesudah reset di panel kanan, karena tidak ada lagi yang di luar.
+
 ---
 
-## 9. Satu keputusan yang masih terbuka
+## 9. Keputusan terakhir: kirim duluan — SUDAH TERJAWAB, tanpa perubahan kode
 
-**Order yang dibuka lewat Pilihan 2 — barang yang sudah keluar boleh dikirim duluan?**
+Pertanyaannya: order yang dibuka lewat Pilihan 2, barang yang sudah keluar boleh dikirim duluan?
 
-Saat memeriksa ulang, ternyata ini **tidak sepenuhnya bebas dipilih**. `dispatchOrder` menyetel `status = 'Dispatched'` untuk **seluruh order**, sedangkan daftar packing hanya menampilkan order berstatus `Preparing`. Jadi begitu order dikirim duluan, kartunya hilang dari packing dan **baris yang masih kurang tidak punya tempat untuk dilanjutkan**.
+Ternyata ini **tidak bebas dipilih**. `dispatchOrder` menyetel `status = 'Dispatched'` untuk **seluruh order**, sedangkan daftar packing hanya menampilkan order berstatus `Preparing`. Jadi begitu order dikirim duluan, kartunya hilang dari packing dan baris yang masih kurang tidak punya tempat untuk dilanjutkan.
 
-Tiga jalan keluarnya:
+**Kabar baiknya: perilaku yang benar sudah berjalan hari ini.** Di `loadPackingRequestsSection`, tombol `Dispatch` hanya dirender ketika **setiap** baris sudah `quantity_prepared >= quantity_requested`; selama masih ada yang kurang, yang muncul adalah tombol `Prepare`. Jadi order yang sebagian keluar memang tidak bisa dikirim duluan, dan itu memang yang kita inginkan.
 
-1. **Dispatch disembunyikan sampai semua baris penuh** — paling sederhana, tidak ada perubahan struktur. *Ini yang saya sarankan.*
-2. Dispatch per item, bukan per order — perubahan besar, menyentuh surat jalan dan riwayat.
-3. Order kembali ke `Preparing` sesudah pengiriman pertama — membuat status order berbohong tentang dirinya sendiri.
-
-Kalau gudang memang butuh mengirim duluan, pilihan 2 harus direncanakan terpisah, bukan diselipkan ke pekerjaan ini.
+**Yang harus dilakukan: tidak ada.** Jangan menyentuh syarat tombol Dispatch, dan jangan membuat pengiriman per item — itu pekerjaan tersendiri yang menyentuh surat jalan dan riwayat, bukan bagian dari rencana ini.
 
 ---
 
