@@ -3018,8 +3018,27 @@ async function openDispatchCheckoutModal(orderId) {
         await addCartEntry(targetItem.id, lot.id, multiplier || 1);
     };
 
-    document.getElementById('dc-btn-checkout').addEventListener('click', async () => {
-        await submitDispatchCheckout(order, items, cart, cust);
+    // One click per cart. Every consume_packed_lot below deducts real stock,
+    // and the modal only closes once all of them have finished — so while the
+    // first write was in flight the button stayed live and a second click
+    // submitted the SAME cart again. Found live 2026-09-16 on order
+    // ما140926001: six lines were double-submitted inside one second, 71 pcs
+    // more than ordered left stock (each second pass clamped to whatever the
+    // lot still had), and the second pass also wrote quantity_prepared from
+    // its own stale pre-checkout read — so CHOCO BLEND showed 16 / 20 ready
+    // while 28 pcs had actually been deducted.
+    const btnCheckout = document.getElementById('dc-btn-checkout');
+    let checkoutInFlight = false;
+    btnCheckout.addEventListener('click', async () => {
+        if (checkoutInFlight) return;
+        checkoutInFlight = true;
+        btnCheckout.disabled = true;
+        try {
+            await submitDispatchCheckout(order, items, cart, cust);
+        } finally {
+            checkoutInFlight = false;
+            btnCheckout.disabled = false;
+        }
     });
 
     // Clear the active-scan hook whenever this modal closes by any route
@@ -3056,8 +3075,16 @@ async function submitDispatchCheckout(order, items, cart, cust) {
     // below is credited from the pcs ACTUALLY taken (qtyByItem), not the
     // cart's requested amount — if a race clamps a take below what was
     // requested, the order must not be credited for stock it never got.
+    // Snapshot and empty the cart before the first deduction, so any second
+    // entry into this function — another caller, a re-fired event — finds
+    // nothing left to consume rather than drawing the same lots twice. The
+    // in-flight guard on the Checkout button is the first line of defence;
+    // this is the one that doesn't depend on which button was clicked.
+    const cartRows = [...cart.values()];
+    cart.clear();
+
     const qtyByItem = new Map();
-    for (const row of cart.values()) {
+    for (const row of cartRows) {
         const lot = (freshLots || []).find(l => l.id === row.lotId);
         if (!lot) continue;
         const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', {
