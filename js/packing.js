@@ -3607,6 +3607,21 @@ const DISPATCH_CHECKOUT_STYLE = `
     #dispatch-checkout-body .dc-act { display:flex; justify-content:flex-end; }
     #dispatch-checkout-body .dc-icon-btn { display:inline-flex; align-items:center; justify-content:center; width:30px; height:28px; border-radius:6px; background:none; border:1px solid rgba(239,68,68,0.42); color:var(--danger); padding:0; }
     #dispatch-checkout-body .dc-icon-btn[disabled] { opacity:0.35; }
+    /* A disabled Take / Autofill / Checkout used to render exactly like an
+       active one — full-colour green, with the hover glow — because nothing
+       in the app styles .btn:disabled. Operators read that as "clickable"
+       (reported 2026-09-16). Scoped to this modal on purpose; other screens
+       may rely on their own disabled look. */
+    #dispatch-checkout-body .btn:disabled,
+    #dispatch-checkout-body .btn:disabled:hover {
+        background-color: var(--bg-input);
+        border-color: var(--border);
+        color: var(--text-muted);
+        box-shadow: none;
+        transform: none;
+        cursor: not-allowed;
+        opacity: 0.7;
+    }
     #dispatch-checkout-body .dc-icon-btn-danger { border-color:rgba(239,68,68,0.5); }
     #dispatch-checkout-body .dc-lots { border-top:1px solid var(--border); background:var(--bg-app); padding:6px; }
     #dispatch-checkout-body .dc-lot-empty { font-size:0.8rem; color:var(--text-muted); padding:14px; text-align:center; }
