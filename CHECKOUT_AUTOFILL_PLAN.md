@@ -96,8 +96,8 @@ Ini bagian paling berbahaya di seluruh rencana, jadi ditulis selangkah demi sela
 Tiga hal yang membuat ini benar dan tidak boleh diubah:
 
 1. **Net per lot, bukan "pernah ada barisnya".** Lot yang pernah diambil lalu sudah dikembalikan penuh bernilai net 0 dan **tidak boleh** ikut dikembalikan lagi. Ini persis bug yang ditemukan Sonnet sendiri pada `canReopenOrder`.
-2. **Pengambilan saat approval ikut terbawa.** Approval memakai `consume_packed_lot` dengan `ref_table` yang sama, jadi bagiannya ada di buku besar dan ikut pulang. Konsekuensinya: `quantity_allocated` juga harus dinolkan (§5.3).
-3. **Terbaru dulu.** Kalau suatu saat pengembalian jadi sebagian lagi, urutan ini yang paling masuk akal. Untuk sekarang selalu penuh, jadi urutannya tidak berpengaruh — tapi jangan diubah tanpa alasan.
+2. **Pengambilan saat approval ikut terbawa.** Approval memakai `consume_packed_lot` dengan `ref_table` yang sama, jadi bagiannya ada di buku besar dan ikut pulang. Konsekuensinya: `quantity_allocated` juga harus ikut disesuaikan — dengan rumus `min(allocated_lama, prepared_baru)` di §5.3, **bukan** selalu dinolkan.
+3. **Terbaru dulu.** Walau reset selalu diniatkan untuk seluruh item, urutan ini **tetap berpengaruh**: kalau satu RPC gagal di tengah, yang sudah pulang adalah pergerakan terbaru (biasanya bagian checkout), sedangkan bagian approval masih di luar. Itulah alasan rumus `quantity_allocated` di §5.3. Jangan diubah.
 
 ### 5.2 Urutan eksekusi
 
