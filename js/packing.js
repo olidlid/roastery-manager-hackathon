@@ -3329,6 +3329,27 @@ async function openDispatchCheckoutModal(orderId) {
 
     const modalBody = document.getElementById('modal-body-content');
 
+    // #modal-body-content is a single persistent element reused by every
+    // call to openDispatchCheckoutModal — opening the checkout modal for one
+    // order, closing it, then opening it for a DIFFERENT order in the same
+    // page session (completely ordinary use) does NOT tear down the
+    // previous call's listeners, since closing only hides #modal-container
+    // via CSS. Without this, listeners stack indefinitely, and anything that
+    // reads DOM state by id rather than through its own closure — exactly
+    // what toggleItemRow does — fires once per stacked listener on a single
+    // click/keypress. For a plain boolean toggle (expand/collapse) two
+    // stacked calls cancel each other out, which is how this was actually
+    // found: real-clicking a row to expand it silently did nothing once a
+    // second order's modal had been opened in the same session. Removing
+    // whichever handlers the previous invocation left here, before adding
+    // this invocation's own, keeps exactly one set live at a time.
+    if (modalBody._dispatchCheckoutHandlers) {
+        const old = modalBody._dispatchCheckoutHandlers;
+        modalBody.removeEventListener('click', old.click);
+        modalBody.removeEventListener('input', old.input);
+        modalBody.removeEventListener('keydown', old.keydown);
+    }
+
     // Bug 2 fix (found live testing 7af6953): .dc-item-row is a div with
     // role="button", not a real <button> (real buttons can't nest the
     // Autofill/Reset button next to them — see itemRowHtml's comment), so
@@ -3343,7 +3364,7 @@ async function openDispatchCheckoutModal(orderId) {
         if (open) renderItemLots(parseInt(headerEl.getAttribute('data-item')));
     }
 
-    modalBody.addEventListener('click', async (e) => {
+    const onModalBodyClick = async (e) => {
         const autofillBtn = e.target.closest('.dc-row-autofill');
         if (autofillBtn && !autofillBtn.disabled) {
             const itemId = parseInt(autofillBtn.getAttribute('data-item'));
@@ -3398,11 +3419,11 @@ async function openDispatchCheckoutModal(orderId) {
             cart.delete(key);
             renderAll();
         }
-    });
+    };
 
     // Editing the qty on an already-taken lot adjusts it directly — no need
     // to Cancel first just to fix a miscount.
-    modalBody.addEventListener('input', (e) => {
+    const onModalBodyInput = (e) => {
         const inp = e.target.closest('.dc-lot-qty');
         if (!inp) return;
         const lotEl = inp.closest('.dc-lot');
@@ -3435,20 +3456,25 @@ async function openDispatchCheckoutModal(orderId) {
         // "avail" shown on the row = liveRemaining + taken, a constant pool
         // size regardless of how newQty splits it — unchanged by this edit.
         lotEl.querySelector('.dc-lot-stock').textContent = maxAvail;
-    });
+    };
 
     // Enter/Space activation for .dc-item-row (Bug 2 fix — see toggleItemRow
     // above). The action buttons inside it are real <button> elements, so
     // they already get their own native Enter/Space handling from the
     // browser and must not also trigger the row toggle underneath them.
-    modalBody.addEventListener('keydown', (e) => {
+    const onModalBodyKeydown = (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
         const headerEl = e.target.closest('.dc-item-row');
         if (!headerEl) return;
         if (e.target.closest('.dc-act')) return;
         e.preventDefault();
         toggleItemRow(headerEl);
-    });
+    };
+
+    modalBody.addEventListener('click', onModalBodyClick);
+    modalBody.addEventListener('input', onModalBodyInput);
+    modalBody.addEventListener('keydown', onModalBodyKeydown);
+    modalBody._dispatchCheckoutHandlers = { click: onModalBodyClick, input: onModalBodyInput, keydown: onModalBodyKeydown };
 
     // V2 barcode label fix: a RMP:9{lotId:05d}{sizeG:04d}{mult:02d} barcode
     // is resolved here (by the packed_coffee_lots row's own numeric id, not
