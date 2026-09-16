@@ -1,6 +1,6 @@
 # Rencana: Autofill, Checkout Bertanya, dan Setiap Akibatnya pada Stok
 
-**Status:** Rencana, siap dikerjakan setelah satu keputusan terakhir (§9).
+**Status:** Rencana, siap dikerjakan setelah satu keputusan terakhir (§9). Diperiksa ulang 2026-09-16 terhadap definisi RPC dan kode yang ada — empat koreksi masuk di §5.5, satu benturan struktural di §9.
 **Tanggal:** 2026-09-16
 **Mockup:** https://claude.ai/artifact/GZRJRkeNaCCgQiPKdm67xa
 **Berkas yang tersentuh:** `js/packing.js` (modal checkout + kartu), `js/sales.js` (satu perhitungan ketersediaan), `js/translations.js`, `index.html`.
@@ -125,7 +125,7 @@ Tiga hal yang membuat ini benar dan tidak boleh diubah:
 | Kolom | Nilai baru | Alasan |
 |---|---|---|
 | `quantity_prepared` | `max(0, prepared − refunded)` | Hanya yang benar-benar pulang |
-| `quantity_allocated` | `max(0, allocated − refunded)`, dibatasi tidak di bawah 0 | Bagian approval ikut pulang (§5.1 poin 2) |
+| `quantity_allocated` | `min(allocated_lama, prepared_baru)` | Bagian approval ikut pulang (§5.1 poin 2). **Bukan** `allocated − refunded`: pengembalian berjalan dari pergerakan terbaru, jadi kalau hanya sebagian yang berhasil, yang pulang adalah bagian checkout, sedangkan bagian approval masih di luar. Rumus pengurangan akan menolkannya secara keliru |
 | `item_status` | `prepared_baru >= requested ? 'Ready for Handover' : 'Packing'` | Pola yang sudah dipakai checkout dan undo lama |
 | `quantity_pending` | **tidak disentuh** | Artinya "diserahkan ke bulk/produksi saat approval", bukan "sisa yang harus diambil" (§7) |
 | `quantity_unfulfilled` | **tidak disentuh** | Reset bukan keputusan pemenuhan |
@@ -134,6 +134,38 @@ Tiga hal yang membuat ini benar dan tidak boleh diubah:
 
 - Item itu **kembali ke daftar kiri** dengan target penuh. Contoh: kiri `3 / 8` dan kanan keluar 12 → sesudah reset jadi kiri `3 / 20`, kanan keluar 0. Angka yang sudah diketik operator (3) **tidak hilang**, hanya targetnya melebar.
 - Baris ringkasan di panel kanan dan di kartu packing dihitung ulang.
+
+### 5.5 Empat kasus yang harus ditangani eksplisit
+
+Ditemukan saat memeriksa ulang rencana ini terhadap definisi RPC dan kode yang ada. Tiga di antaranya adalah lubang yang juga ada pada Undo yang lama.
+
+**5.5.1 — `refund_packed_lot` tidak memberi tahu kalau lotnya hilang.**
+Badan fungsinya hanyalah `UPDATE ... WHERE id = p_lot_id RETURNING remaining_pcs`. Kalau baris lotnya sudah tidak ada, tidak ada baris yang diperbarui, **tidak ada error**, dan hasilnya `null`. Kode Undo yang ada sekarang hanya memeriksa `error`, jadi lot yang lenyap akan terbaca sukses: `quantity_prepared` berkurang padahal tidak ada satu pcs pun yang pulang.
+**Wajib:** perlakukan hasil `null` sebagai **gagal**, jangan tambahkan ke `refunded`, dan sebut lot itu di pesan akhir.
+
+**5.5.2 — `refund_packed_lot` tidak punya batas atas.**
+Berbeda dengan `consume_packed_lot` yang memotong di `LEAST(remaining_pcs, ...)` dan mengembalikan jumlah yang benar-benar terambil, pengembalian menambah apa adanya dan mengembalikan **saldo baru**, bukan jumlah yang ditambahkan. Artinya dua panggilan yang sama akan menaikkan stok dua kali tanpa perlawanan dari basis data. Ini yang membuat penjaga klik ganda (§10.1) bukan sekadar kenyamanan.
+
+**5.5.3 — Bagian yang tidak punya jejak lot (`untrackedQty`).**
+Sisa yang tidak tercatat di buku besar maupun di `dispatch_lot_items` **tidak bisa dipulangkan otomatis** — tidak ada lot tujuannya. Jangan diam-diam menganggapnya pulang.
+**Wajib:** sebutkan di kotak konfirmasi (*"x pcs tidak punya catatan lot dan tidak bisa dikembalikan otomatis"*), dan kurangi `quantity_prepared` hanya sebesar yang benar-benar pulang. Sisa itu tetap tercatat sebagai sudah keluar sampai diselesaikan lewat Stock Take.
+
+**5.5.4 — Autofill tidak boleh mengambil keputusan yang butuh pertimbangan manusia.**
+`addCartEntry` memunculkan konfirmasi untuk dua hal: lot dari mesin lain, dan lot yang melompati FIFO. Autofill harus **selalu** berangkat dari `fifoLotForItemMachine(itemId)`, yang sudah menyaring hanya lot bermesin benar dan berstok hidup, lalu membiarkan limpahan FIFO bawaan `addCartEntry` bekerja. Kalau fungsi itu mengembalikan `null` — stok hanya ada di mesin lain — **Autofill tidak mengambil apa pun** dan baris itu dibiarkan kurang. Operator yang memutuskan lintas mesin, bukan tombol.
+
+---
+
+### 5.6 Apa yang terjadi pada urutan FIFO sesudah pengembalian
+
+Pertanyaan yang paling penting untuk dijawab lurus: **pcs yang pulang kembali ke lot asalnya**, bukan ke lot termuda, dan bukan dibagi rata. Lot asal itulah yang tercatat di buku besar, dan itu juga yang benar secara fisik — bag yang belum jadi dikirim memang kembali ke tumpukan tempat ia diambil.
+
+Akibatnya pada FIFO justru pemulihan yang benar:
+
+- Lot lama yang sempat kosong akan **hidup lagi** dengan `packed_date` aslinya yang lebih tua.
+- Autofill berikutnya membaca `fifoLotForItemMachine`, yang mengurutkan berdasarkan `packed_date`, jadi lot lama itu **kembali menjadi pilihan pertama** — persis seperti sebelum checkout terjadi.
+- Tidak ada lot yang "naik pangkat" karena pengembalian, karena `quantity_pcs` dan `packed_date` tidak pernah disentuh oleh pengembalian.
+
+Satu catatan untuk item bertrade-name (`coffee_code`): item seperti ini boleh ditarik dari beberapa origin sekaligus. Sesudah pengembalian lalu Autofill ulang, sistem bisa memilih **origin yang berbeda** dari yang tadi, kalau ada lot yang lebih tua di origin lain. Itu memang perilaku FIFO yang diinginkan dan bukan cacat — tapi perlu diketahui supaya tidak dikira pengembaliannya salah lot.
 
 ---
 
@@ -190,13 +222,22 @@ Sumber angkanya sudah ada: `loadPackingRequestsSection` membaca `quantity_prepar
 ## 9. Satu keputusan yang masih terbuka
 
 **Order yang dibuka lewat Pilihan 2 — barang yang sudah keluar boleh dikirim duluan?**
-Kalau boleh, tombol Dispatch tetap aktif di kartu. Kalau tidak, Dispatch baru muncul setelah semua baris penuh. Ini keputusan cara kerja gudang, bukan teknis, dan tidak mengubah satu pun angka stok di atas.
+
+Saat memeriksa ulang, ternyata ini **tidak sepenuhnya bebas dipilih**. `dispatchOrder` menyetel `status = 'Dispatched'` untuk **seluruh order**, sedangkan daftar packing hanya menampilkan order berstatus `Preparing`. Jadi begitu order dikirim duluan, kartunya hilang dari packing dan **baris yang masih kurang tidak punya tempat untuk dilanjutkan**.
+
+Tiga jalan keluarnya:
+
+1. **Dispatch disembunyikan sampai semua baris penuh** — paling sederhana, tidak ada perubahan struktur. *Ini yang saya sarankan.*
+2. Dispatch per item, bukan per order — perubahan besar, menyentuh surat jalan dan riwayat.
+3. Order kembali ke `Preparing` sesudah pengiriman pertama — membuat status order berbohong tentang dirinya sendiri.
+
+Kalau gudang memang butuh mengirim duluan, pilihan 2 harus direncanakan terpisah, bukan diselipkan ke pekerjaan ini.
 
 ---
 
 ## 10. Ranjau
 
-**10.1 — Kunci setiap tombol yang menyentuh stok selama prosesnya berjalan.** Checkout sudah dikunci sejak `cb599a4`. Tombol reset di panel kanan harus mendapat penjaga yang sama: satu bendera in-flight, tombol `disabled`, dan dibebaskan di `finally`. Klik ganda pada pengembalian akan **menggandakan stok** — arah kerusakan yang berlawanan dengan bug 15 September, tapi sama besar.
+**10.1 — Kunci setiap tombol yang menyentuh stok selama prosesnya berjalan.** Checkout sudah dikunci sejak `cb599a4`. Tombol reset di panel kanan harus mendapat penjaga yang sama: satu bendera in-flight, tombol `disabled`, dan dibebaskan di `finally`. Klik ganda pada pengembalian akan **menggandakan stok**, dan basis data tidak akan menahannya sama sekali (§5.5.2) — arah kerusakan berlawanan dengan bug 15 September, tapi sama besar.
 
 **10.2 — Buku besar adalah wasit, bukan layar.** Jangan pernah menghitung jumlah yang dikembalikan dari apa yang tampil di panel kanan. Selalu dari `committedQtyBreakdown`, dibaca ulang tepat sebelum menulis.
 
