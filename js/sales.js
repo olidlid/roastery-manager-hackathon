@@ -1813,6 +1813,38 @@ async function approveSalesOrder(orderId) {
         reservedElsewhereByBulkId[res.bulk_roasted_coffee_id] = (reservedElsewhereByBulkId[res.bulk_roasted_coffee_id] || 0) + (parseFloat(res.kg) || 0);
     });
 
+    // Packed stock already promised to OTHER approved orders but not yet
+    // picked by packing. Since 2026-09-16 approval no longer deducts packed
+    // stock — "Fulfill from Packed" means packing will prepare it (user
+    // decision) — so an approved order's promise stays sitting in
+    // packed_coffee.quantity until packing checks it out. Without subtracting
+    // it here, the next approval would see those same bags as free and
+    // promise them twice.
+    //
+    // Claim on CURRENT stock per line = max(0, quantity_allocated −
+    // quantity_prepared):
+    //   - new-style approval: allocated N, prepared 0 → N still promised;
+    //   - after packing picks some: shrinks by what was picked (those bags
+    //     already left stock, so they mustn't be subtracted twice);
+    //   - orders approved BEFORE this change had allocated deducted on the
+    //     spot, so prepared ≥ allocated → 0, never double-subtracted.
+    // Keyed the same way findMatchingPacked pools stock: trade-name lines by
+    // type+code+size across machines, other lines by coffee+size+machine.
+    const packedClaimKey = (it) => it.coffee_code
+        ? `C|${it.coffee_type}|${it.coffee_code}|${parseInt(it.bag_size_g)}`
+        : `I|${it.coffee_type}|${it.coffee_type === 'Single' ? it.single_coffee_id : it.blend_recipe_id}|${parseInt(it.bag_size_g)}|${it.machine_id}`;
+    const approvedOrderIds = new Set((orders || []).filter(o => o.status === 'Preparing' && o.id !== orderId).map(o => o.id));
+    const packedClaimedElsewhere = {};
+    (orderItems || []).forEach(it => {
+        if (!approvedOrderIds.has(it.request_order_id)) return;
+        const claim = Math.max(0, (parseInt(it.quantity_allocated) || 0) - (parseInt(it.quantity_prepared) || 0));
+        if (claim <= 0) return;
+        const k = packedClaimKey(it);
+        packedClaimedElsewhere[k] = (packedClaimedElsewhere[k] || 0) + claim;
+    });
+    const netPackedStock = (item, szItems) => Math.max(0,
+        szItems.reduce((acc, p) => acc + (parseInt(p.quantity) || 0), 0) - (packedClaimedElsewhere[packedClaimKey(item)] || 0));
+
     // One pass over this order's items, in the same order they'll render/
     // submit in, so a bulk row two lines both want gets FIFO-split between
     // them instead of both proposing the full amount.
@@ -1823,7 +1855,7 @@ async function approveSalesOrder(orderId) {
         const requested = parseInt(item.quantity_requested) || 0;
         const matchingPackedForItem = findMatchingPacked(item);
         const szItemsForItem = (item.coffee_code || item.machine_id) ? matchingPackedForItem.filter(p => parseInt(p.bag_size_g) === size) : [];
-        const packedStockForItem = szItemsForItem.reduce((acc, p) => acc + (parseInt(p.quantity) || 0), 0);
+        const packedStockForItem = netPackedStock(item, szItemsForItem);
 
         const tierPacked = Math.min(requested, packedStockForItem);
         const remainingAfterPacked = Math.max(0, requested - tierPacked);
@@ -1859,7 +1891,7 @@ async function approveSalesOrder(orderId) {
 
         const matchingPacked = findMatchingPacked(item);
         const szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === size) : [];
-        const packedStock = szItems.reduce((acc, p) => acc + (parseInt(p.quantity) || 0), 0);
+        const packedStock = netPackedStock(item, szItems);
 
         // Trade-name item: "Packed Stock" is a total across every origin
         // sharing the code — show which origin contributed how much, so the
@@ -1997,6 +2029,7 @@ async function approveSalesOrder(orderId) {
                     </div>
                     <div class="flex-1">
                         <span style="color: var(--text-secondary);" data-i18n="lbl_packed_stock">Packed Stock:</span> <strong style="${packedStock < item.quantity_requested ? 'color: var(--danger);' : ''}">${packedStock}</strong>
+                        ${(packedClaimedElsewhere[packedClaimKey(item)] || 0) > 0 ? `<div style="font-size:0.72rem; color:var(--text-muted);">${packedClaimedElsewhere[packedClaimKey(item)]} more already promised to other approved orders</div>` : ''}
                     </div>
                 </div>
                 ${originBreakdownHtml}
@@ -2219,20 +2252,28 @@ async function approveSalesOrder(orderId) {
             // before bulk existed (how much this item still needs before
             // it's fully packed).
             item.quantity_pending = bQty + pQty;
-            // Credit the stock-fulfilled portion as already "prepared" — it's
-            // deducted from packed_coffee below, so js/packing.js's Pending
-            // Pack / Ready button must not ask for (and re-deduct) it again.
-            // Without this, quantity_prepared stayed 0 here and
-            // markOrderItemReady later treated the FULL quantity_requested as
-            // still needing packing, double-deducting stock for the fQty
-            // that was already fulfilled at approval (confirmed 2026-07-16 by
-            // reproducing it live: a fully stock-fulfilled item still showed
-            // "Pending Pack" for its whole quantity, and clicking Ready
-            // deducted packed_coffee a second time for the same units).
-            item.quantity_prepared = fQty;
-            item.item_status = fQty >= (parseInt(item.quantity_requested) || 0)
-                ? 'Ready for Handover'
-                : (pQty > 0 ? 'Planned' : 'Packing');
+            // "Fulfill from Packed" is a DECISION, not a pick (user decision
+            // 2026-09-16): packing prepares those bags from packed stock and
+            // chooses the lots itself in the checkout modal. So approval
+            // neither credits quantity_prepared nor deducts any lot — the one
+            // deduction happens at packing checkout, against the lots packing
+            // actually picks.
+            //
+            // Until this change approval both deducted fQty (FIFO,
+            // consume_packed_lot 'approval_fulfil') and credited it as
+            // prepared, so a fully stock-covered order jumped straight to
+            // 'Ready for Handover' and showed Dispatch with no packing step at
+            // all (68 of 94 recent lines). The old 2026-07-16 double-deduction
+            // worry doesn't apply: that came from crediting prepared = 0 while
+            // STILL deducting here; now neither happens, and the checkout
+            // modal's target (requested − unfulfilled − prepared) makes
+            // packing draw each bag exactly once.
+            //
+            // The promise itself is still protected: other approvals subtract
+            // this line's max(0, allocated − prepared) from Packed Stock
+            // (packedClaimedElsewhere above), and Sales Request subtracts its
+            // outstanding claim (netCodeGroupStock), until packing picks it.
+            item.item_status = pQty > 0 ? 'Planned' : 'Packing';
 
             // APPROVAL_REVISION_PLAN.md Fase 2 / §4 — SAVED, not derived from
             // (requested - allocated - pending) at read time: those two keep
@@ -2243,79 +2284,13 @@ async function approveSalesOrder(orderId) {
             item.quantity_unfulfilled = Math.max(0, (parseInt(item.quantity_requested) || 0) - (fQty + bQty + pQty));
 
             await saveData('request_order_items', item);
-            
-            // Deduct packed stock. Non-trade-name items are machine-
-            // partitioned (confirmed 2026-07-15): findMatchingPacked already
-            // restricts them to the SAME machine the item requested, so
-            // szItems is always exactly one row and this is just that row's
-            // own lots in date order (unchanged behavior). Trade-name
-            // (coffee_code) items intentionally pool across every machine
-            // sharing the code (see findMatchingPacked/findMatchingBulk
-            // above) — "which origin/machine ends up filling the order" is
-            // deferred to packing/dispatch, not decided here.
-            //
-            // What WAS missing for the pooled case: draws happened row-by-row
-            // (fully drain one packed_coffee row before touching the next) in
-            // whatever order fetch returned them — not FIFO. Found 2026-08-22
-            // via a live repro: a GIESEN-tagged order line drew from
-            // STRONGHOLD stock instead while GIESEN's own stock sat
-            // untouched. Sorting the ROWS by oldest date isn't enough either
-            // — two rows can tie on their oldest lot's date while one of them
-            // only has a handful of pcs left at that date, so draining it
-            // first still skips over an equally-old lot sitting in the other
-            // row. The only correct fix is to flatten every pooled row's live
-            // lots into ONE list and sort THAT by date, so the draw crosses
-            // rows/machines exactly when the calendar says it should.
-            if (fQty > 0) {
-                const matchingPacked = findMatchingPacked(item);
-                if (!item.coffee_code && !item.machine_id) {
-                    // Defensive: the order form requires machine_id on every item (see modal-request-form's
-                    // custom [required] validator), so this branch should be unreachable. If it's ever hit,
-                    // fail loudly instead of silently crediting quantity_prepared with zero stock deducted.
-                    console.error('[sales] request_order_item has neither coffee_code nor machine_id — no packed stock can be matched, quantity_prepared will be credited without any deduction. item:', item);
-                }
-                const szItems = (item.coffee_code || item.machine_id) ? matchingPacked.filter(p => parseInt(p.bag_size_g) === parseInt(item.bag_size_g)) : [];
-                const szItemById = new Map(szItems.map(p => [p.id, p]));
 
-                const drawLots = szItems
-                    .flatMap(p => (packedCoffeeLots || []).filter(l => l.packed_coffee_id === p.id && (parseInt(l.remaining_pcs) || 0) > 0))
-                    .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id);
-
-                let remainingDeduct = fQty;
-                for (const lot of drawLots) {
-                    if (remainingDeduct <= 0) break;
-                    const lotAvail = parseInt(lot.remaining_pcs) || 0;
-                    if (lotAvail <= 0) continue;
-                    // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — packed_coffee_lots
-                    // is the FIFO source of truth the dispatch checkout modal reads;
-                    // without this, fulfilling an order from existing stock at
-                    // approval time would leave every lot's remaining_pcs stale/
-                    // overstated so checkout could still offer units already
-                    // consumed here (found 2026-07-27). Previously a plain
-                    // read-modify-write, which is exactly what let two concurrent
-                    // approvals (or an approval racing a checkout) silently
-                    // under-deduct a shared lot (found 2026-08-22).
-                    const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', {
-                        p_lot_id: lot.id, p_pcs: remainingDeduct,
-                        p_operation: 'approval_fulfil', p_ref_table: 'request_order_items', p_ref_id: item.id,
-                        p_user: (currentUser && currentUser.name) || null
-                    });
-                    if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
-                    const take = parseInt(taken) || 0;
-                    if (take <= 0) continue;
-                    lot.remaining_pcs = lotAvail - take;
-                    remainingDeduct -= take;
-
-                    // In-memory only — packed_coffee.quantity is trigger-
-                    // derived from the RPC write above
-                    // (sync_packed_coffee_quantity). Tracked here purely so a
-                    // later item in the SAME approval batch sees this row's
-                    // reduced total (packedGoods/matchingPacked is fetched
-                    // once for the whole function, not re-queried per item).
-                    const parentRow = szItemById.get(lot.packed_coffee_id);
-                    if (parentRow) parentRow.quantity = Math.max(0, (parseInt(parentRow.quantity) || 0) - take);
-                }
-            }
+            // No packed-stock deduction at approval (see the item_status comment
+            // above). Packing checkout is the only place packed lots are drawn
+            // for an order. The FIFO-flattening rule that used to live here
+            // (one date-sorted list across every pooled row, found 2026-08-22)
+            // is what the checkout modal's Autofill follows via
+            // fifoLotForItemMachine.
 
             // Reserve the bulk portion — purely a bookkeeping claim (see
             // bulk_reservations table comment): does NOT touch
