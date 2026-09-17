@@ -2567,6 +2567,26 @@ async function openDispatchCheckoutModal(orderId) {
     // the Machine column in the two-panel left pane (mockup: 4 columns
     // there, 5 in the single-panel view) to make room for the action button
     // without the row getting cramped.
+    // READY column for one line.
+    //   Single-column view: (already out + in cart) / target — the same
+    //     "prepared of requested" reading as the packing card, so a line the
+    //     card shows as 12 / 12 never opens here as 0 / 0. For a line with
+    //     nothing out yet this is simply cart / target, as in the mockup.
+    //     (Reported 2026-09-17: an order fully deducted at approval read
+    //     12 / 12 on its card but 0 / 0 after pressing Edit.)
+    //   Two-panel left pane: cart / remaining shortfall — decision 7, the
+    //     already-out part lives in the right pane there instead.
+    function readyFor(item) {
+        const cartQty = alreadyInCartForItem(item.id);
+        if (orderMode() === 'fresh') {
+            const num = itemPreparedQty(item) + cartQty;
+            const den = itemTarget(item);
+            return { text: `${num} / ${den}`, done: num >= den };
+        }
+        const shortfall = itemShortfall(item);
+        return { text: `${cartQty} / ${shortfall}`, done: cartQty >= shortfall };
+    }
+
     function itemRowHtml(item, showMachine) {
         const requested = itemRequested(item);
         const prepared = itemPreparedQty(item);
@@ -2611,9 +2631,9 @@ async function openDispatchCheckoutModal(orderId) {
                     ${showDispatchedBadge ? '<span class="dc-badge-dispatched">Dispatched</span>' : ''}
                     ${approvalQty > 0 ? `<span class="dc-approval-note" title="Deducted from stock at approval — still to be picked from the lots listed when this row is opened">+${approvalQty} from approval</span>` : ''}
                 </span>
-                ${showMachine ? `<span class="dc-mach">${item.coffee_code ? '-' : machineName(item.machine_id)}</span>` : ''}
+                ${showMachine ? `<span class="dc-mach">${item.machine_id ? machineName(item.machine_id) : '-'}</span>` : ''}
                 <span class="dc-stock" id="dc-stock-${item.id}" style="${isShort ? 'color: var(--warning, #d97706);' : ''}">${stockLabelHtml(item.id)}</span>
-                <span class="dc-ready" id="dc-ready-${item.id}" style="color: ${cartQty >= shortfall ? 'var(--success)' : 'var(--danger)'};">${cartQty} / ${shortfall}</span>
+                <span class="dc-ready" id="dc-ready-${item.id}" style="color: ${readyFor(item).done ? 'var(--success)' : 'var(--danger)'};">${readyFor(item).text}</span>
                 <span class="dc-act" id="dc-act-${item.id}">${actionHtml}</span>
             </div>
             <div id="dc-lots-${item.id}" class="dc-lots hidden"></div>
@@ -2710,7 +2730,7 @@ async function openDispatchCheckoutModal(orderId) {
         const readyEl = document.getElementById(`dc-ready-${itemId}`);
         const actEl = document.getElementById(`dc-act-${itemId}`);
         if (stockEl) { stockEl.innerHTML = stockLabelHtml(itemId); stockEl.style.color = isShort ? 'var(--warning, #d97706)' : ''; }
-        if (readyEl) { readyEl.textContent = `${cartQty} / ${shortfall}`; readyEl.style.color = cartQty >= shortfall ? 'var(--success)' : 'var(--danger)'; }
+        if (readyEl) { const r = readyFor(item); readyEl.textContent = r.text; readyEl.style.color = r.done ? 'var(--success)' : 'var(--danger)'; }
         if (actEl) {
             const hasFifoLot = stockForItem(itemId) + otherMachineStockForItem(itemId) > 0;
             actEl.innerHTML = cartQty > 0
