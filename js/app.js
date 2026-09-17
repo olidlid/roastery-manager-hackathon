@@ -1832,7 +1832,10 @@ function openModal(title, htmlContent, customWidth = null) {
 // `title` stays null by default (rather than a fixed string) so it can
 // fall back to the correct translated default for whichever `type` was
 // requested, instead of always defaulting to "Warning".
-function showWarningModal(message, isConfirm = true, title = null, confirmText = null, type = 'warning') {
+// `cancelText` (optional) relabels the Cancel button of a confirm dialog —
+// e.g. "Edit" when backing out means going back to fix an entry. Omitted, it
+// stays the translated "Cancel", so every existing caller is unaffected.
+function showWarningModal(message, isConfirm = true, title = null, confirmText = null, type = 'warning', cancelText = null) {
     return new Promise((resolve) => {
         let resolved = false;
         const isSuccess = type === 'success';
@@ -1904,7 +1907,7 @@ function showWarningModal(message, isConfirm = true, title = null, confirmText =
             cancelBtn.type = 'button';
             cancelBtn.className = 'btn btn-secondary';
             cancelBtn.style.minWidth = '100px';
-            cancelBtn.textContent = window.t ? window.t('btn_cancel') : 'Cancel';
+            cancelBtn.textContent = cancelText || (window.t ? window.t('btn_cancel') : 'Cancel');
             cancelBtn.addEventListener('click', function() { finish(false); });
             buttonsDiv.appendChild(cancelBtn);
         }

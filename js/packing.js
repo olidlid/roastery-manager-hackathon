@@ -2475,9 +2475,12 @@ async function openDispatchCheckoutModal(orderId) {
         // hasn't been clicked) keeps winning "oldest" and triggers the FIFO
         // warning against itself, contradicting its own "0 left" message.
         const available = (lotsByItem[itemId] || []).filter(l => (liveRemaining[l.id] || 0) > 0);
-        // A trade-name item isn't tied to one machine — the oldest lot from
-        // ANY origin/machine sharing the code is the FIFO recommendation.
-        if (item.coffee_code) return available[0] || null;
+        // The oldest lot on the machine Sales Request asked for — for every
+        // line, trade-name ones included (user decision 2026-09-17: packing
+        // fills from the requested machine first, and only reaches other
+        // machines when the operator agrees). A line with no machine at all
+        // has nothing to match, so the oldest lot anywhere is the pick.
+        if (!item.machine_id) return available[0] || null;
         return available.find(l => l.machineId === item.machine_id) || null;
     };
     const alreadyInCartForItem = (itemId) => {
@@ -2511,15 +2514,15 @@ async function openDispatchCheckoutModal(orderId) {
     // as zero shortfall once itemTarget accounts for them.
     const itemIsClosed = (item) => itemShortfall(item) <= 0;
     // STOCK column = what this line can actually be filled from without a
-    // judgement call: every lot for a trade-name item, only the requested
-    // machine's lots otherwise. That is exactly the pool Autofill draws from
+    // judgement call: the requested machine's lots (every lot only when the
+    // line has no machine). That is exactly the pool Autofill draws from first
     // (fifoLotForItemMachine), so the number the operator reads and the
     // number Autofill can deliver are the same number. Summing every machine
     // here (as this used to) could show stock that Autofill then refuses to
     // take, with no hint why. Other-machine stock is still counted, just
     // shown separately (stockLabelHtml) — it can still be Taken manually,
     // behind the existing mismatch warning.
-    const lotUsableForItem = (item, lot) => !!item.coffee_code || lot.machineId === item.machine_id;
+    const lotUsableForItem = (item, lot) => !item.machine_id || lot.machineId === item.machine_id;
     const stockForItem = (itemId) => {
         const item = items.find(i => i.id === itemId);
         return (lotsByItem[itemId] || []).filter(l => lotUsableForItem(item, l)).reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
@@ -2576,7 +2579,10 @@ async function openDispatchCheckoutModal(orderId) {
         // sudah keluar/checkout"), the same rule orderMode uses.
         const showDispatchedBadge = packingOutQty(item.id) > 0;
         const approvalQty = orderMode() === 'fresh' ? approvalOutQty(item) : 0;
-        const hasFifoLot = !!fifoLotForItemMachine(item.id);
+        // Enabled whenever ANY machine has stock: with none on the requested
+        // machine, Autofill still has something to offer — the "use other
+        // machines?" question.
+        const hasFifoLot = stockForItem(item.id) + otherMachineStockForItem(item.id) > 0;
 
         let actionHtml;
         if (cartQty > 0) {
@@ -2659,7 +2665,7 @@ async function openDispatchCheckoutModal(orderId) {
             const cartRow = cart.get(key);
             const taken = cartRow ? cartRow.qty : 0;
             const avail = (liveRemaining[l.id] || 0) + taken;
-            const mismatch = !item.coffee_code && l.machineId !== item.machine_id;
+            const mismatch = !!item.machine_id && l.machineId !== item.machine_id;
             const isFifo = (fifoLotForItemMachine(itemId) || {}).id === l.id;
             // No suggested quantity, on any lot — CHECKOUT_AUTOFILL_PLAN.md §1
             // decision 1 ("semua kolom jumlah mulai dari 0"). A number appears
@@ -2672,7 +2678,7 @@ async function openDispatchCheckoutModal(orderId) {
                 <div class="dc-lot${mismatch ? ' dc-lot-mismatch' : ''}${taken > 0 ? ' dc-lot-taken' : ''}" data-item="${itemId}" data-lot="${l.id}">
                     <div class="dc-lot-main">
                         <span class="dc-lot-code">${l.stripCode ? `<b>${l.stripCode}</b> &middot; ${l.lotCode}` : l.lotCode}${isFifo ? ' <span class="dc-pill dc-pill-fifo">FIFO</span>' : ''}${mismatch ? ' <span class="dc-pill dc-pill-mismatch">Different machine</span>' : ''}</span>
-                        <span class="dc-lot-meta">${l.originName}${l.originCode ? ' (' + l.originCode + ')' : ''} &middot; packed ${l.packedDate || '-'}${!item.coffee_code ? '' : ' &middot; ' + machineName(l.machineId)}</span>
+                        <span class="dc-lot-meta">${l.originName}${l.originCode ? ' (' + l.originCode + ')' : ''} &middot; packed ${l.packedDate || '-'} &middot; ${machineName(l.machineId)}</span>
                     </div>
                     <span class="dc-lot-stock">${avail}</span>
                     <span class="dc-lot-add">
@@ -2706,7 +2712,7 @@ async function openDispatchCheckoutModal(orderId) {
         if (stockEl) { stockEl.innerHTML = stockLabelHtml(itemId); stockEl.style.color = isShort ? 'var(--warning, #d97706)' : ''; }
         if (readyEl) { readyEl.textContent = `${cartQty} / ${shortfall}`; readyEl.style.color = cartQty >= shortfall ? 'var(--success)' : 'var(--danger)'; }
         if (actEl) {
-            const hasFifoLot = !!fifoLotForItemMachine(itemId);
+            const hasFifoLot = stockForItem(itemId) + otherMachineStockForItem(itemId) > 0;
             actEl.innerHTML = cartQty > 0
                 ? `<button type="button" class="btn dc-icon-btn dc-row-reset" data-item="${itemId}" title="Kosongkan baris ini">${RESET_ICON_SVG}</button>`
                 : `<button type="button" class="btn btn-primary btn-sm dc-row-autofill" data-item="${itemId}" ${(remainingToFill <= 0 || !hasFifoLot) ? 'disabled' : ''}>Autofill</button>`;
@@ -2909,48 +2915,67 @@ async function openDispatchCheckoutModal(orderId) {
         if (!chosenLot) { alert('That lot is not available for this coffee/size.'); return; }
 
         const fifoLot = fifoLotForItemMachine(itemId);
-        // A trade-name item isn't tied to one machine/origin — no such thing
-        // as a "different machine" mismatch, only a FIFO recommendation.
-        const machineMismatch = !item.coffee_code && chosenLot.machineId !== item.machine_id;
+        // Machine check applies to EVERY line that names a machine, trade-name
+        // ones included (user decision 2026-09-17). A manual pick from another
+        // machine is allowed — it just has to be a deliberate one.
+        const machineMismatch = !!item.machine_id && chosenLot.machineId !== item.machine_id;
         const fifoMismatch = !machineMismatch && fifoLot && fifoLot.id !== chosenLot.id;
-        if (machineMismatch || fifoMismatch) {
-            const msg = machineMismatch
-                ? `This lot (${chosenLot.lotCode}) was packed on ${machineName(chosenLot.machineId)}, not ${machineName(item.machine_id)} as requested.\n\nUse it anyway?`
-                : `An older lot is still in stock: ${fifoLot.lotCode} (packed ${fifoLot.packedDate}, ${liveRemaining[fifoLot.id]} left).\n\nThis is a newer lot (${chosenLot.lotCode}). Use the FIFO recommendation first, unless there's a good reason not to.\n\nProceed with this lot anyway?`;
-            const proceed = await showWarningModal(msg, true);
+        if (machineMismatch) {
+            const proceed = await showWarningModal(
+                `This lot (${chosenLot.lotCode}) was packed on ${machineName(chosenLot.machineId)}, but the sales request asked for ${machineName(item.machine_id)}.\n\nContinue with this machine, or go back and edit?`,
+                true, 'Different machine', 'Continue', 'warning', 'Edit'
+            );
+            if (!proceed) return;
+        } else if (fifoMismatch) {
+            const proceed = await showWarningModal(
+                `An older lot is still in stock: ${fifoLot.lotCode} (packed ${fifoLot.packedDate}, ${liveRemaining[fifoLot.id]} left).\n\nThis is a newer lot (${chosenLot.lotCode}). Use the FIFO recommendation first, unless there's a good reason not to.\n\nProceed with this lot anyway?`,
+                true
+            );
             if (!proceed) return;
         }
 
         const cappedQty = Math.min(qtyRequested, remainingForLine);
 
-        // Spill oldest-first within the CHOSEN lot's own machine group if it
-        // runs short — same idea as the green-bean side (1B), just scoped to
-        // whichever machine the operator actually committed to here. A
-        // trade-name item spills across EVERY origin/machine sharing the
-        // code instead, since none of them is "the" expected machine.
-        let toDraw = cappedQty;
-        const sameMachinePool = (item.coffee_code ? lots : lots.filter(l => l.machineId === chosenLot.machineId))
+        // Spill oldest-first within the CHOSEN lot's own machine if it runs
+        // short — the machine the operator committed to by picking this lot.
+        // Never spills onto a different machine: that would bypass the
+        // machine confirmation above.
+        const sameMachinePool = lots.filter(l => l.machineId === chosenLot.machineId)
             .sort((a, b) => new Date(a.packedDate) - new Date(b.packedDate) || a.id - b.id);
         const startIdx = sameMachinePool.findIndex(l => l.id === chosenLot.id);
-        for (let i = startIdx; i < sameMachinePool.length && toDraw > 0; i++) {
-            const l = sameMachinePool[i];
+        fillFromLots(item, sameMachinePool.slice(startIdx), cappedQty);
+
+        expandItemLots(itemId);
+        renderAll();
+    }
+
+    // Puts up to `qty` pcs into the cart for `item`, walking `pool` in the
+    // order given and taking from each lot's live remaining stock. Returns
+    // how many were actually placed. Cart only — never touches the database.
+    function fillFromLots(item, pool, qty) {
+        let toDraw = qty;
+        for (const l of pool) {
+            if (toDraw <= 0) break;
             const avail = liveRemaining[l.id] || 0;
             if (avail <= 0) continue;
             const take = Math.min(avail, toDraw);
             liveRemaining[l.id] = avail - take;
             toDraw -= take;
 
-            const key = `${itemId}:${l.id}`;
+            const key = `${item.id}:${l.id}`;
             const existing = cart.get(key);
             if (existing) {
                 existing.qty += take;
             } else {
-                cart.set(key, { orderItemId: itemId, lotId: l.id, lotCode: l.lotCode, machineId: l.machineId, machineName: machineName(l.machineId), sizeG: item.bag_size_g, qty: take, originName: l.originName, originCode: l.originCode });
+                cart.set(key, { orderItemId: item.id, lotId: l.id, lotCode: l.lotCode, machineId: l.machineId, machineName: machineName(l.machineId), sizeG: item.bag_size_g, qty: take, originName: l.originName, originCode: l.originCode });
             }
         }
+        return qty - toDraw;
+    }
 
-        // Freshly expand this item's lot list if it wasn't already, so the
-        // operator immediately sees what Take (or Autofill) just did.
+    // Freshly expand an item's lot list if it wasn't already, so the operator
+    // immediately sees what Take or Autofill just put in the cart.
+    function expandItemLots(itemId) {
         const lotsEl = document.getElementById(`dc-lots-${itemId}`);
         const rowEl = document.getElementById(`dc-item-${itemId}`);
         if (lotsEl && lotsEl.classList.contains('hidden')) {
@@ -2958,26 +2983,48 @@ async function openDispatchCheckoutModal(orderId) {
             const headerBtn = rowEl ? rowEl.querySelector('.dc-item-row') : null;
             if (headerBtn) { headerBtn.setAttribute('aria-expanded', 'true'); rowEl.classList.add('open'); }
         }
-        renderAll();
     }
 
-    // CHECKOUT_AUTOFILL_PLAN.md §5.5.4 / §10.5 — Autofill draws from the
-    // exact same FIFO recommendation and the exact same spill logic as a
-    // manual Take (addCartEntry), just started automatically from the
-    // recommended lot. It never picks a lot on a different machine and never
-    // needs to ask about skipping an older lot, because it only ever starts
-    // FROM the oldest matching lot — if that's null (no stock on the right
-    // machine), it takes nothing and leaves the line short for a human to
-    // decide.
+    // Autofill (user decision 2026-09-17):
+    //   1. Fill FIFO from the machine the sales request asked for.
+    //   2. If that machine can't cover the line, ASK whether to take the rest
+    //      from other machines. Yes → the rest comes from the other machines'
+    //      lots, oldest first across all of them. No → the line stays short.
+    // Cart only — nothing is written until Checkout. A line with no machine
+    // has no "other" machine, so step 1 simply uses every lot.
+    const byPackedDate = (a, b) => new Date(a.packedDate) - new Date(b.packedDate) || a.id - b.id;
     async function autofillItem(itemId) {
         const item = items.find(i => i.id === itemId);
         if (!item) return;
-        const shortfall = itemShortfall(item);
-        const remaining = shortfall - alreadyInCartForItem(itemId);
+        const remaining = itemShortfall(item) - alreadyInCartForItem(itemId);
         if (remaining <= 0) return;
-        const fifoLot = fifoLotForItemMachine(itemId);
-        if (!fifoLot) return;
-        await addCartEntry(itemId, fifoLot.id, remaining);
+
+        const lots = lotsByItem[itemId] || [];
+        const ownPool = lots.filter(l => lotUsableForItem(item, l)).sort(byPackedDate);
+        const placed = fillFromLots(item, ownPool, remaining);
+        const stillShort = remaining - placed;
+
+        if (stillShort > 0 && item.machine_id) {
+            const otherPool = lots.filter(l => !lotUsableForItem(item, l)).sort(byPackedDate);
+            const otherAvail = otherPool.reduce((s, l) => s + (liveRemaining[l.id] || 0), 0);
+            if (otherAvail > 0) {
+                // Show what's already in the cart before asking, so the
+                // operator can see the partial fill the question is about.
+                expandItemLots(itemId);
+                renderAll();
+                const fromOther = Math.min(stillShort, otherAvail);
+                const useOther = await showWarningModal(
+                    `${machineName(item.machine_id)} only has ${placed} of the ${remaining} pcs needed for ${coffeeLabel(item)} (${item.bag_size_g}g).\n\n` +
+                    `Fill the remaining ${stillShort} pcs from other machines? ${otherAvail} pcs available there` +
+                    (fromOther < stillShort ? `, so the line would still be ${stillShort - fromOther} pcs short.` : '.'),
+                    true, 'Not enough on requested machine', 'Yes, use other machines', 'warning', 'No, leave it short'
+                );
+                if (useOther) fillFromLots(item, otherPool, stillShort);
+            }
+        }
+
+        expandItemLots(itemId);
+        renderAll();
     }
 
     // Empties the cart for one line — never touches the database. Shown as
