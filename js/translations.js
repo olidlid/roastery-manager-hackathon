@@ -466,6 +466,7 @@ window.translations = {
         alert_role_missing: "Your account's role (\"{role}\") no longer exists, so no features are available. Please ask an administrator to reassign your role.",
         hint_cust_type_change: "Customer ID stays the same, and past orders keep the type they were placed under.",
         alert_customer_category_add_denied: "You don't have access to add a customer in any category.",
+        alert_daily_relogin_required: "A new day has started — please sign in again.",
 
         // Sales Request Modal
         modal_submit_req: "Submit Sales Request Order",
@@ -1428,6 +1429,7 @@ window.translations = {
         alert_role_missing: "لم يعد الدور المرتبط بحسابك (\"{role}\") موجودًا، لذلك لا تتوفر أي ميزات. يرجى الطلب من المسؤول إعادة تعيين دورك.",
         hint_cust_type_change: "معرّف العميل يبقى كما هو، والطلبات السابقة تحتفظ بالفئة التي أُنشئت بها.",
         alert_customer_category_add_denied: "ليس لديك صلاحية إضافة عميل في أي فئة.",
+        alert_daily_relogin_required: "بدأ يوم جديد — يرجى تسجيل الدخول مرة أخرى.",
 
         // Sales Request Modal
         modal_submit_req: "تقديم طلب مبيعات",

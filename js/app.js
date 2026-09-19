@@ -2284,6 +2284,7 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
     // Clear the cached identity so a different account logging in on this
     // same browser doesn't briefly flash the previous user's name/role.
     localStorage.removeItem('cached_user_identity');
+    clearDailyLoginDate();
     if (isMockMode) {
         localStorage.removeItem('is_mock_mode');
         isMockMode = true; // resets state

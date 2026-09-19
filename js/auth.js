@@ -483,8 +483,75 @@ function applyRoleAccess() {
     }
 }
 
+// ============================================================
+// DAILY RE-LOGIN ENFORCEMENT
+// Supabase's own session (autoRefreshToken) stays valid indefinitely, so a
+// user who logged in once stayed logged in forever — even reopening the
+// browser weeks later. User asked (2026-09-19) for a hard daily boundary
+// instead: once the LOCAL calendar day changes since this device last
+// passed the auth gate, force a fresh sign-in. This is an app-level gate
+// layered on top of Supabase's session, enforced in two places: at load/
+// sign-in time (initAuthenticatedSession below) and by the watcher further
+// down for a tab left open across midnight.
+const DAILY_LOGIN_DATE_KEY = 'session_login_date';
+
+function getLocalDateStr() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function recordDailyLoginDate() {
+    try { localStorage.setItem(DAILY_LOGIN_DATE_KEY, getLocalDateStr()); } catch (e) { /* non-critical */ }
+}
+
+function clearDailyLoginDate() {
+    try { localStorage.removeItem(DAILY_LOGIN_DATE_KEY); } catch (e) { /* non-critical */ }
+}
+
+function hasLoginDayExpired() {
+    try {
+        const stored = localStorage.getItem(DAILY_LOGIN_DATE_KEY);
+        return !!stored && stored !== getLocalDateStr();
+    } catch (e) { return false; }
+}
+
+// Signs out and shows the login overlay because the calendar day rolled
+// over — not a network/permission error, so it gets its own message rather
+// than reusing the generic sign-out path.
+async function enforceDailyReLogin() {
+    clearDailyLoginDate();
+    try { await window.supabaseClient.auth.signOut(); } catch (e) { /* UI reset below runs regardless */ }
+    currentUser = null;
+    authOverlay.classList.remove('hidden');
+    document.getElementById('app-container').style.display = 'none';
+    hideAppLoadingOverlay();
+    alert(window.t ? (window.t('alert_daily_relogin_required') || 'A new day has started — please sign in again.') : 'A new day has started — please sign in again.');
+}
+
+// Catches a tab left open across midnight — the load/sign-in-time check in
+// initAuthenticatedSession only fires on a fresh load or auth event. Interval
+// is deliberately coarse (comparing a date string, not a precise deadline);
+// the visibility listener catches a backgrounded tab resumed the next day
+// immediately instead of waiting for the next tick. Guarded so repeated
+// checkAuthentication() calls (login/logout cycles) never stack more than
+// one interval/listener per page load.
+let _dailyLoginWatcherStarted = false;
+function startDailyLoginWatcher() {
+    if (_dailyLoginWatcherStarted) return;
+    _dailyLoginWatcherStarted = true;
+    const check = () => {
+        if (currentUser && hasLoginDayExpired()) enforceDailyReLogin();
+    };
+    setInterval(check, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') check();
+    });
+}
+
 function checkAuthentication() {
     if (!checkDatabaseConnection()) return;
+
+    startDailyLoginWatcher();
 
     // Safety net: never let the loading splash outlive a hung auth/network call.
     setTimeout(hideAppLoadingOverlay, 12000);
@@ -501,7 +568,12 @@ function checkAuthentication() {
     let sessionInitialized = false;
     function initAuthenticatedSession(session) {
         if (sessionInitialized) return;
+        if (hasLoginDayExpired()) {
+            enforceDailyReLogin();
+            return;
+        }
         sessionInitialized = true;
+        recordDailyLoginDate();
         authOverlay.classList.add('hidden');
         document.getElementById('app-container').style.display = 'flex';
         loadUserProfile(session.user.id);
