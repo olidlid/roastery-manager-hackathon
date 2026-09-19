@@ -358,6 +358,18 @@ function crmTileHtml(key, count, label, bg, color, tip, isActive) {
     </div>`;
 }
 
+// SEGMENT_BADGE_META.regular and CUSTOMER_TYPE_META.Wholesale both point at
+// var(--primary-light)/var(--bg-hover), neither of which is ever defined in
+// css/styles.css — a small pill badge still reads fine on an undefined bg
+// (the border/padding alone shows a shape), but a big filled tile with no
+// bg at all just blends into the page. These two tile-only overrides give
+// them the same solid-pastel treatment as every other tile, without
+// touching the shared meta objects the Directory's small badges still use.
+const CRM_TILE_COLOR_OVERRIDES = {
+    regular: { bg: '#e0f2fe', color: '#075985' },
+    Wholesale: { bg: '#d1fae5', color: '#065f46' }
+};
+
 function renderCrmTiles(segCounts, typeCounts) {
     const segWrap = document.getElementById('cust-crm-seg-tiles');
     if (segWrap) {
@@ -369,8 +381,9 @@ function renderCrmTiles(segCounts, typeCounts) {
                 return crmTileHtml('all', count, window.t ? window.t('crm_tile_all') : 'All', 'var(--bg-card)', 'var(--text-primary)', tip, _crmActiveSeg === 'all');
             }
             const meta = SEGMENT_BADGE_META[key];
+            const override = CRM_TILE_COLOR_OVERRIDES[key];
             const label = window.t ? window.t(meta.key) : meta.fallback;
-            return crmTileHtml(key, count, (meta.icon ? meta.icon + ' ' : '') + label, meta.bg, meta.color, tip, _crmActiveSeg === key);
+            return crmTileHtml(key, count, (meta.icon ? meta.icon + ' ' : '') + label, override ? override.bg : meta.bg, override ? override.color : meta.color, tip, _crmActiveSeg === key);
         }).join('');
         segWrap.querySelectorAll('.crm-filter-tile').forEach(el => {
             el.addEventListener('click', () => { _crmActiveSeg = el.dataset.key; renderCrmTiles(segCounts, typeCounts); renderCrmTable(); });
@@ -387,7 +400,8 @@ function renderCrmTiles(segCounts, typeCounts) {
                 return crmTileHtml('all', count, window.t ? window.t('crm_tile_all') : 'All', 'var(--bg-card)', 'var(--text-primary)', null, _crmActiveType === 'all');
             }
             const meta = CUSTOMER_TYPE_META[key];
-            return crmTileHtml(key, count, key, meta.bg, meta.color, null, _crmActiveType === key);
+            const override = CRM_TILE_COLOR_OVERRIDES[key];
+            return crmTileHtml(key, count, key, override ? override.bg : meta.bg, override ? override.color : meta.color, null, _crmActiveType === key);
         }).join('');
         typeWrap.querySelectorAll('.crm-filter-tile').forEach(el => {
             el.addEventListener('click', () => { _crmActiveType = el.dataset.key; renderCrmTiles(segCounts, typeCounts); renderCrmTable(); });
