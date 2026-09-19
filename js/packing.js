@@ -381,6 +381,8 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
             <div style="display:flex; flex-direction:column; gap:5px;">
                 <button type="button" class="btn btn-primary btn-sm btn-rtp-approve-test" data-id="${batch.id}" data-i18n="btn_approve_test_card">Approve</button>
                 <button type="button" class="btn btn-secondary btn-sm btn-rtp-approve-combine-test" data-id="${batch.id}" data-i18n="btn_approve_combine_test">Approve &amp; Combine</button>
+                <button type="button" class="btn-rtp-delete-test" data-id="${batch.id}"
+                    style="align-self: flex-end; background: none; border: none; padding: 2px 0; cursor: pointer; color: var(--danger); font-size: 0.74rem; text-decoration: underline; font-family: inherit;"><i class="icon-trash-2 va-middle-mr-1"></i><span data-i18n="btn_delete_test_card">Delete</span></button>
             </div>
         ` : '';
 
@@ -496,6 +498,9 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     });
     container.querySelectorAll('.btn-rtp-approve-combine-test').forEach(btn => {
         btn.addEventListener('click', () => openApproveAndCombineModal(parseInt(btn.getAttribute('data-id'))));
+    });
+    container.querySelectorAll('.btn-rtp-delete-test').forEach(btn => {
+        btn.addEventListener('click', () => deletePendingTestBatch(parseInt(btn.getAttribute('data-id'))));
     });
 
     // Filter metadata, one entry per rendered card — kept in a module-level

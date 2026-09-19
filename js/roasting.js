@@ -2568,6 +2568,184 @@ async function approveTestBatch(id) {
     }
 }
 
+// Delete a still-Pending test batch from its Ready to Pack card. Gated on the
+// same permission as Approve. The green bean this batch drew at log time is
+// the one real stock effect, and what should happen to it depends on WHY
+// the card is being removed, so the user picks:
+//   'refund'  — entered by mistake / never roasted: each draw goes back to
+//               the exact lot it came from (same as Batch Log's Delete).
+//   'discard' — really roasted but thrown away: green stays used, and each
+//               draw is re-recorded in green_coffee_lot_adjustments
+//               (ref_table 'roast_batches') so Stock History keeps showing
+//               where that kg went after the batch row (and its
+//               roast_batch_green_lots, ON DELETE CASCADE) is gone.
+// Order is deliberate: draws are read first, then the batch is deleted, and
+// only then is the green side applied from the in-memory draws. A failed
+// delete therefore changes nothing; a failure after it is reported with the
+// exact lot + kg left to fix instead of being swallowed.
+let _deletingTestBatch = false;
+async function deletePendingTestBatch(id) {
+    if (_deletingTestBatch) return;
+    if (!hasPermission('roasting_batch_approve')) return;
+    const sb = window.supabaseClient;
+    const tr = (key, fallback) => {
+        if (!window.t) return fallback;
+        const v = window.t(key);
+        return v && v !== key ? v : fallback;
+    };
+    const reload = () => {
+        if (document.getElementById('ready-to-pack-cards')) loadPackingSection();
+        if (document.getElementById('batch-table-body')) loadRoastingBatches();
+        loadGreenbeanInventory();
+        scheduleDashboardRefresh();
+    };
+
+    const { data: batch, error: fetchErr } = await sb.from('roast_batches').select('*').eq('id', id).maybeSingle();
+    if (fetchErr) { await showWarningModal(fetchErr.message, false); return; }
+    if (!batch || batch.roast_type !== 'Test' || batch.qc_status !== 'Pending') {
+        await showWarningModal(tr('msg_test_delete_not_pending', 'This test batch is no longer pending (already approved or deleted). The page will refresh.'), false);
+        reload();
+        return;
+    }
+
+    const { data: draws, error: drawsErr } = await sb.from('roast_batch_green_lots').select('*').eq('roast_batch_id', id);
+    if (drawsErr) { await showWarningModal(drawsErr.message, false); return; }
+    const totalKg = (draws || []).reduce((s, d) => s + (parseFloat(d.kg_consumed) || 0), 0);
+
+    const mode = await chooseTestBatchDeleteMode(batch, totalKg);
+    if (!mode) return;
+
+    _deletingTestBatch = true;
+    _showSavingIndicator();
+    const userName = (currentUser && currentUser.name) || null;
+    const done = [];
+    const problems = [];
+    try {
+        const { data: activeTakes, error: takeErr } = await sb.from('stock_takes').select('id').in('status', ['counting', 'posting']).limit(1);
+        if (takeErr) throw takeErr;
+        if (activeTakes && activeTakes.length > 0) {
+            await showWarningModal(tr('msg_test_delete_opname', 'A stock count (stock opname) is in progress. Nothing was deleted — try again after it is finished or cancelled.'), false);
+            return;
+        }
+
+        // Lots' green_coffee_id, needed for the discard-mode adjustment rows.
+        const lotIds = [...new Set((draws || []).map(d => d.green_coffee_lot_id).filter(Boolean))];
+        let lotById = new Map();
+        if (lotIds.length > 0) {
+            const { data: lots, error: lotsErr } = await sb.from('green_coffee_lots').select('id, green_coffee_id, lot_code').in('id', lotIds);
+            if (lotsErr) throw lotsErr;
+            lotById = new Map((lots || []).map(l => [l.id, l]));
+        }
+
+        const { error: delErr } = await deleteData('roast_batches', id);
+        if (delErr) {
+            await showWarningModal(tr('msg_test_delete_failed', 'Delete failed — nothing was changed.\n\nReason: {msg}').replace('{msg}', delErr.message), false);
+            return;
+        }
+        const { data: stillThere } = await sb.from('roast_batches').select('id').eq('id', id).maybeSingle();
+        if (stillThere) {
+            await showWarningModal(tr('msg_test_delete_failed', 'Delete failed — nothing was changed.\n\nReason: {msg}').replace('{msg}', 'row still exists'), false);
+            return;
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        for (const d of (draws || [])) {
+            const kg = parseFloat(d.kg_consumed) || 0;
+            if (kg <= 0) continue;
+            const lot = lotById.get(d.green_coffee_lot_id);
+            const lotLabel = lot ? lot.lot_code : `#${d.green_coffee_lot_id}`;
+            if (mode === 'refund') {
+                const { data: newRemaining, error } = await sb.rpc('refund_green_coffee_lot', { p_lot_id: d.green_coffee_lot_id, p_kg: kg });
+                if (error || newRemaining === null) problems.push(`${lotLabel}: +${kg} kg not returned (${error ? error.message : 'lot not found'})`);
+                else done.push(`${lotLabel}: +${kg} kg`);
+            } else {
+                const { error } = await saveData('green_coffee_lot_adjustments', {
+                    green_coffee_id: lot ? lot.green_coffee_id : null,
+                    green_coffee_lot_id: d.green_coffee_lot_id,
+                    kg,
+                    adjustment_date: batch.roast_date || today,
+                    adjusted_by: userName,
+                    ref_table: 'roast_batches',
+                    ref_id: id
+                });
+                if (error) problems.push(`${lotLabel}: ${kg} kg history not recorded (${error.message})`);
+                else done.push(`${lotLabel}: ${kg} kg`);
+            }
+        }
+    } catch (err) {
+        console.error('deletePendingTestBatch error:', err);
+        problems.push(err && err.message ? err.message : String(err));
+    } finally {
+        _hideSavingIndicator();
+        _deletingTestBatch = false;
+    }
+
+    if (problems.length > 0) {
+        await showWarningModal(tr('msg_test_delete_partial', 'The test batch was deleted, but some green bean steps failed. Report this to the admin:\n{lines}').replace('{lines}', problems.join('\n')), false);
+    } else {
+        const lines = done.length > 0 ? done.join('\n') : '-';
+        const msg = mode === 'refund'
+            ? tr('msg_test_delete_refunded', 'Test batch deleted. Green bean returned to stock:\n{lines}')
+            : tr('msg_test_delete_discarded', 'Test batch deleted. Green bean stays used (recorded as discarded test roast):\n{lines}');
+        await showWarningModal(msg.replace('{lines}', lines), false, null, null, 'success');
+    }
+    reload();
+}
+
+// Two-choice confirm for deletePendingTestBatch. Resolves 'refund',
+// 'discard', or null (cancel). Own overlay (not openModal) so it can't
+// clobber a modal that's already open.
+function chooseTestBatchDeleteMode(batch, totalKg) {
+    const tr = (key, fallback) => {
+        if (!window.t) return fallback;
+        const v = window.t(key);
+        return v && v !== key ? v : fallback;
+    };
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'overlay';
+        overlay.style.zIndex = '2100';
+        const kgText = `${totalKg.toFixed(2)} kg`;
+        overlay.innerHTML = `
+            <div class="overlay-card" role="dialog" aria-modal="true" style="max-width: 440px; border: 1px solid var(--danger); background: var(--bg-sidebar); border-radius: var(--border-radius); padding: 24px; display: flex; flex-direction: column; gap: 14px;">
+                <h3 style="font-size: 1.15rem; font-weight: 700; margin: 0; color: var(--text-primary);"></h3>
+                <p class="tbd-intro" style="font-size: 0.88rem; color: var(--text-secondary); margin: 0; line-height: 1.6;"></p>
+                <button type="button" class="btn btn-secondary tbd-refund" style="text-align: left; padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; height: auto;">
+                    <span class="tbd-refund-title" style="font-weight: 700;"></span>
+                    <span class="tbd-refund-desc" style="font-size: 0.78rem; color: var(--text-secondary); font-weight: 400; white-space: normal;"></span>
+                </button>
+                <button type="button" class="btn btn-secondary tbd-discard" style="text-align: left; padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; height: auto;">
+                    <span class="tbd-discard-title" style="font-weight: 700;"></span>
+                    <span class="tbd-discard-desc" style="font-size: 0.78rem; color: var(--text-secondary); font-weight: 400; white-space: normal;"></span>
+                </button>
+                <button type="button" class="btn btn-secondary tbd-cancel" style="align-self: flex-end; min-width: 100px;"></button>
+            </div>
+        `;
+        overlay.querySelector('h3').textContent = tr('ttl_test_delete', 'Delete test batch?');
+        overlay.querySelector('.tbd-intro').textContent = tr('msg_test_delete_intro', 'Batch {code} used {kg} of green bean. What happened to this batch?')
+            .replace('{code}', batch.batch_code || batch.batch_number || `#${batch.id}`)
+            .replace('{kg}', kgText);
+        overlay.querySelector('.tbd-refund-title').textContent = tr('opt_test_delete_refund', 'Entered by mistake — return green bean');
+        overlay.querySelector('.tbd-refund-desc').textContent = tr('opt_test_delete_refund_desc', '{kg} goes back to the green bean lots it came from.').replace('{kg}', kgText);
+        overlay.querySelector('.tbd-discard-title').textContent = tr('opt_test_delete_discard', 'Batch was thrown away — green bean stays used');
+        overlay.querySelector('.tbd-discard-desc').textContent = tr('opt_test_delete_discard_desc', 'Green bean stock does not change. Stock History records {kg} as a discarded test roast.').replace('{kg}', kgText);
+        overlay.querySelector('.tbd-cancel').textContent = tr('btn_cancel', 'Cancel');
+        document.body.appendChild(overlay);
+
+        const finish = (value) => {
+            document.removeEventListener('keydown', onKey);
+            overlay.remove();
+            resolve(value);
+        };
+        const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); finish(null); } };
+        document.addEventListener('keydown', onKey);
+        overlay.querySelector('.tbd-refund').addEventListener('click', () => finish('refund'));
+        overlay.querySelector('.tbd-discard').addEventListener('click', () => finish('discard'));
+        overlay.querySelector('.tbd-cancel').addEventListener('click', () => finish(null));
+        overlay.querySelector('.tbd-cancel').focus();
+    });
+}
+
 // TEST_BATCH_CARD_PLAN.md §4: lets the leader merge this test batch's output
 // into an existing bulk lot they pick, instead of the automatic coffee+
 // machine+date match. Stacked overlay (its own #overlay div, z-index 2000)

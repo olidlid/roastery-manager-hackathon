@@ -1090,7 +1090,12 @@ async function renderStockHistoryTab(coffeeId, container) {
         // ref_table/ref_id (added 2026-08-30) tags a decrease written by
         // Stock Opname's posting flow (js/app.js applyStockGroupAdjustmentToLots)
         // — a plain manual edit (js/greenbean.js) leaves both NULL.
+        // ref_table 'roast_batches' = a Pending test batch deleted from its
+        // Ready to Pack card as "thrown away" (js/roasting.js
+        // deletePendingTestBatch) — its roast_batch_green_lots draws are gone
+        // with the batch, so this row is what keeps that kg explained.
         const isStockOpname = d.ref_table === 'stock_takes';
+        const isDiscardedTest = d.ref_table === 'roast_batches';
         ledger.push({
             date: d.adjustment_date,
             lotCode: lotCodeOf(d.green_coffee_lot_id),
@@ -1099,7 +1104,9 @@ async function renderStockHistoryTab(coffeeId, container) {
             isStockOpname,
             detail: isStockOpname
                 ? (window.t ? window.t('lbl_stock_opname_adjustment') : 'Stock opname adjustment')
-                : (window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment'),
+                : isDiscardedTest
+                    ? (window.t ? window.t('lbl_discarded_test_roast') : 'Discarded test roast')
+                    : (window.t ? window.t('lbl_manual_adjustment') : 'Manual adjustment'),
             sortKey: d.id
         });
     });
