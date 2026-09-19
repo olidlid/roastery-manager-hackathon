@@ -1204,8 +1204,13 @@ async function deleteRecipe(id) {
 // SECTION 3: ROASTING PRODUCTION (PLANS & BATCHES)
 // ==========================================================================
 async function loadRoastingSection() {
-    await loadRoastingPlans();
-    await loadRoastingBatches();
+    // Independent reads into separate tbody elements (no shared state between
+    // them — see fetch lists below) — running them in parallel instead of one
+    // after another was the first concrete win found while investigating why
+    // logging a batch feels slow: this alone roughly halves the wait for this
+    // step, since each one already re-fetches green_coffee/blend_recipes/
+    // machines on its own.
+    await Promise.all([loadRoastingPlans(), loadRoastingBatches()]);
 }
 
 async function loadRoastingPlans() {

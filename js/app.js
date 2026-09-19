@@ -1539,17 +1539,31 @@ const scheduleDashboardRefresh = () => {
 };
 
 async function initAppDashboard() {
-    // 1. Load Metric Counts
+    // 1. Load everything this render needs in one go. These 8 tables were
+    // previously fetched as one Promise.all here plus 4 more one-at-a-time
+    // awaits further down the function — none of the 4 later ones depend on
+    // anything except greenbeans/batches/orders from this same batch, so
+    // splitting them into separate round-trips just serialized independent
+    // reads for no reason. Folding them into one Promise.all turns ~5
+    // sequential round-trips into 1.
     const [
         { data: greenbeans },
         { data: batches },
         { data: packed },
-        { data: orders }
+        { data: orders },
+        { data: intakes },
+        { data: recipes },
+        { data: orderItems },
+        { data: plans }
     ] = await Promise.all([
         fetchData('green_coffee'),
         fetchData('roast_batches'),
         fetchData('packed_coffee'),
-        fetchData('request_orders')
+        fetchData('request_orders'),
+        fetchData('green_coffee_intake'),
+        fetchData('blend_recipes'),
+        fetchData('request_order_items'),
+        fetchData('roasting_plans')
     ]);
     
     // Greenbean Total Stock
@@ -1582,7 +1596,6 @@ async function initAppDashboard() {
     const mtdStartStr = formatDate(firstOfCurrentMonth);
 
     // MTD Green Coffee Intake
-    const { data: intakes } = await fetchData('green_coffee_intake');
     const mtdIntakes = (intakes || []).filter(i => {
         const d = i.intake_date || i.created_at?.split('T')[0];
         return d && d >= mtdStartStr;
@@ -1601,8 +1614,7 @@ async function initAppDashboard() {
 
     // Group MTD Roasting by Coffee Name
     const roastingGroup = {};
-    const { data: recipes } = await fetchData('blend_recipes');
-    
+
     mtdBatches.forEach(b => {
         let name = '';
         if (b.coffee_type === 'Single') {
@@ -1642,7 +1654,6 @@ async function initAppDashboard() {
     }
 
     // MTD Sales Dispatched
-    const { data: orderItems } = await fetchData('request_order_items');
     const mtdCompletedOrders = (orders || []).filter(o => {
         const d = o.order_date || o.created_at?.split('T')[0];
         return d && d >= mtdStartStr && o.status === 'Completed';
@@ -1688,7 +1699,6 @@ async function initAppDashboard() {
     }
 
     // 3. Render Today's Roasting Plan
-    const { data: plans } = await fetchData('roasting_plans');
     const plansContainer = document.getElementById('dashboard-plans-list');
     plansContainer.innerHTML = '';
 
@@ -1704,7 +1714,11 @@ async function initAppDashboard() {
                 const gb = greenbeans.find(g => g.id === plan.single_coffee_id);
                 coffeeName = gb ? `${gb.name} (Single Origin)` : 'Single Coffee';
             } else {
-                const { data: recipes } = await fetchData('blend_recipes');
+                // `recipes` was already fetched once above for the MTD roasting
+                // group — this used to re-fetch the whole blend_recipes table
+                // from Supabase on every iteration of this loop (once per
+                // blend plan shown today), the same table, for data that
+                // never changes within this render.
                 const r = recipes.find(rec => rec.id === plan.blend_recipe_id);
                 coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
             }
@@ -1765,32 +1779,45 @@ async function updateNavNotificationBadges() {
     }
 
     const approvalBadges = [document.getElementById('badge-nav-handover'), document.getElementById('badge-tab-dispatch-approval')];
-    if (hasPermission('dispatch_approval_approve')) {
-        const { data: orders } = await fetchData('request_orders');
-        const pendingApprovalCount = (orders || []).filter(o => o.status === 'Pending Approval').length;
-        paint(approvalBadges, pendingApprovalCount);
-    } else {
-        paint(approvalBadges, 0);
-    }
-
     const roastingBadges = [document.getElementById('badge-nav-roasting'), document.getElementById('badge-tab-roast-plans')];
-    if (hasPermission('roasting_batch_add')) {
-        const { data: plans } = await fetchData('roasting_plans');
-        const pendingPlanCount = (plans || []).filter(p => p.status !== 'Completed').length;
-        paint(roastingBadges, pendingPlanCount);
-    } else {
-        paint(roastingBadges, 0);
-    }
-
     // PURCHASE_REQUEST_PLAN.md mockup layer 4 ("Approval <3>"). Gated on
     // purchase_approval_decide (the DECIDE permission), same reasoning as
     // dispatch's badge above being gated on dispatch_approval_approve rather
     // than the weaker _view key — a badge that tells someone "N things need
     // YOUR decision" shouldn't show for a role that can only look.
     const purchaseApprovalBadges = [document.getElementById('badge-nav-purchasing'), document.getElementById('badge-tab-purchase-approval')];
-    if (hasPermission('purchase_approval_decide')) {
-        const { data: prs } = await fetchData('purchase_requests');
-        const pendingPrCount = (prs || []).filter(p => p.status === 'Requested').length;
+
+    const canApprove = hasPermission('dispatch_approval_approve');
+    const canAddRoasting = hasPermission('roasting_batch_add');
+    const canDecidePurchase = hasPermission('purchase_approval_decide');
+
+    // These 3 fetches don't depend on each other — they used to run as 3
+    // sequential awaits (each its own network round-trip) even though this
+    // function is called after essentially every mutation across the app via
+    // scheduleDashboardRefresh(). Only fetch what the current role can
+    // actually see a badge for, and fetch those in parallel.
+    const [ordersRes, plansRes, prsRes] = await Promise.all([
+        canApprove ? fetchData('request_orders') : Promise.resolve({ data: null }),
+        canAddRoasting ? fetchData('roasting_plans') : Promise.resolve({ data: null }),
+        canDecidePurchase ? fetchData('purchase_requests') : Promise.resolve({ data: null })
+    ]);
+
+    if (canApprove) {
+        const pendingApprovalCount = (ordersRes.data || []).filter(o => o.status === 'Pending Approval').length;
+        paint(approvalBadges, pendingApprovalCount);
+    } else {
+        paint(approvalBadges, 0);
+    }
+
+    if (canAddRoasting) {
+        const pendingPlanCount = (plansRes.data || []).filter(p => p.status !== 'Completed').length;
+        paint(roastingBadges, pendingPlanCount);
+    } else {
+        paint(roastingBadges, 0);
+    }
+
+    if (canDecidePurchase) {
+        const pendingPrCount = (prsRes.data || []).filter(p => p.status === 'Requested').length;
         paint(purchaseApprovalBadges, pendingPrCount);
     } else {
         paint(purchaseApprovalBadges, 0);

@@ -489,13 +489,29 @@ function checkAuthentication() {
     // Safety net: never let the loading splash outlive a hung auth/network call.
     setTimeout(hideAppLoadingOverlay, 12000);
 
+    // onAuthStateChange fires SIGNED_IN both for a fresh sign-in AND for a
+    // session restored from storage on a plain page load — the same case the
+    // explicit getSession() check below also handles. Measured 2026-09-19:
+    // without this guard both fire moments apart on every single page load
+    // (not just fresh logins), so initAppDashboard() — a ~10-table Supabase
+    // read burst — ran twice for no reason. Making the actual init
+    // idempotent means whichever fires first wins and the other is a no-op,
+    // while both listeners stay in place as redundant triggers (OAuth
+    // redirect vs. plain reload) — only the expensive work is deduplicated.
+    let sessionInitialized = false;
+    function initAuthenticatedSession(session) {
+        if (sessionInitialized) return;
+        sessionInitialized = true;
+        authOverlay.classList.add('hidden');
+        document.getElementById('app-container').style.display = 'flex';
+        loadUserProfile(session.user.id);
+        scheduleDashboardRefresh();
+    }
+
     // Listen for auth state changes (handles OAuth redirect)
     window.supabaseClient.auth.onAuthStateChange((event, session) => {
         if (event === 'SIGNED_IN' && session) {
-            authOverlay.classList.add('hidden');
-            document.getElementById('app-container').style.display = 'flex';
-            loadUserProfile(session.user.id);
-            scheduleDashboardRefresh();
+            initAuthenticatedSession(session);
             if (window.__pendingPasswordRecovery) {
                 window.__pendingPasswordRecovery = false;
                 showSetNewPasswordModal();
@@ -504,12 +520,10 @@ function checkAuthentication() {
             authOverlay.classList.remove('hidden');
             document.getElementById('app-container').style.display = 'none';
             currentUser = null;
+            sessionInitialized = false;
             hideAppLoadingOverlay();
         } else if (event === 'PASSWORD_RECOVERY' && session) {
-            authOverlay.classList.add('hidden');
-            document.getElementById('app-container').style.display = 'flex';
-            loadUserProfile(session.user.id);
-            scheduleDashboardRefresh();
+            initAuthenticatedSession(session);
             showSetNewPasswordModal();
         }
     });
@@ -521,10 +535,7 @@ function checkAuthentication() {
             document.getElementById('app-container').style.display = 'none';
             hideAppLoadingOverlay();
         } else {
-            authOverlay.classList.add('hidden');
-            document.getElementById('app-container').style.display = 'flex';
-            loadUserProfile(session.user.id);
-            scheduleDashboardRefresh();
+            initAuthenticatedSession(session);
             if (window.__pendingPasswordRecovery) {
                 window.__pendingPasswordRecovery = false;
                 showSetNewPasswordModal();
