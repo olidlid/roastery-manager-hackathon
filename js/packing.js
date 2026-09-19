@@ -4577,8 +4577,16 @@ async function openPackBulkModal(bulkId) {
     };
     getQtyInputs().forEach(inp => inp.addEventListener('input', recalcWarning));
 
+    // In-flight guard: the global submit listener in db.js only dims the
+    // button, and it re-enables it the moment the FIRST saveData of this
+    // flow finishes — so a second click/Enter could start a parallel save.
+    // This flag plus the full-card processing overlay keep the modal locked
+    // until the save has been verified against the database.
+    let packInFlight = false;
+
     document.getElementById('modal-pack-bulk-form').addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (packInFlight) return;
         const additions = getQtyInputs()
             .map(inp => ({ gram: parseFloat(inp.getAttribute('data-gram')), label: inp.getAttribute('data-label'), qty: parseInt(inp.value) || 0 }))
             .filter(a => a.qty > 0);
@@ -4594,67 +4602,267 @@ async function openPackBulkModal(bulkId) {
             if (!proceed) return;
         }
 
+        packInFlight = true;
+        const lock = lockPackBulkModal();
+        let result;
         try {
-            // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6) — this used to
-            // re-fetch fresh first specifically to dodge a stale read (see
-            // the removed comment), which the RPC's row lock makes
-            // unnecessary.
-            const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
-                p_bulk_id: bulk.id, p_kg: totalKg,
-                p_operation: 'pack', p_reason: `Packed ${additions.map(a => `${a.qty}x${a.gram}g`).join(', ')}`,
-                p_user: (currentUser && currentUser.name) || null
-            });
-            if (consumeErr) console.error('consume_bulk_lot RPC failed:', consumeErr);
-
-            // Release whatever sales-order reservation(s) this bulk carried
-            // (see database bulk_reservations comment / js/sales.js
-            // approveSalesOrder) — the kg just packed is no longer "loose
-            // bulk waiting to be packed", so it shouldn't keep counting
-            // against what a future order sees as reserved-and-unavailable.
-            // Oldest reservation first, same FIFO convention used
-            // everywhere else in this file; a reservation not fully covered
-            // by this pack just shrinks instead of clearing.
-            await releaseBulkReservations(bulk.id, totalKg);
-
-            const packingDate = new Date().toISOString().split('T')[0];
-
-            // V2 1G-1 (packed_coffee_lots foundation): resolve/create today's
-            // production lot for this bulk so each size packed can be linked
-            // back to it — same lot the "Print Barcode" step uses, so a
-            // sticker printed either before or after packing points at the
-            // same lot record.
-            const productionLot = await getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roastBatches);
-
-            for (const add of additions) {
-                const packedRow = await getOrCreatePackedCoffeeRow(bulk.coffee_name, add.gram, bulk.machine_id);
-                if (!packedRow) continue;
-                // packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity)
-                // from the packed_coffee_lots write below — no separate write needed.
-                const packedLot = await getOrCreatePackedCoffeeLot(packedRow.id, add.qty, productionLot ? productionLot.id : null);
-                await saveData('packing_records', {
-                    date: packingDate,
-                    pack_date: packingDate,
-                    source_type: bulk.coffee_type,
-                    source_id: bulk.coffee_type === 'Single' ? bulk.single_coffee_id : bulk.blend_recipe_id,
-                    coffee_name: bulk.coffee_name,
-                    machine_id: bulk.machine_id,
-                    bag_size_g: add.gram,
-                    size_g: add.gram,
-                    quantity: add.qty,
-                    status: 'Completed',
-                    packed_coffee_lot_id: packedLot ? packedLot.id : null
-                });
-            }
-
-            document.getElementById('btn-close-modal').click();
-            await showWarningModal('Packing saved successfully.', false, null, null, 'success');
-            await loadPackingSection();
-            scheduleDashboardRefresh();
+            result = await runPackBulkSave(bulk, additions, totalKg, { machines, greenbeans, recipes, roastBatches }, lock);
         } catch (err) {
+            // runPackBulkSave handles its own failures; reaching here means
+            // something unexpected threw, so the stock state is unknown.
             console.error('Pack bulk submit error:', err);
-            alert('Error during packing save: ' + err.message);
+            result = { status: 'unknown', detail: err && err.message ? err.message : String(err) };
+        } finally {
+            lock.release();
+            packInFlight = false;
         }
+
+        if (result.status === 'success') {
+            document.getElementById('btn-close-modal').click();
+            await showWarningModal(result.message, false, packBulkT('pb_success_title', 'Packing saved'), null, 'success');
+        } else if (result.status === 'failed') {
+            // Everything was undone — keep the modal open with the user's
+            // numbers still filled in so they can simply try again.
+            await showWarningModal(result.message, false, packBulkT('pb_fail_title', 'Packing not saved'), null, 'warning');
+            return;
+        } else {
+            // Partially applied or unverifiable: close the form so nobody
+            // re-enters the same numbers blindly on top of a half-save.
+            document.getElementById('btn-close-modal').click();
+            const msg = packBulkT('pb_unknown_msg', 'The system could not confirm this packing was saved correctly. Do NOT enter it again yet — check the packed stock and bulk stock first, and report this to the admin.\n\nDetail: {detail}')
+                .replace('{detail}', result.detail || '-');
+            await showWarningModal(msg, false, packBulkT('pb_unknown_title', 'Check stock before retrying'), null, 'warning');
+        }
+        await loadPackingSection();
+        scheduleDashboardRefresh();
     });
+}
+
+function packBulkT(key, fallback) {
+    if (!window.t) return fallback;
+    const v = window.t(key);
+    return v && v !== key ? v : fallback;
+}
+
+// Full-card "processing" overlay for the Pack modal. Covers the whole modal
+// card (header X included), so nothing can be clicked or closed until
+// release() — the save flow is multi-step and a close/refresh mid-way is
+// exactly how a half-applied pack happens.
+function lockPackBulkModal() {
+    const card = document.querySelector('#modal-container .overlay-card');
+    const overlay = document.createElement('div');
+    overlay.className = 'pack-bulk-processing';
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+    overlay.innerHTML = `
+        <div class="pack-bulk-processing-spinner"></div>
+        <div class="pack-bulk-processing-text"></div>
+        <div class="pack-bulk-processing-hint"></div>
+    `;
+    const textEl = overlay.querySelector('.pack-bulk-processing-text');
+    const hintEl = overlay.querySelector('.pack-bulk-processing-hint');
+    textEl.textContent = packBulkT('pb_processing', 'Saving packing…');
+    hintEl.textContent = packBulkT('pb_processing_hint', 'Please wait, do not close or refresh this page.');
+    if (card) {
+        card.classList.add('pack-bulk-locked');
+        card.appendChild(overlay);
+    }
+    // A request that hangs (bad connection) keeps the lock on deliberately —
+    // unlocking while writes may still land would invite a double entry —
+    // but tell the user why it's taking long.
+    const slowTimer = setTimeout(() => {
+        hintEl.textContent = packBulkT('pb_processing_slow', 'The connection is slow. Still working — do not close or refresh this page.');
+    }, 20000);
+    return {
+        setStep(text) { textEl.textContent = text; },
+        release() {
+            clearTimeout(slowTimer);
+            overlay.remove();
+            if (card) card.classList.remove('pack-bulk-locked');
+        }
+    };
+}
+
+// The whole Pack-from-bulk save, all-or-nothing:
+//   1. refuse up front if a stock opname is running (the DB freeze trigger
+//      would reject every stock write — the 2026-08-26 silent failure),
+//   2. consume the bulk,
+//   3. add each size to its packed lot,
+//   4. write the packing_records history,
+//   5. re-read the ledgers to prove steps 2-4 actually landed.
+// Any failure in 2-4 undoes what this submit already did (packed pcs back
+// out via consume_packed_lot, bulk back in via refund_bulk_lot, history rows
+// deleted) so the user can retry cleanly.
+// Returns { status: 'success'|'failed'|'unknown', message?, detail? }.
+async function runPackBulkSave(bulk, additions, totalKg, refs, lock) {
+    const sb = window.supabaseClient;
+    const userName = (currentUser && currentUser.name) || null;
+    const failed = (reason) => ({
+        status: 'failed',
+        message: packBulkT('pb_fail_msg', 'Nothing was changed — stock is the same as before. You can try again.\n\nReason: {reason}').replace('{reason}', reason)
+    });
+
+    // 1. Stock opname freeze.
+    const { data: activeTakes, error: takeErr } = await sb.from('stock_takes').select('id').in('status', ['counting', 'posting']).limit(1);
+    if (takeErr) return failed(takeErr.message);
+    if (activeTakes && activeTakes.length > 0) {
+        return failed(packBulkT('pb_fail_opname', 'A stock count (stock opname) is in progress. Stock cannot change until it is finished or cancelled.'));
+    }
+
+    // Ledger high-water marks, so verification only looks at rows written
+    // by THIS submit.
+    const [bulkMark, packedMark] = await Promise.all([
+        sb.from('bulk_stock_movements').select('id').order('id', { ascending: false }).limit(1),
+        sb.from('packed_stock_movements').select('id').order('id', { ascending: false }).limit(1)
+    ]);
+    if (bulkMark.error || packedMark.error) return failed((bulkMark.error || packedMark.error).message);
+    const bulkMarkId = (bulkMark.data && bulkMark.data[0]) ? bulkMark.data[0].id : 0;
+    const packedMarkId = (packedMark.data && packedMark.data[0]) ? packedMark.data[0].id : 0;
+
+    // 2. Bulk out. consume_bulk_lot clamps to what the system holds and
+    // returns the kg actually taken.
+    const packReason = `Packed ${additions.map(a => `${a.qty}x${a.gram}g`).join(', ')}`;
+    const { data: takenData, error: consumeErr } = await sb.rpc('consume_bulk_lot', {
+        p_bulk_id: bulk.id, p_kg: totalKg,
+        p_operation: 'pack', p_reason: packReason, p_user: userName
+    });
+    if (consumeErr) {
+        console.error('consume_bulk_lot RPC failed:', consumeErr);
+        return failed(consumeErr.message);
+    }
+    const takenKg = parseFloat(takenData) || 0;
+
+    const addedLots = [];   // { lotId, qty, prevQtyPcs }
+    const savedRecordIds = [];
+
+    const rollback = async (reason) => {
+        const problems = [];
+        for (const rec of savedRecordIds) {
+            const { error } = await deleteData('packing_records', rec);
+            if (error) problems.push(`packing_records #${rec}: ${error.message}`);
+        }
+        for (const l of addedLots) {
+            const { data: taken, error } = await sb.rpc('consume_packed_lot', {
+                p_lot_id: l.lotId, p_pcs: l.qty,
+                p_operation: 'undo', p_ref_table: 'bulk_roasted_coffee', p_ref_id: bulk.id,
+                p_reason: 'pack failed — rolled back', p_user: userName
+            });
+            if (error || (parseInt(taken) || 0) !== l.qty) {
+                problems.push(`lot #${l.lotId}: ${error ? error.message : `removed ${parseInt(taken) || 0} of ${l.qty} pcs`}`);
+                continue;
+            }
+            await saveData('packed_coffee_lots', { id: l.lotId, quantity_pcs: l.prevQtyPcs });
+        }
+        if (takenKg > 0) {
+            const { data, error } = await sb.rpc('refund_bulk_lot', {
+                p_bulk_id: bulk.id, p_kg: takenKg,
+                p_operation: 'undo', p_ref_table: 'bulk_roasted_coffee', p_ref_id: bulk.id,
+                p_reason: 'pack failed — rolled back', p_user: userName
+            });
+            if (error || data === null) problems.push(`bulk #${bulk.id}: ${error ? error.message : 'no matching row'}`);
+        }
+        if (problems.length > 0) {
+            return { status: 'unknown', detail: `${reason} | rollback: ${problems.join('; ')}` };
+        }
+        return failed(reason);
+    };
+
+    // Steps 3-4 are wrapped so an unexpected throw still undoes the bulk
+    // already consumed above instead of leaving it half-applied.
+    try {
+        const r = await packBulkApplyLotsAndRecords(bulk, additions, refs, addedLots, savedRecordIds);
+        if (r) return rollback(r);
+    } catch (err) {
+        console.error('Pack bulk apply error:', err);
+        return rollback(err && err.message ? err.message : String(err));
+    }
+
+    // Release whatever sales-order reservation(s) this bulk carried
+    // (see database bulk_reservations comment / js/sales.js
+    // approveSalesOrder) — the kg just packed is no longer "loose
+    // bulk waiting to be packed", so it shouldn't keep counting
+    // against what a future order sees as reserved-and-unavailable.
+    // Done only after the stock itself moved, so a failed pack never
+    // drops a reservation.
+    await releaseBulkReservations(bulk.id, totalKg);
+
+    // 5. Verify against the database, not against what the calls returned.
+    lock.setStep(packBulkT('pb_verifying', 'Checking the database…'));
+    const verifyProblems = [];
+    const lotIds = addedLots.map(l => l.lotId);
+    const [packedMv, bulkMv, recs] = await Promise.all([
+        sb.from('packed_stock_movements').select('packed_coffee_lot_id, delta_pcs').gt('id', packedMarkId).in('packed_coffee_lot_id', lotIds),
+        sb.from('bulk_stock_movements').select('delta_kg').gt('id', bulkMarkId).eq('bulk_roasted_coffee_id', bulk.id).eq('operation', 'pack').eq('reason', packReason),
+        sb.from('packing_records').select('id, packed_coffee_lot_id').in('id', savedRecordIds)
+    ]);
+    if (packedMv.error || bulkMv.error || recs.error) {
+        return { status: 'unknown', detail: `verification query failed: ${(packedMv.error || bulkMv.error || recs.error).message}` };
+    }
+    for (const l of addedLots) {
+        const found = (packedMv.data || []).some(m => m.packed_coffee_lot_id === l.lotId && parseInt(m.delta_pcs) === l.qty);
+        if (!found) verifyProblems.push(`no +${l.qty} pcs movement on lot #${l.lotId} (${l.add.gram}g)`);
+    }
+    if (takenKg > 0) {
+        const bulkOut = (bulkMv.data || []).reduce((s, m) => s - (parseFloat(m.delta_kg) || 0), 0);
+        if (Math.abs(bulkOut - takenKg) > 0.001) verifyProblems.push(`bulk movement is ${bulkOut.toFixed(3)} kg, expected ${takenKg.toFixed(3)} kg`);
+    }
+    const recRows = recs.data || [];
+    if (recRows.length !== savedRecordIds.length || recRows.some(r => !r.packed_coffee_lot_id)) {
+        verifyProblems.push('packing records missing or without a lot');
+    }
+    if (verifyProblems.length > 0) {
+        return { status: 'unknown', detail: verifyProblems.join('; ') };
+    }
+
+    const lines = addedLots.map(l => `• ${l.add.qty} × ${l.add.gram}g`).join('\n');
+    let message = packBulkT('pb_success_msg', 'Verified in the database:\n{lines}\n\nBulk reduced by {kg} kg.')
+        .replace('{lines}', lines)
+        .replace('{kg}', takenKg.toFixed(2));
+    if (takenKg + 0.001 < totalKg) {
+        message += '\n\n' + packBulkT('pb_success_short_bulk', 'Note: the system only had {taken} kg of this bulk, so bulk went down by {taken} kg instead of {total} kg.')
+            .replace(/\{taken\}/g, takenKg.toFixed(2))
+            .replace('{total}', totalKg.toFixed(2));
+    }
+    return { status: 'success', message };
+}
+
+// Steps 3-4 of runPackBulkSave: add each size to its packed lot, then write
+// the packing_records history (only ever with a real lot link). Pushes what
+// it did into addedLots / savedRecordIds so the caller can undo it, and
+// returns a failure reason string, or null when everything was written.
+async function packBulkApplyLotsAndRecords(bulk, additions, refs, addedLots, savedRecordIds) {
+    // 3. Packed in.
+    const productionLot = await getOrCreateProductionLot(bulk, refs.machines, refs.greenbeans, refs.recipes, refs.roastBatches);
+    for (const add of additions) {
+        const packedRow = await getOrCreatePackedCoffeeRow(bulk.coffee_name, add.gram, bulk.machine_id);
+        if (!packedRow) return `could not create the packed stock row for ${add.gram}g`;
+        // packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity)
+        // from the packed_coffee_lots write below — no separate write needed.
+        const packedLot = await getOrCreatePackedCoffeeLot(packedRow.id, add.qty, productionLot ? productionLot.id : null);
+        if (!packedLot) return `could not add ${add.qty} x ${add.gram}g to packed stock`;
+        addedLots.push({ lotId: packedLot.id, qty: add.qty, prevQtyPcs: (parseInt(packedLot.quantity_pcs) || 0) - add.qty, add });
+    }
+
+    // 4. History. Only ever written with a real lot link.
+    const packingDate = new Date().toISOString().split('T')[0];
+    for (const l of addedLots) {
+        const { data: rec, error } = await saveData('packing_records', {
+            date: packingDate,
+            pack_date: packingDate,
+            source_type: bulk.coffee_type,
+            source_id: bulk.coffee_type === 'Single' ? bulk.single_coffee_id : bulk.blend_recipe_id,
+            coffee_name: bulk.coffee_name,
+            machine_id: bulk.machine_id,
+            bag_size_g: l.add.gram,
+            size_g: l.add.gram,
+            quantity: l.add.qty,
+            status: 'Completed',
+            packed_coffee_lot_id: l.lotId
+        });
+        if (error || !rec) return `could not save the packing record for ${l.add.gram}g${error ? ': ' + error.message : ''}`;
+        savedRecordIds.push(rec.id);
+    }
+    return null;
 }
 
 // Shrinks/deletes bulk_reservations rows for one bulk_roasted_coffee_id by
