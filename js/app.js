@@ -1196,6 +1196,34 @@ reportsTabBtns.forEach(btn => {
     });
 });
 
+// --- SUB-TABS MANAGEMENT FOR CUSTOMERS (Directory | CRM Insights) ---
+const customersTabBtns = document.querySelectorAll('#sec-customers .tab-btn');
+const customersTabContents = document.querySelectorAll('#sec-customers .tab-content');
+
+customersTabBtns.forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const targetTab = btn.getAttribute('data-tab');
+
+        customersTabBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        customersTabContents.forEach(content => {
+            if (content.id === targetTab) {
+                content.classList.remove('hidden');
+            } else {
+                content.classList.add('hidden');
+            }
+        });
+
+        saveLastTab('sec-customers', targetTab);
+        if (targetTab === 'tab-cust-crm') {
+            await loadCrmInsightsTab();
+        } else {
+            await loadCustomersSection();
+        }
+    });
+});
+
 // Customers tab has 4 report views crammed into one page; a dropdown swaps
 // which one is visible instead of showing all of them stacked at once.
 const customerReportViewSelect = document.getElementById('customer-report-view-select');
@@ -1259,9 +1287,16 @@ async function loadSectionData(sectionId) {
                 await loadPackingRecordsTable();
             }
             break;
-        case 'sec-customers':
-            await loadCustomersSection();
+        case 'sec-customers': {
+            const activeCustTabBtn = document.querySelector('#sec-customers .tab-btn.active');
+            const activeCustTab = activeCustTabBtn ? activeCustTabBtn.getAttribute('data-tab') : 'tab-cust-directory';
+            if (activeCustTab === 'tab-cust-crm') {
+                await loadCrmInsightsTab(true);
+            } else {
+                await loadCustomersSection(undefined, { refreshStats: true });
+            }
             break;
+        }
         case 'sec-tracking':
             loadTrackingSection();
             break;
@@ -2638,6 +2673,7 @@ let packReportChart = null;
 let salesReportChart = null;
 let customerReportChart = null;
 let customerTypeChart = null;
+let agentReportChart = null;
 let fullscreenChart = null;
 
 // ============================================================
@@ -2650,7 +2686,8 @@ function getChartInstanceById(canvasId) {
         'rep-pack-chart': packReportChart,
         'rep-sales-chart': salesReportChart,
         'rep-customer-chart': customerReportChart,
-        'rep-customer-type-chart': customerTypeChart
+        'rep-customer-type-chart': customerTypeChart,
+        'rep-agents-chart': agentReportChart
     };
     return map[canvasId] || null;
 }
@@ -2799,6 +2836,9 @@ async function loadReportsTabSpecificData(tabId) {
             break;
         case 'tab-rep-customers':
             await loadCustomerReport(startVal, endVal);
+            break;
+        case 'tab-rep-agents':
+            await loadAgentLeaderboardReport(startVal, endVal);
             break;
         case 'tab-rep-stockopname':
             await loadStockOpnameReport(startVal, endVal);
@@ -3575,25 +3615,13 @@ async function loadCustomerReport(startDate, endDate) {
     // All orders in range regardless of status — used for the status-breakdown table below.
     const allOrdersInRange = ownVisibleOrders.filter(inDateRange);
 
-    // stats[customerId] = { orders: Set<orderId>, bags, kg }
-    const stats = {};
-    filteredOrders.forEach(o => {
-        if (!o.customer_id) return;
-        if (!stats[o.customer_id]) stats[o.customer_id] = { orderIds: new Set(), bags: 0, kg: 0 };
-        stats[o.customer_id].orderIds.add(o.id);
-    });
+    // stats[customerId] = { orderCount, bags, kg, ... } — shared helper, js/db.js
+    const stats = computeOrderStatsByKey(filteredOrders, orderItems, { groupByFn: o => o.customer_id || null });
 
+    // Still needed below by the Coffee Preference by Customer section, which
+    // groups order ITEMS by customer independently of computeOrderStatsByKey.
     const orderIdToCustomerId = {};
     filteredOrders.forEach(o => { if (o.customer_id) orderIdToCustomerId[o.id] = o.customer_id; });
-
-    (orderItems || []).forEach(item => {
-        const customerId = orderIdToCustomerId[item.request_order_id];
-        if (!customerId) return;
-        const qty = parseInt(item.quantity_requested) || 0;
-        const sizeG = parseInt(item.bag_size_g) || 0;
-        stats[customerId].bags += qty;
-        stats[customerId].kg += (qty * sizeG) / 1000;
-    });
 
     const rows = Object.keys(stats).map(customerId => {
         const customer = (customers || []).find(c => c.id === parseInt(customerId));
@@ -3601,7 +3629,7 @@ async function loadCustomerReport(startDate, endDate) {
             name: customer ? customer.name : 'Unknown',
             code: customer ? customer.customer_id : '-',
             type: customer ? customer.type : '-',
-            orders: stats[customerId].orderIds.size,
+            orders: stats[customerId].orderCount,
             bags: stats[customerId].bags,
             kg: stats[customerId].kg
         };
@@ -3820,6 +3848,96 @@ async function loadCustomerReport(startDate, endDate) {
                 'Total (kg)': r.kg.toFixed(1)
             }));
             exportToExcel(exportData, 'Coffee_Preference_by_Customer');
+        });
+    }
+}
+
+// Sales Agent Leaderboard — mirrors loadCustomerReport's structure exactly,
+// grouping by sales_name instead of customer_id. sales_name is free text but
+// in practice always auto-filled from currentUser.name at order creation
+// (js/sales.js, readonly #m-req-sales input), not a true FK to sales_agents,
+// so it's really "which staff member created this order" — acceptable here
+// since it's system-set, not freely typed, but two accounts with the same
+// display name in different casing would still be counted separately.
+async function loadAgentLeaderboardReport(startDate, endDate) {
+    const [{ data: orders }, { data: orderItems }] = await Promise.all([
+        fetchData('request_orders'),
+        fetchData('request_order_items')
+    ]);
+
+    const visibleOrders = filterOrdersByCustomerCategory(filterOwnOrders(orders));
+
+    const stats = computeOrderStatsByKey(visibleOrders, orderItems, {
+        groupByFn: o => (o.sales_name || '').trim() || 'Unknown',
+        startDate, endDate
+    });
+
+    const rows = Object.keys(stats).map(name => ({
+        name,
+        orders: stats[name].orderCount,
+        bags: stats[name].bags,
+        kg: stats[name].kg
+    })).sort((a, b) => b.kg - a.kg);
+
+    const tbody = document.getElementById('rep-agents-table-body');
+    if (tbody) {
+        tbody.innerHTML = '';
+        if (rows.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="table-empty-state">No dispatched orders in selected period</td></tr>`;
+        } else {
+            rows.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${r.name}</strong></td>
+                    <td class="text-center">${r.orders}</td>
+                    <td class="text-center">${r.bags}</td>
+                    <td style="text-align:center; font-weight:700;">${r.kg.toFixed(1)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+    }
+
+    const topRows = rows.slice(0, 10);
+    const ctx = document.getElementById('rep-agents-chart');
+    if (ctx) {
+        if (agentReportChart) agentReportChart.destroy();
+        agentReportChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: topRows.map(r => r.name),
+                datasets: [{
+                    label: 'Total Dispatched (kg)',
+                    data: topRows.map(r => r.kg.toFixed(1)),
+                    backgroundColor: 'rgba(45, 90, 22, 0.65)',
+                    borderColor: 'rgb(45, 90, 22)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: chartThemeColors().text } }
+                },
+                scales: {
+                    x: { ticks: { color: chartThemeColors().tick } },
+                    y: { ticks: { color: chartThemeColors().tick } }
+                }
+            }
+        });
+    }
+
+    const exportBtn = document.getElementById('btn-export-agent-report');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', (e) => { e.stopPropagation();
+            const exportData = rows.map(r => ({
+                'Agent Name': r.name,
+                'Total Orders': r.orders,
+                'Total Bags': r.bags,
+                'Total (kg)': r.kg.toFixed(1)
+            }));
+            exportToExcel(exportData, 'Sales_Agent_Leaderboard');
         });
     }
 }

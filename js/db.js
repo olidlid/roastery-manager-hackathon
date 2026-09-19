@@ -65,6 +65,83 @@ async function fetchData(table) {
     }
 }
 
+// Shared aggregation for anything that groups request_orders/request_order_items
+// by some key (customer, sales agent, ...) and sums orders/bags/kg over an
+// optional date range. Extracted from loadCustomerReport's inline computation
+// (js/app.js) so Reports and the Customers-section CRM badges/leaderboard
+// share one formula instead of two copies quietly drifting apart — this repo
+// has a documented history of exactly that kind of drift causing bugs.
+function computeOrderStatsByKey(orders, items, {
+    groupByFn,                              // (order) => key | null/undefined (excluded)
+    startDate = null,                       // 'YYYY-MM-DD' or null = unbounded
+    endDate = null,
+    statuses = ['Dispatched', 'Completed']  // mirrors loadCustomerReport's existing definition of "shipped"
+} = {}) {
+    const inDateRange = (o) => {
+        const d = o.order_date || o.created_at?.split('T')[0];
+        if (!d) return true;
+        if (startDate && d < startDate) return false;
+        if (endDate && d > endDate) return false;
+        return true;
+    };
+
+    const filteredOrders = (orders || []).filter(o => statuses.includes(o.status) && inDateRange(o));
+
+    const stats = {};
+    const orderIdToKey = {};
+    filteredOrders.forEach(o => {
+        const key = groupByFn(o);
+        if (key == null) return;
+        if (!stats[key]) stats[key] = { orderIds: new Set(), bags: 0, kg: 0, orderDates: [] };
+        stats[key].orderIds.add(o.id);
+        orderIdToKey[o.id] = key;
+        const d = o.order_date || o.created_at?.split('T')[0];
+        if (d) stats[key].orderDates.push(d);
+    });
+
+    (items || []).forEach(item => {
+        const key = orderIdToKey[item.request_order_id];
+        if (key == null) return;
+        const qty = parseInt(item.quantity_requested) || 0;
+        const sizeG = parseInt(item.bag_size_g) || 0;
+        stats[key].bags += qty;
+        stats[key].kg += (qty * sizeG) / 1000;
+    });
+
+    const result = {};
+    Object.keys(stats).forEach(key => {
+        const s = stats[key];
+        const dates = s.orderDates.slice().sort();
+        let avgIntervalDays = null;
+        if (dates.length >= 2) {
+            const gaps = [];
+            for (let i = 1; i < dates.length; i++) gaps.push(daysBetween(dates[i - 1], dates[i]));
+            avgIntervalDays = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+        }
+        result[key] = {
+            orderCount: s.orderIds.size,
+            bags: s.bags,
+            kg: s.kg,
+            firstOrderDate: dates[0] || null,
+            lastOrderDate: dates[dates.length - 1] || null,
+            avgIntervalDays,
+            orderDates: dates
+        };
+    });
+    return result;
+}
+
+function median(numbers) {
+    const arr = (numbers || []).filter(n => typeof n === 'number' && !isNaN(n)).slice().sort((a, b) => a - b);
+    if (arr.length === 0) return null;
+    const mid = Math.floor(arr.length / 2);
+    return arr.length % 2 === 0 ? (arr[mid - 1] + arr[mid]) / 2 : arr[mid];
+}
+
+function daysBetween(dateStrA, dateStrB) {
+    return Math.round((new Date(dateStrB) - new Date(dateStrA)) / (1000 * 60 * 60 * 24));
+}
+
 // Stock Opname Phase 2: turns the freeze trigger's raw Postgres exception
 // (stock_take_freeze_guard, database/v2_stock_opname_freeze_migration.sql)
 // into a message a person can act on, instead of leaving every write call

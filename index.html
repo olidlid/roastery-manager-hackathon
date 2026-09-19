@@ -1370,47 +1370,116 @@
             <!-- SECTION: CUSTOMER MANAGEMENT              -->
             <!-- ========================================== -->
             <section id="sec-customers" class="page-section hidden">
-                <div class="card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
-                        <h3 class="card-title" style="margin-bottom: 0;">Customer Directory</h3>
-                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                            <div style="display: flex; gap: 4px;">
-                                <button class="btn btn-secondary btn-sm customer-filter-btn active" data-filter="all" onclick="filterCustomers('all')">All</button>
-                                <button class="btn btn-secondary btn-sm customer-filter-btn" data-filter="Wholesale" onclick="filterCustomers('Wholesale')">🏭 Wholesale</button>
-                                <button class="btn btn-secondary btn-sm customer-filter-btn" data-filter="Retail" onclick="filterCustomers('Retail')">☕ Retail</button>
-                                <button class="btn btn-secondary btn-sm customer-filter-btn" data-filter="Supermarket" onclick="filterCustomers('Supermarket')">🏬 Supermarket</button>
+                <div class="tab-container">
+                    <div class="tab-headers">
+                        <button class="tab-btn active" data-tab="tab-cust-directory" data-i18n="tab_cust_directory">Customer Directory</button>
+                        <button class="tab-btn" data-tab="tab-cust-crm" data-i18n="tab_cust_crm">CRM Insights</button>
+                    </div>
+
+                    <div id="tab-cust-directory" class="tab-content">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                                <h3 class="card-title" style="margin-bottom: 0;">Customer Directory</h3>
+                                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                    <div style="display: flex; gap: 4px;">
+                                        <button class="btn btn-secondary btn-sm customer-filter-btn active" data-filter="all" onclick="filterCustomers('all')">All</button>
+                                        <button class="btn btn-secondary btn-sm customer-filter-btn" data-filter="Wholesale" onclick="filterCustomers('Wholesale')">🏭 Wholesale</button>
+                                        <button class="btn btn-secondary btn-sm customer-filter-btn" data-filter="Retail" onclick="filterCustomers('Retail')">☕ Retail</button>
+                                        <button class="btn btn-secondary btn-sm customer-filter-btn" data-filter="Supermarket" onclick="filterCustomers('Supermarket')">🏬 Supermarket</button>
+                                    </div>
+                                    <input type="text" id="customer-search" class="form-control" placeholder="Search customer..." style="width: 200px; height: 32px; font-size: 0.8rem;" oninput="loadCustomersSection()">
+                                    <button class="btn btn-secondary btn-sm" onclick="openLotCodeLookupModal()" title="Find which customers received a given packed lot">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                        Lookup by Lot Code
+                                    </button>
+                                    <button class="btn btn-primary btn-sm" onclick="openCustomerModal()">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                        Add Customer
+                                    </button>
+                                </div>
                             </div>
-                            <input type="text" id="customer-search" class="form-control" placeholder="Search customer..." style="width: 200px; height: 32px; font-size: 0.8rem;" oninput="loadCustomersSection()">
-                            <button class="btn btn-secondary btn-sm" onclick="openLotCodeLookupModal()" title="Find which customers received a given packed lot">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                                Lookup by Lot Code
-                            </button>
-                            <button class="btn btn-primary btn-sm" onclick="openCustomerModal()">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                Add Customer
-                            </button>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Customer ID</th>
+                                            <th>Name</th>
+                                            <th>Type</th>
+                                            <th>Contact Person</th>
+                                            <th>Phone</th>
+                                            <th>Email</th>
+                                            <th>City</th>
+                                            <th>Address</th>
+                                            <th>Notes</th>
+                                            <th style="width: 180px;">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="customers-table-body">
+                                        <!-- Dynamic customer rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="card" style="margin-top:20px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                                <h3 class="card-title" style="margin-bottom: 0;" data-i18n="cust_leaderboard_title">Customer Leaderboard</h3>
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <select id="cust-leaderboard-period" class="form-control" style="height:32px; font-size:0.8rem;" onchange="loadCustomerLeaderboard()">
+                                        <option value="this_month" data-i18n="period_this_month">This Month</option>
+                                        <option value="last_month" data-i18n="period_last_month">Last Month</option>
+                                        <option value="last_3_months" data-i18n="period_last_3_months">Last 3 Months</option>
+                                        <option value="all_time" data-i18n="period_all_time">All Time</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th style="width:60px;" data-i18n="col_rank">Rank</th>
+                                            <th data-i18n="col_customer_name">Customer Name</th>
+                                            <th data-i18n="col_customer_code">Code</th>
+                                            <th style="text-align:center;" data-i18n="col_total_orders">Total Orders</th>
+                                            <th style="text-align:center;" data-i18n="col_total_bags">Total Bags</th>
+                                            <th style="text-align:center;" data-i18n="col_total_kg">Total (kg)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="customer-leaderboard-table-body">
+                                        <!-- Dynamic leaderboard rows -->
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
-                    <div class="table-container">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Customer ID</th>
-                                    <th>Name</th>
-                                    <th>Type</th>
-                                    <th>Contact Person</th>
-                                    <th>Phone</th>
-                                    <th>Email</th>
-                                    <th>City</th>
-                                    <th>Address</th>
-                                    <th>Notes</th>
-                                    <th style="width: 180px;">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="customers-table-body">
-                                <!-- Dynamic customer rows -->
-                            </tbody>
-                        </table>
+
+                    <div id="tab-cust-crm" class="tab-content hidden">
+                        <div style="font-size:0.7rem; font-weight:700; letter-spacing:0.03em; color:var(--text-muted); margin-bottom:8px;" data-i18n="lbl_crm_segment_group">SEGMENT</div>
+                        <div id="cust-crm-seg-tiles" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:16px;"></div>
+
+                        <div style="font-size:0.7rem; font-weight:700; letter-spacing:0.03em; color:var(--text-muted); margin-bottom:8px;" data-i18n="lbl_crm_type_group">TYPE</div>
+                        <div id="cust-crm-type-tiles" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:20px;"></div>
+
+                        <div class="card">
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_customer_name">Customer Name</th>
+                                            <th data-i18n="col_customer_type">Type</th>
+                                            <th data-i18n="col_crm_segment">Segment</th>
+                                            <th data-i18n="col_crm_reorder">Reorder</th>
+                                            <th data-i18n="col_crm_last_order">Last order</th>
+                                            <th style="text-align:right;" data-i18n="col_crm_kg_90d">Kg (90d)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="cust-crm-table-body">
+                                        <!-- Dynamic CRM Insights rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="cust-crm-table-caption" style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding-top:10px;"></div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -1638,6 +1707,7 @@
                             <button class="tab-btn" data-tab="tab-rep-packing" data-i18n="tab_rep_packing">Packing</button>
                             <button class="tab-btn" data-tab="tab-rep-sales">Sales Dispatch</button>
                             <button class="tab-btn" data-tab="tab-rep-customers" data-i18n="tab_rep_customers">Customers</button>
+                            <button class="tab-btn" data-tab="tab-rep-agents" data-i18n="tab_rep_agents">Sales Agents</button>
                             <button class="tab-btn" data-tab="tab-rep-stockopname" data-i18n="tab_rep_stockopname">Stock Opname</button>
                         </div>
                         <!-- Date Filter (right, compact) -->
@@ -1956,6 +2026,48 @@
                                 </div>
                             </div>
                         </div>
+                        </div>
+                    </div>
+
+                    <!-- SUB-TAB: Sales Agents -->
+                    <div id="tab-rep-agents" class="tab-content hidden">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; flex-wrap: wrap;">
+                            <div class="card" style="overflow-x: auto; cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenTable('rep-agents-table','Sales Agent Leaderboard')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <h3 class="card-title" style="margin-bottom: 0;" data-i18n="rep_agents_table_title">Sales Agent Leaderboard</h3>
+                                    <div style="display:flex; gap:8px; align-items:center;">
+                                        <button id="btn-export-agent-report" class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 6px;" onclick="event.stopPropagation()">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                            Export Excel
+                                        </button>
+                                        <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Expand</span>
+                                    </div>
+                                </div>
+                                <div class="table-container">
+                                    <table id="rep-agents-table">
+                                        <thead>
+                                            <tr>
+                                                <th data-i18n="col_agent_name">Agent Name</th>
+                                                <th style="text-align:center;" data-i18n="col_total_orders">Total Orders</th>
+                                                <th style="text-align:center;" data-i18n="col_total_bags">Total Bags</th>
+                                                <th style="text-align:center;" data-i18n="col_total_kg">Total (kg)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="rep-agents-table-body">
+                                            <!-- Dyn -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card chart-card-expandable" data-chart-id="rep-agents-chart" style="cursor:pointer; transition:box-shadow 0.2s;" onclick="openFullscreenChart('rep-agents-chart','Sales Agent Leaderboard')" onmouseover="this.style.boxShadow='0 4px 20px rgba(45,90,22,0.15)'" onmouseout="this.style.boxShadow=''">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <h3 class="card-title" style="margin-bottom:0;" data-i18n="rep_agents_chart_title">Top Sales Agents</h3>
+                                    <span style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:3px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Click to expand</span>
+                                </div>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="rep-agents-chart"></canvas>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -2818,19 +2930,19 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=72"></script>
+    <script src="js/translations.js?v=73"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
-    <script src="js/db.js?v=3"></script>
+    <script src="js/db.js?v=4"></script>
     <script src="js/auth.js?v=16"></script>
     <script src="js/greenbean.js?v=22"></script>
     <script src="js/roasting.js?v=43"></script>
     <script src="js/packing.js?v=136"></script>
-    <script src="js/sales.js?v=57"></script>
+    <script src="js/sales.js?v=59"></script>
     <script src="js/settings.js?v=26"></script>
     <script src="js/tracking.js?v=8"></script>
     <script src="js/purchasing.js?v=3"></script>
-    <script src="js/app.js?v=116"></script>
+    <script src="js/app.js?v=118"></script>
 </body>
 </html>
