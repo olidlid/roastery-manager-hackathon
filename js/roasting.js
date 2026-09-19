@@ -2710,25 +2710,17 @@ function chooseTestBatchDeleteMode(batch, totalKg) {
             <div class="overlay-card" role="dialog" aria-modal="true" style="max-width: 440px; border: 1px solid var(--danger); background: var(--bg-sidebar); border-radius: var(--border-radius); padding: 24px; display: flex; flex-direction: column; gap: 14px;">
                 <h3 style="font-size: 1.15rem; font-weight: 700; margin: 0; color: var(--text-primary);"></h3>
                 <p class="tbd-intro" style="font-size: 0.88rem; color: var(--text-secondary); margin: 0; line-height: 1.6;"></p>
-                <button type="button" class="btn btn-secondary tbd-refund" style="text-align: left; padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; height: auto;">
-                    <span class="tbd-refund-title" style="font-weight: 700;"></span>
-                    <span class="tbd-refund-desc" style="font-size: 0.78rem; color: var(--text-secondary); font-weight: 400; white-space: normal;"></span>
-                </button>
-                <button type="button" class="btn btn-secondary tbd-discard" style="text-align: left; padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; height: auto;">
-                    <span class="tbd-discard-title" style="font-weight: 700;"></span>
-                    <span class="tbd-discard-desc" style="font-size: 0.78rem; color: var(--text-secondary); font-weight: 400; white-space: normal;"></span>
-                </button>
+                <button type="button" class="btn btn-secondary tbd-refund" style="font-weight: 700;"></button>
+                <button type="button" class="btn btn-secondary tbd-discard" style="font-weight: 700;"></button>
                 <button type="button" class="btn btn-secondary tbd-cancel" style="align-self: flex-end; min-width: 100px;"></button>
             </div>
         `;
         overlay.querySelector('h3').textContent = tr('ttl_test_delete', 'Delete test batch?');
-        overlay.querySelector('.tbd-intro').textContent = tr('msg_test_delete_intro', 'Batch {code} used {kg} of green bean. What happened to this batch?')
+        overlay.querySelector('.tbd-intro').textContent = tr('msg_test_delete_intro', 'Batch {code} used {kg} of green bean.')
             .replace('{code}', batch.batch_code || batch.batch_number || `#${batch.id}`)
             .replace('{kg}', kgText);
-        overlay.querySelector('.tbd-refund-title').textContent = tr('opt_test_delete_refund', 'Entered by mistake — return green bean');
-        overlay.querySelector('.tbd-refund-desc').textContent = tr('opt_test_delete_refund_desc', '{kg} goes back to the green bean lots it came from.').replace('{kg}', kgText);
-        overlay.querySelector('.tbd-discard-title').textContent = tr('opt_test_delete_discard', 'Batch was thrown away — green bean stays used');
-        overlay.querySelector('.tbd-discard-desc').textContent = tr('opt_test_delete_discard_desc', 'Green bean stock does not change. Stock History records {kg} as a discarded test roast.').replace('{kg}', kgText);
+        overlay.querySelector('.tbd-refund').textContent = tr('opt_test_delete_refund', 'Delete and return green bean stock');
+        overlay.querySelector('.tbd-discard').textContent = tr('opt_test_delete_discard', 'Delete without returning green bean stock');
         overlay.querySelector('.tbd-cancel').textContent = tr('btn_cancel', 'Cancel');
         document.body.appendChild(overlay);
 
