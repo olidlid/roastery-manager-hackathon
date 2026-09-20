@@ -548,10 +548,36 @@ function startDailyLoginWatcher() {
     });
 }
 
+// True only until the first time this exact page load resolves an
+// authenticated session — covers a plain reload, a hard refresh, and the
+// browser landing back from an OAuth redirect, all of which already fetched
+// fresh index.html/scripts by virtue of being a real navigation. Consumed
+// (flipped false) the first time initAuthenticatedSession runs, so it never
+// suppresses the forced-reload logic below for anything that happens LATER
+// in that same page's lifetime (an in-place email/password re-login, or the
+// daily gate kicking back in) — see initAuthenticatedSession for how it's used.
+let _isFreshPageLoad = true;
+
+// Repeated calls used to each register their OWN onAuthStateChange listener
+// (checkAuthentication is called again after login-form submit and after
+// manual logout, on top of the one from bootstrap) — found 2026-09-20 while
+// investigating the daily re-login feature, which made this compound daily
+// instead of being a rare one-off: every extra listener stacks forever for
+// the rest of the tab's life, so a single future sign-in fires ALL of them,
+// each running its own full initAppDashboard() read burst. The very first
+// checkAuthentication() call (always the one from bootstrap) is the only one
+// that needs to actually wire anything — Supabase's own onAuthStateChange
+// then keeps firing for every later sign-in/out on its own, so later calls
+// are safe to no-op.
+let _authListenerRegistered = false;
+
 function checkAuthentication() {
     if (!checkDatabaseConnection()) return;
 
     startDailyLoginWatcher();
+
+    if (_authListenerRegistered) return;
+    _authListenerRegistered = true;
 
     // Safety net: never let the loading splash outlive a hung auth/network call.
     setTimeout(hideAppLoadingOverlay, 12000);
@@ -573,7 +599,31 @@ function checkAuthentication() {
             return;
         }
         sessionInitialized = true;
+
+        // User asked (2026-09-20) for the FIRST login of a new day to load
+        // like a hard refresh — users rarely refresh manually, so a tab left
+        // open for weeks can keep running old JS long after a new version is
+        // deployed. Re-login on the SAME day (e.g. a manual logout right
+        // after logging in) should stay a normal in-place SPA transition.
+        // wasAlreadyLoggedInToday reads the date BEFORE recordDailyLoginDate
+        // overwrites it, so it only answers "today", never "just now".
+        const wasAlreadyLoggedInToday = (() => {
+            try { return localStorage.getItem(DAILY_LOGIN_DATE_KEY) === getLocalDateStr(); } catch (e) { return true; }
+        })();
         recordDailyLoginDate();
+
+        // Skip the reload when the page is already guaranteed fresh (this IS
+        // that first load/redirect) — otherwise a fresh page load would
+        // immediately reload itself again for no benefit, and an OAuth
+        // sign-in (which already round-tripped through Google and back) would
+        // reload a second time right after landing.
+        const skipReload = wasAlreadyLoggedInToday || _isFreshPageLoad;
+        _isFreshPageLoad = false;
+        if (!skipReload) {
+            window.location.reload();
+            return;
+        }
+
         authOverlay.classList.add('hidden');
         document.getElementById('app-container').style.display = 'flex';
         loadUserProfile(session.user.id);
