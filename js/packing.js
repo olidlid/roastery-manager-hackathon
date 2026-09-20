@@ -4144,14 +4144,14 @@ function printLotBarcodeLabels(lot, requested, machines, opts = {}) {
     // day-month-year across browsers/locales).
     const prodDate = lot.production_date ? new Date(lot.production_date + 'T00:00:00') : null;
     const expDate = prodDate ? new Date(prodDate.getFullYear() + 1, prodDate.getMonth(), prodDate.getDate()) : null;
-    // Compact ddmmyy — no internal separators, matching the lot code's own
-    // MMDDYY digit style, joined as "ddmmyy - ddmmyy" (prod - exp).
+    // dd/mm/yy, joined as "dd/mm/yy - dd/mm/yy" (prod - exp) — per user
+    // request 2026-09-20 (was a separator-less "ddmmyy - ddmmyy").
     const fmtDDMMYY = (d) => {
         if (!d) return '-';
         const dd = String(d.getDate()).padStart(2, '0');
         const mm = String(d.getMonth() + 1).padStart(2, '0');
         const yy = String(d.getFullYear()).slice(-2);
-        return `${dd}${mm}${yy}`;
+        return `${dd}/${mm}/${yy}`;
     };
     const dateRangeStr = `${fmtDDMMYY(prodDate)} - ${fmtDDMMYY(expDate)}`;
     const machineName = ((machines || []).find(m => m.id === lot.machine_id) || {}).name || '';
