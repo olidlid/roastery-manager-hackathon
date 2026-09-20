@@ -1825,7 +1825,7 @@ async function loadPackingRequestsSection() {
 
             if (isPartial) {
                 // §8 — item-level view for a still-open, partially-dispatched
-                // order: Keluar/Diminta instead of a plain fraction, a
+                // order: Out/Requested instead of a plain fraction, a
                 // shortfall note, and a Dispatched badge on any line that has
                 // stock out at all — never on a line that's untouched.
                 const shortfall = Math.max(0, totalRequestedLine - alreadyPrepared);
@@ -1833,7 +1833,7 @@ async function loadPackingRequestsSection() {
                     <div>
                         <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.82rem;">
                             <span style="font-weight: 600;">${coffeeName}${(packingOutByItem.get(item.id) || 0) > 0 ? `<span class="dc-card-badge-dispatched" data-i18n="card_badge_dispatched">${window.t ? window.t('card_badge_dispatched') : 'Dispatched'}</span>` : ''}</span>
-                            <span style="font-weight: 600; color: ${shortfall > 0 ? 'var(--danger)' : 'var(--success)'}; white-space: nowrap; flex-shrink: 0; text-align:right;">${alreadyPrepared} / ${totalRequestedLine}${shortfall > 0 ? `<span style="display:block; font-size:0.68rem; font-weight:500; color:var(--text-muted);">kurang ${shortfall}</span>` : ''}</span>
+                            <span style="font-weight: 600; color: ${shortfall > 0 ? 'var(--danger)' : 'var(--success)'}; white-space: nowrap; flex-shrink: 0; text-align:right;">${alreadyPrepared} / ${totalRequestedLine}${shortfall > 0 ? `<span style="display:block; font-size:0.68rem; font-weight:500; color:var(--text-muted);">${dcT('dc_short_n', '{n} short').replace('{n}', shortfall)}</span>` : ''}</span>
                         </div>
                         <div style="color: var(--text-muted); font-size: 0.76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${item.bag_size_g}g${itemMachine ? ', ' + itemMachine.name : ''}</div>
                     </div>
@@ -1876,7 +1876,7 @@ async function loadPackingRequestsSection() {
         // the shelf) — see CHECKOUT_AUTOFILL_PLAN.md §8.
         const outStripHtml = isPartial
             ? `<div class="dc-card-out-strip">
-                    <b>${totalPrepared}</b> dari <b>${totalRequested}</b> pcs sudah keluar dari stok &middot; sisa <b>${Math.max(0, totalRequested - totalPrepared)}</b> pcs
+                    ${dcT('dc_card_out_strip', '<b>{out}</b> of <b>{total}</b> pcs already left stock &middot; <b>{left}</b> pcs to go').replace('{out}', `<b>${totalPrepared}</b>`).replace('{total}', `<b>${totalRequested}</b>`).replace('{left}', `<b>${Math.max(0, totalRequested - totalPrepared)}</b>`)}
                     <div class="dc-card-bar"><i style="width:${totalRequested > 0 ? Math.min(100, Math.round((totalPrepared / totalRequested) * 100)) : 0}%;"></i></div>
                </div>`
             : '';
@@ -2255,6 +2255,15 @@ async function stopOrderFromPacking(breakdown, reason) {
 // database/v2_1g_migration.sql / V2_ROADMAP.md 1G.
 window.activeDispatchCheckoutHandler = null;
 
+// Checkout-modal strings go through t() like the rest of the app, but keep
+// a literal English fallback so a missing key never renders as a raw key
+// name (same shape as packBulkT above).
+function dcT(key, fallback) {
+    if (!window.t) return fallback;
+    const v = window.t(key);
+    return v && v !== key ? v : fallback;
+}
+
 async function openDispatchCheckoutModal(orderId) {
     const [
         { data: orders },
@@ -2611,7 +2620,7 @@ async function openDispatchCheckoutModal(orderId) {
 
         let actionHtml;
         if (cartQty > 0) {
-            actionHtml = `<button type="button" class="btn dc-icon-btn dc-row-reset" data-item="${item.id}" title="Kosongkan baris ini">${RESET_ICON_SVG}</button>`;
+            actionHtml = `<button type="button" class="btn dc-icon-btn dc-row-reset" data-item="${item.id}" title="${dcT('dc_row_clear_title', 'Clear this row')}">${RESET_ICON_SVG}</button>`;
         } else {
             actionHtml = `<button type="button" class="btn btn-primary btn-sm dc-row-autofill" data-item="${item.id}" ${(remainingToFill <= 0 || !hasFifoLot) ? 'disabled' : ''}>Autofill</button>`;
         }
@@ -2739,7 +2748,7 @@ async function openDispatchCheckoutModal(orderId) {
         if (actEl) {
             const hasFifoLot = stockForItem(itemId) + otherMachineStockForItem(itemId) > 0;
             actEl.innerHTML = cartQty > 0
-                ? `<button type="button" class="btn dc-icon-btn dc-row-reset" data-item="${itemId}" title="Kosongkan baris ini">${RESET_ICON_SVG}</button>`
+                ? `<button type="button" class="btn dc-icon-btn dc-row-reset" data-item="${itemId}" title="${dcT('dc_row_clear_title', 'Clear this row')}">${RESET_ICON_SVG}</button>`
                 : `<button type="button" class="btn btn-primary btn-sm dc-row-autofill" data-item="${itemId}" ${(remainingToFill <= 0 || !hasFifoLot) ? 'disabled' : ''}>Autofill</button>`;
         }
     }
@@ -2773,8 +2782,8 @@ async function openDispatchCheckoutModal(orderId) {
     }
 
     // ------------------------------------------------------------------
-    // Right-hand "Sudah keluar" pane — every item on the order (open or
-    // closed), Diminta/Keluar/Kurang, with a Reset icon on any row that has
+    // Right-hand "Dispatched" pane — every item on the order (open or
+    // closed), Requested/Out/Short, with a Reset icon on any row that has
     // stock out (CHECKOUT_AUTOFILL_PLAN.md §5, §8). Only rendered in
     // 'continuing' mode.
     // ------------------------------------------------------------------
@@ -2787,17 +2796,17 @@ async function openDispatchCheckoutModal(orderId) {
             const canReset = prepared > 0;
             // A leader's partial approval (or an earlier Pilihan 1) can leave
             // quantity_unfulfilled > 0 while this row still shows a nonzero
-            // Kurang against a SMALLER target — e.g. Diminta 10, Keluar 0,
-            // Kurang 3, with 7 excused. Without this note that reads like a
+            // Short against a SMALLER target — e.g. Requested 10, Out 0,
+            // Short 3, with 7 excused. Without this note that reads like a
             // math error; said explicitly here instead.
-            const excusedNote = unfulfilled > 0 ? `<div class="dc-sum-meta">${unfulfilled} tidak terpenuhi</div>` : '';
+            const excusedNote = unfulfilled > 0 ? `<div class="dc-sum-meta">${dcT('dc_unfulfilled_n', '{n} unfulfilled').replace('{n}', unfulfilled)}</div>` : '';
             return `
                 <tr>
                     <td>${coffeeLabel(item)}<div class="dc-sum-meta">${item.bag_size_g}g</div></td>
                     <td>${requested}${excusedNote}</td>
                     <td class="${shortfall === 0 ? 'dc-sum-ok' : ''}">${prepared}</td>
                     <td class="${shortfall > 0 ? 'dc-sum-short' : ''}">${shortfall > 0 ? shortfall : '&mdash;'}</td>
-                    <td class="dc-sum-act">${canReset ? `<button type="button" class="btn dc-icon-btn dc-icon-btn-danger dc-committed-reset" data-item="${item.id}" title="Kembalikan ke stok">${RESET_ICON_SVG}</button>` : ''}</td>
+                    <td class="dc-sum-act">${canReset ? `<button type="button" class="btn dc-icon-btn dc-icon-btn-danger dc-committed-reset" data-item="${item.id}" title="${dcT('dc_return_to_stock', 'Return to stock')}">${RESET_ICON_SVG}</button>` : ''}</td>
                 </tr>
             `;
         }).join('');
@@ -2806,13 +2815,13 @@ async function openDispatchCheckoutModal(orderId) {
         const totalShort = items.reduce((s, i) => s + itemShortfall(i), 0);
         return `
             <div class="dc-pane">
-                <div class="dc-pane-head"><span>Sudah keluar</span><span>Order ini</span></div>
+                <div class="dc-pane-head"><span>${dcT('dc_pane_dispatched', 'Dispatched')}</span><span>${dcT('dc_pane_this_order', 'This order')}</span></div>
                 <table class="dc-sum-table">
-                    <thead><tr><th>Item</th><th>Diminta</th><th>Keluar</th><th>Kurang</th><th></th></tr></thead>
+                    <thead><tr><th>${dcT('dc_col_item', 'Item')}</th><th>${dcT('dc_col_requested', 'Requested')}</th><th>${dcT('dc_col_out', 'Out')}</th><th>${dcT('dc_col_short', 'Short')}</th><th></th></tr></thead>
                     <tbody>${rows}</tbody>
-                    <tfoot><tr><td>Total</td><td>${totalRequested}</td><td class="dc-sum-ok">${totalPrepared}</td><td class="${totalShort > 0 ? 'dc-sum-short' : ''}">${totalShort > 0 ? totalShort : '&mdash;'}</td><td></td></tr></tfoot>
+                    <tfoot><tr><td>${dcT('dc_col_total', 'Total')}</td><td>${totalRequested}</td><td class="dc-sum-ok">${totalPrepared}</td><td class="${totalShort > 0 ? 'dc-sum-short' : ''}">${totalShort > 0 ? totalShort : '&mdash;'}</td><td></td></tr></tfoot>
                 </table>
-                <div class="dc-pane-note">Angka di kolom Keluar sudah benar-benar berkurang dari stok. Tombol reset memulangkan seluruh jumlah item itu ke lot asalnya lewat jalur resmi, tercatat di buku besar, lalu item itu kembali ke daftar kiri dengan target penuh.</div>
+                <div class="dc-pane-note">${dcT('dc_pane_note', 'The Out column has already been deducted from stock. The reset button sends that whole item quantity back to its original lots through the proper path, recorded in the ledger, and the item returns to the left list with its full target.')}</div>
             </div>
         `;
     }
@@ -2821,10 +2830,10 @@ async function openDispatchCheckoutModal(orderId) {
         const totalShort = openItems.reduce((s, i) => s + itemShortfall(i), 0);
         const itemsHtml = openItems.length
             ? openItems.map(item => `<div class="dc-item" id="dc-item-${item.id}">${itemRowHtml(item, false)}</div>`).join('')
-            : `<div class="dc-lot-empty">Semua item sudah lengkap — tidak ada yang perlu diambil lagi.</div>`;
+            : `<div class="dc-lot-empty">${dcT('dc_left_empty', 'Every item is complete — nothing left to take.')}</div>`;
         return `
             <div class="dc-pane">
-                <div class="dc-pane-head"><span>Masih kurang &middot; ${openItems.length} item</span><span>${totalShort} pcs</span></div>
+                <div class="dc-pane-head"><span>${dcT('dc_pane_still_short', 'Still short')} &middot; ${dcT('dc_n_items', '{n} items').replace('{n}', openItems.length)}</span><span>${totalShort} pcs</span></div>
                 <div>${itemsHtml}</div>
             </div>
         `;
@@ -2884,9 +2893,9 @@ async function openDispatchCheckoutModal(orderId) {
         const anyRemaining = items.some(i => !itemIsClosed(i) && itemShortfall(i) - alreadyInCartForItem(i.id) > 0);
         const footMsg = anyRemaining
             ? (mode === 'fresh'
-                ? 'Belum ada yang disiapkan. Tekan Autofill di baris yang diinginkan, atau buka daftar lot untuk memilih sendiri.'
-                : 'Masih ada item yang kurang. Tekan Checkout untuk memutuskan langkah selanjutnya.')
-            : 'Semua baris sudah terisi.';
+                ? dcT('dc_foot_fresh', 'Nothing prepared yet. Press Autofill on the row you want, or open the lot list to pick the lots yourself.')
+                : dcT('dc_foot_continuing', 'Some items are still short. Press Checkout to decide the next step.'))
+            : dcT('dc_foot_done', 'Every row is filled.');
 
         const html = `
             <div id="dispatch-checkout-body">
@@ -3060,7 +3069,7 @@ async function openDispatchCheckoutModal(orderId) {
         const qty = alreadyInCartForItem(itemId);
         if (!item || qty <= 0) return;
         const ok = await showWarningModal(
-            `Kosongkan ${coffeeLabel(item)}? ${qty} pcs yang sudah diisi akan hilang dari keranjang. Belum ada yang dikeluarkan dari stok.`,
+            dcT('dc_clear_row_confirm', 'Clear {item}? The {qty} pcs entered will be removed from the cart. Nothing has left stock yet.').replace('{item}', coffeeLabel(item)).replace('{qty}', qty),
             true
         );
         if (!ok) return;
@@ -3128,18 +3137,18 @@ async function openDispatchCheckoutModal(orderId) {
             ...breakdown.ledgerLots.map(e => `${lotLabel(e.lotId)} — ${e.outstanding} pcs`),
             ...breakdown.legacyRows.map(d => `${lotLabel(d.packed_coffee_lot_id)} — ${parseInt(d.qty) || 0} pcs`)
         ];
-        let msg = `Kembalikan ${coffeeLabel(item)} (${item.bag_size_g}g) ke stok?\n\n`;
+        let msg = dcT('dc_reset_confirm_head', 'Return {item} ({size}g) to stock?').replace('{item}', coffeeLabel(item)).replace('{size}', item.bag_size_g) + '\n\n';
         if (lines.length) msg += lines.join('\n') + '\n\n';
         if (breakdown.untrackedQty > 0) {
             // §5.5.3 — this part has no lot to send it back to; said here so
             // the operator isn't surprised the number below doesn't fall to 0.
-            msg += `${breakdown.untrackedQty} pcs tidak punya catatan lot dan tidak bisa dikembalikan otomatis.\n\n`;
+            msg += dcT('dc_reset_untracked', '{n} pcs have no lot record and cannot be returned automatically.').replace('{n}', breakdown.untrackedQty) + '\n\n';
         }
         // Target here is itemTarget, not the raw quantity_requested — a line
         // the leader already partially excused (quantity_unfulfilled from
         // approval) reopens to THAT target, not to the original full order
         // quantity, since Reset never touches quantity_unfulfilled (below).
-        msg += `Total akan kembali ke lot asalnya dan tercatat di buku besar. Item ini akan muncul lagi di daftar kiri dengan target penuh (${itemTarget(item)} pcs).`;
+        msg += dcT('dc_reset_tail', 'The whole quantity goes back to its original lots and is recorded in the ledger. This item returns to the left list with its full target ({n} pcs).').replace('{n}', itemTarget(item));
 
         const ok = await showWarningModal(msg, true, 'Reset Stock?', 'Yes, Return to Stock');
         if (!ok) {
@@ -3297,31 +3306,31 @@ async function openDispatchCheckoutModal(orderId) {
     function showChoiceDialog(shortAfter) {
         const totalShort = shortAfter.reduce((s, x) => s + x.short, 0);
         const linesHtml = shortAfter.map(x => `
-            <div class="dc-short-line"><span>${coffeeLabel(x.item)} &middot; ${x.item.bag_size_g}g</span><span>kurang <b>${x.short}</b></span></div>
+            <div class="dc-short-line"><span>${coffeeLabel(x.item)} &middot; ${x.item.bag_size_g}g</span><span>${dcT('dc_short_n', '{n} short').replace('{n}', `<b>${x.short}</b>`)}</span></div>
         `).join('');
         const html = `
             <div id="dispatch-checkout-body">
                 <div class="dc-choice-dialog">
-                    <h4>${shortAfter.length === 1 ? '1 item belum lengkap' : `${shortAfter.length} item belum lengkap`}</h4>
+                    <h4>${shortAfter.length === 1 ? dcT('dc_choice_title_one', '1 item is incomplete') : dcT('dc_choice_title_many', '{n} items are incomplete').replace('{n}', shortAfter.length)}</h4>
                     <div class="dc-short-list">${linesHtml}</div>
                     <div class="dc-choice-list">
                         <div class="dc-opt dc-opt-primary">
-                            <div class="dc-opt-title">Proses apa adanya, order selesai</div>
-                            <button type="button" class="btn btn-primary" id="dc-choice-finish">Pilih</button>
-                            <div class="dc-opt-desc">Yang sudah disiapkan dikeluarkan sekarang. Kekurangan ${totalShort} pcs dicatat sebagai tidak terpenuhi dan tidak ditunggu lagi. Order ini tidak akan muncul lagi di daftar packing setelah dikirim.</div>
+                            <div class="dc-opt-title">${dcT('dc_choice_finish_title', 'Process as is, close the order')}</div>
+                            <button type="button" class="btn btn-primary" id="dc-choice-finish">${dcT('dc_choice_pick', 'Choose')}</button>
+                            <div class="dc-opt-desc">${dcT('dc_choice_finish_desc', 'What is prepared goes out now. The {n} pcs short are recorded as unfulfilled and no longer awaited. This order leaves the packing list once it is dispatched.').replace('{n}', totalShort)}</div>
                         </div>
                         <div class="dc-opt">
-                            <div class="dc-opt-title">Proses sebagian, order tetap terbuka</div>
-                            <button type="button" class="btn btn-secondary" id="dc-choice-continue">Pilih</button>
-                            <div class="dc-opt-desc">Yang sudah disiapkan dikeluarkan sekarang, sisanya tetap ditunggu. Order bertahan di daftar packing sampai ${totalShort} pcs itu terpenuhi.</div>
+                            <div class="dc-opt-title">${dcT('dc_choice_continue_title', 'Process partially, keep the order open')}</div>
+                            <button type="button" class="btn btn-secondary" id="dc-choice-continue">${dcT('dc_choice_pick', 'Choose')}</button>
+                            <div class="dc-opt-desc">${dcT('dc_choice_continue_desc', 'What is prepared goes out now, the rest is still awaited. The order stays in the packing list until those {n} pcs are fulfilled.').replace('{n}', totalShort)}</div>
                         </div>
                     </div>
-                    <div class="dc-dialog-foot"><button type="button" class="btn btn-secondary" id="dc-choice-back">Kembali</button></div>
+                    <div class="dc-dialog-foot"><button type="button" class="btn btn-secondary" id="dc-choice-back">${dcT('dc_choice_back', 'Back')}</button></div>
                 </div>
             </div>
             <style>${DISPATCH_CHECKOUT_STYLE}</style>
         `;
-        openModal(`Beberapa Item Belum Lengkap`, html, '560px');
+        openModal(dcT('dc_choice_modal_title', 'Some Items Are Incomplete'), html, '560px');
 
         const finishBtn = document.getElementById('dc-choice-finish');
         const continueBtn = document.getElementById('dc-choice-continue');
