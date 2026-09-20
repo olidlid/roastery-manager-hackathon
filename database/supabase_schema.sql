@@ -665,7 +665,13 @@ CREATE TABLE IF NOT EXISTS public.packed_coffee_lots (
     id SERIAL PRIMARY KEY,
     packed_coffee_id INTEGER REFERENCES public.packed_coffee(id) ON DELETE CASCADE,
     roast_batch_id INTEGER REFERENCES public.roast_batches(id) ON DELETE SET NULL,
-    lot_code TEXT NOT NULL UNIQUE,
+    lot_code TEXT NOT NULL,  -- UNIQUE dropped 2026-09-20 (see database/drop_packed_coffee_lots_lot_code_unique.sql):
+                             -- lot_code's trailing number is now "total roast_batches for this
+                             -- coffee+machine+day", a fixed count rather than a per-lot sequence,
+                             -- so every packaging size packed from the same roast day legitimately
+                             -- shares the same lot_code text — per explicit user request, since
+                             -- strip_code (still unique among live stock) is what actually
+                             -- distinguishes sizes.
     quantity_pcs INTEGER NOT NULL DEFAULT 0,
     remaining_pcs INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),

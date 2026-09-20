@@ -4985,14 +4985,16 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId, 
         { data: greenbeans },
         { data: recipes },
         { data: productionLots },
-        { data: packagingSizes }
+        { data: packagingSizes },
+        { data: roastBatches }
     ] = await Promise.all([
         fetchData('packed_coffee'),
         fetchData('machines'),
         fetchData('green_coffee'),
         fetchData('blend_recipes'),
         fetchData('production_lots'),
-        fetchData('packaging_sizes')
+        fetchData('packaging_sizes'),
+        fetchData('roast_batches')
     ]);
 
     const sanitize = (s) => (s || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'X';
@@ -5032,23 +5034,33 @@ async function getOrCreatePackedCoffeeLot(packedCoffeeId, qty, productionLotId, 
     // lots that predate/lack richer traceability data.
     const roastDateStr = productionLot ? productionLot.production_date : todayStr;
     const [ry, rm, rd] = roastDateStr.split('-');
-    const mmddyy = `${rm}${rd}${ry.slice(2)}`;
+    const ddmmyy = `${rd}${rm}${ry.slice(2)}`;
 
     const packedById = new Map((packedList || []).map(p => [p.id, p]));
-    const sameCoffeeMachineCount = (existingLots || []).filter(l => {
-        const p = packedById.get(l.packed_coffee_id);
-        if (!p || p.machine_id !== machineId) return false;
-        if (singleId) return p.single_coffee_id === singleId;
-        if (blendId) return p.blend_recipe_id === blendId;
-        return (p.custom_coffee_name || '') === customName;
-    }).length;
-
-    let seq = sameCoffeeMachineCount + 1;
-    let lotCode = `${coffeeCode}-${machineCode}${mmddyy}-${seq}`;
-    while ((existingLots || []).some(l => l.lot_code === lotCode)) {
-        seq++;
-        lotCode = `${coffeeCode}-${machineCode}${mmddyy}-${seq}`;
+    // Trailing number = total roast_batches rows for this exact coffee +
+    // machine + roast day (per user request) — NOT a per-lot sequence
+    // anymore. Deliberately NOT unique across packaging sizes: a single
+    // roast day commonly gets packed into several sizes, and all of them
+    // legitimately share the same "N batches roasted today" number — the
+    // strip_code (separate, size-scoped) is what tells those apart, so
+    // lot_code no longer needs to (see packed_coffee_lots_lot_code_key
+    // drop in database/supabase_schema.sql). Manual/custom packing has no
+    // production lot and thus no real roast_batches to count, so it falls
+    // back to the old packed-lot counting rule.
+    let totalBatches;
+    if (singleId || blendId) {
+        totalBatches = (roastBatches || []).filter(b =>
+            b.machine_id === machineId &&
+            b.roast_date === roastDateStr &&
+            (singleId ? b.single_coffee_id === singleId : b.blend_recipe_id === blendId)
+        ).length;
+    } else {
+        totalBatches = (existingLots || []).filter(l => {
+            const p = packedById.get(l.packed_coffee_id);
+            return p && p.machine_id === machineId && (p.custom_coffee_name || '') === customName;
+        }).length + 1;
     }
+    const lotCode = `${coffeeCode}-${machineCode}${ddmmyy}-${totalBatches}`;
 
     const insertPayload = {
         packed_coffee_id: packedCoffeeId,
