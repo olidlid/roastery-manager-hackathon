@@ -133,6 +133,7 @@ const SECTION_PERMISSIONS = {
     'sec-greenbean': 'greenbean_view',
     'sec-bulk-roasted': 'bulk_view',
     'sec-packed-coffee': 'packed_view',
+    'sec-other-items': 'other_items_view',
     'sec-roasting': 'roasting_view',
     'sec-packing': 'packing_view',
     'sec-customers': ['customer_view'],
@@ -375,6 +376,7 @@ function getFirstAllowedSection() {
         'sec-greenbean',
         'sec-bulk-roasted',
         'sec-packed-coffee',
+        'sec-other-items',
         'sec-roasting',
         'sec-packing',
         'sec-customers',
@@ -424,7 +426,7 @@ function applyMenuVisibility() {
     // Handle inventory parent menu item dropdown: if all subitems are hidden, hide parent
     const menuInventory = document.getElementById('menu-inventory');
     if (menuInventory) {
-        const subItems = ['sec-greenbean', 'sec-bulk-roasted', 'sec-packed-coffee'];
+        const subItems = ['sec-greenbean', 'sec-bulk-roasted', 'sec-packed-coffee', 'sec-other-items'];
         const anyVisible = subItems.some(sec => {
             const perm = SECTION_PERMISSIONS[sec];
             return perm ? hasPermission(perm) : true;

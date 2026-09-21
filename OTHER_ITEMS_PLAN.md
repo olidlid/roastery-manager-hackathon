@@ -386,7 +386,11 @@ Daftarkan di `index.html` **setelah** `js/sales.js` dan **sebelum** `js/app.js`:
 ### 6.2 index.html
 
 1. **Submenu**: satu `<li class="menu-subitem" data-target="sec-other-items" id="subitem-other-items">` di dalam `<ul id="submenu-inventory">` (baris ~264), setelah `subitem-packed-coffee`. Ikon: tag (`icon-tag`) — beda dari `icon-archive` yang sudah dipakai Packed Coffee/Packing.
-2. **Section**: `<section id="sec-other-items" class="page-section hidden">` dengan dua tab. Pakai pola tab `data-target` + `.tab-btn` seperti `sec-packing` (baris 1132-1143), bukan pola `data-tab` milik `sec-greenbean` — `sec-packing` lebih baru dan tab-nya lebih sedikit.
+2. **Section**: `<section id="sec-other-items" class="page-section hidden">` dengan dua tab.
+
+   **KOREKSI (ditemukan saat mengerjakan Fase 1, 2026-09-21):** rekomendasi awal di sini (pakai pola `sec-packing`: `data-target` + `.packing-tab-content`) **TERNYATA SALAH DAN TIDAK DIPAKAI.** `loadPackingSection()` (js/packing.js:9-53) melakukan `document.querySelectorAll('.packing-tab-content').forEach(c => c.classList.add('hidden'))` — **global ke seluruh dokumen**, bukan diruang-lingkupkan ke `#sec-packing`. Selama `.packing-tab-content` cuma dipakai satu section (Packing sendiri), ini tidak masalah. Begitu section KEDUA (`sec-other-items`) ikut memakai class yang sama, mengklik tab di Other Items akan ikut menyembunyikan seluruh tab-content milik Packing di tempat lain, dan sebaliknya.
+
+   Section ini akhirnya memakai pola `sec-purchasing` (index.html ~baris 1622-1630): `data-tab` + `.tab-content`, dengan wiring `.tab-btn`/`.tab-content` yang di-*scope* ke `#sec-other-items` saja (lihat blok `otherItemsTabBtns`/`otherItemsTabContents` di `js/otheritems.js`, meniru persis blok `purchasingTabBtns` di js/app.js:1158-1178) — bukan blok generik yang dipasang di app.js, tapi disatukan ke `js/otheritems.js` supaya seluruh logika section ini tetap di satu file. Pola ini aman dipakai section manapun karena setiap section punya query yang di-scope ke id-nya sendiri; `.packing-tab-content` TIDAK aman dipakai section kedua manapun sampai `loadPackingSection()` ikut diperbaiki men-scope query-nya.
 3. **Header tabel daftar item harus bisa difilter** (permintaan user 2026-09-20, lihat mockup layar 1): kolom Item name, Unit, dan Updated memakai pola yang sudah ada di aplikasi — `<th class="filterable-th" data-col="N">` berisi `<div class="th-content"><span>Label</span><button class="filter-trigger-btn">…corong…</button></div>`. Salin persis bentuknya dari tabel Packing Records (index.html ~baris 1203).
 
    Filternya **tidak perlu kode baru**: `initTableFilters()` (js/app.js:2557) sudah memasang listener global yang menangani semua tabel dengan markup itu. **Tapi ada syaratnya** — handler-nya melakukan `th.closest('.tab-content') || th.closest('.packing-tab-content')` lalu `if (!tabContent) return;` (js/app.js:2566-2568), dan memakai `id` elemen itu sebagai kunci penyimpanan filter. Jadi pembungkus tab di section ini **wajib** memakai salah satu dari dua class tersebut dan punya `id` unik (mis. `<div id="tab-oi-list" class="packing-tab-content">`). Kalau dipakai nama class karangan sendiri, tombol corongnya akan tampil tapi diam saja saat diklik — tanpa error apa pun.
@@ -501,7 +505,7 @@ Empat hal yang ditemukan saat mereview SQL Fase 0. Dua sudah diperbaiki di migra
 2. *Backfill permission lewat begitu saja kalau `permissions` NULL.* `NULL || jsonb_build_object(...)` menghasilkan NULL, jadi role dengan permissions NULL tidak akan mendapat satu pun key baru. Sekarang dibungkus `COALESCE(permissions, '{}'::jsonb)`.
 
 **Belum ditangani — kerjakan di fasenya:**
-3. **`updated_at` tidak ikut terbarui saat edit non-stok (Fase 1).** Ketiga RPC menyetel `updated_at = NOW()`, tapi `saveData('other_items', ...)` untuk ubah nama/unit/min_stock tidak. Padahal kolom **Updated** ada di tabel daftar item (mockup layar 1). Pilih salah satu: kirim `updated_at` dari aplikasi saat menyimpan, atau pasang trigger `BEFORE UPDATE` yang mengisinya. Jangan dibiarkan — kolomnya akan terlihat basi dan tidak ada yang tahu kenapa.
+3. ~~`updated_at` tidak ikut terbarui saat edit non-stok.~~ **SELESAI, Fase 1** — `openOtherItemFormModal()` (js/otheritems.js) mengirim `updated_at: new Date().toISOString()` secara eksplisit di setiap `saveData('other_items', ...)`, jadi kolom Updated benar baik lewat edit biasa maupun lewat RPC (yang sudah menyetelnya sendiri).
 4. **Menghapus item yang masih dipesan bikin baris order yatim (Fase 4/5).** `request_order_other_items.other_item_id` memakai `ON DELETE SET NULL`. Nama item tetap terbaca karena disnapshot, tapi saat checkout tidak ada `other_item_id` untuk dipanggil ke `other_item_consume` — barisnya diam-diam tidak bisa dipenuhi. Tangani salah satu: tolak hapus item yang masih punya baris order belum ter-dispatch (pola `prevent_packed_coffee_delete_with_stock`), atau tangani `other_item_id IS NULL` secara eksplisit di checkout dan tandai barisnya unfulfilled.
 
 **Catatan kecil yang cukup diketahui, bukan bug:**
@@ -515,8 +519,8 @@ Empat hal yang ditemukan saat mereview SQL Fase 0. Dua sudah diperbaiki di migra
 
 | Fase | Isi | Selesai bila |
 |---|---|---|
-| 0 | Migrasi SQL + backfill permission + seed `MOCK_DB` + update `supabase_schema.sql` + `NOTIFY pgrst, 'reload schema';` | Tabel & RPC ada di produksi, `custom_roles` sudah punya 6 key baru |
-| 1 | Section + submenu + tab + daftar item + form Add/Edit + Delete | Item bisa dibuat, diubah, dihapus; badge Low muncul sesuai `min_stock` |
+| 0 | Migrasi SQL + backfill permission + seed `MOCK_DB` + update `supabase_schema.sql` + `NOTIFY pgrst, 'reload schema';` | **SELESAI 2026-09-21**, commit `14dc175` — tabel & RPC ada di produksi, `custom_roles` sudah punya 6 key baru (produksi ternyata punya 11 role, bukan 6 — lihat §5.3) |
+| 1 | Section + submenu + tab + daftar item + form Add/Edit + Delete | **SELESAI 2026-09-21** — item bisa dibuat, diubah, dihapus; badge Low muncul sesuai `min_stock`; `updated_at` benar (§10b #3). Belum diverifikasi live di browser (tidak ada kredensial login saat dikerjakan) — verifikasi manual sebelum dianggap final |
 | 2 | Add Stock + modal Stock History | Stok bertambah lewat RPC, tiap baris ledger menampilkan saldo yang benar |
 | 3 | Tab Stock Release + modal Release | Release memotong stok dan muncul di tab & di history item |
 | 4 | Sales Request: picker + simpan `request_order_other_items` + tampil di Leader, kartu Order Requests, cetakan | Order campuran bisa dibuat dan terbaca utuh di semua layar |

@@ -508,6 +508,7 @@ const PAGE_METADATA = {
     'sec-greenbean': { title: 'Greenbean Inventory', subtitle: 'Manage green coffee bean warehouse stocks and incoming arrivals' },
     'sec-bulk-roasted': { title: 'Bulk Roasted Coffee', subtitle: 'View available bulk roasted coffee ready for packaging' },
     'sec-packed-coffee': { title: 'Packed Coffee Stock', subtitle: 'View retail-packed coffee inventory grouped by coffee and size' },
+    'sec-other-items': { title: 'Other Items', subtitle: 'Goods bought from outside and resold — they never pass through roasting or packing' },
     'sec-roasting': { title: 'Production', subtitle: 'Schedule roasting production runs, log batches, and manage plans' },
     'sec-packing': { title: 'Packaging & Retail Inventory', subtitle: 'Transfer bulk roasted beans to retail-size retail packaging' },
     'sec-users': { title: 'User Account Management', subtitle: 'Manage operator details, roles, and warehouse access rights' },
@@ -977,7 +978,7 @@ function navigateTo(sectionId) {
     });
 
     // Handle submenu active state
-    const inventorySections = ['sec-greenbean', 'sec-bulk-roasted', 'sec-packed-coffee'];
+    const inventorySections = ['sec-greenbean', 'sec-bulk-roasted', 'sec-packed-coffee', 'sec-other-items'];
     const menuInventoryEl = document.getElementById('menu-inventory');
     if (menuInventoryEl) {
         if (inventorySections.includes(sectionId)) {
@@ -1275,6 +1276,9 @@ async function loadSectionData(sectionId) {
             break;
         case 'sec-packed-coffee':
             await loadPackedCoffeeSection();
+            break;
+        case 'sec-other-items':
+            await loadOtherItemsSection();
             break;
         case 'sec-packing':
             // loadPackingSection() always (re)builds the Daily Packing form

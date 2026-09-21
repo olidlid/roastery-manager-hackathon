@@ -274,6 +274,10 @@
                         <i class="icon-archive"></i>
                         <span data-i18n="nav_inv_packed">Packed Coffee</span>
                     </li>
+                    <li class="menu-subitem" data-target="sec-other-items" id="subitem-other-items">
+                        <i class="icon-tag"></i>
+                        <span data-i18n="nav_inv_other_items">Other Items</span>
+                    </li>
                 </ul>
                 <li class="menu-item" data-target="sec-roasting">
                     <i class="icon-flame"></i>
@@ -788,6 +792,96 @@
                                 <!-- Dynamic rows -->
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- SECTION: OTHER ITEMS (OTHER_ITEMS_PLAN.md) -->
+            <!-- Goods bought from outside and resold as-is — no lot/FIFO/expiry, -->
+            <!-- one running stock_qty per item. Two tabs: Item List (this phase) -->
+            <!-- and Stock Release (later phase — placeholder card for now). -->
+            <!-- ========================================== -->
+            <section id="sec-other-items" class="page-section hidden">
+                <div class="tab-container">
+                    <div class="tab-headers">
+                        <button class="tab-btn active" data-tab="tab-oi-list" data-i18n="tab_oi_list">Item List</button>
+                        <button class="tab-btn" data-tab="tab-oi-release" data-i18n="tab_oi_release">Stock Release</button>
+                    </div>
+
+                    <div id="tab-oi-list" class="tab-content">
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 12px; flex-wrap: wrap;">
+                                <div>
+                                    <h3 class="card-title" style="margin-bottom: 4px;" data-i18n="oi_list_title">Other Items</h3>
+                                    <p style="font-size: 0.82rem; color: var(--text-muted); margin: 0;" data-i18n="oi_list_subtitle">Goods bought from outside and resold — they never pass through roasting or packing.</p>
+                                </div>
+                                <button id="btn-oi-add-item" class="btn btn-primary btn-sm" data-i18n="btn_oi_add_item">
+                                    <i class="icon-plus"></i> Add Item
+                                </button>
+                            </div>
+
+                            <div class="metrics-grid" style="margin-bottom: 20px;">
+                                <div class="card metric-card">
+                                    <div class="metric-icon-box primary">
+                                        <i class="icon-tag"></i>
+                                    </div>
+                                    <div class="metric-info">
+                                        <span id="stat-oi-items" class="metric-value">0</span>
+                                        <span class="metric-label" data-i18n="stat_oi_items">Items</span>
+                                    </div>
+                                </div>
+                                <div class="card metric-card">
+                                    <div class="metric-icon-box warning">
+                                        <i class="icon-alert-triangle"></i>
+                                    </div>
+                                    <div class="metric-info">
+                                        <span id="stat-oi-low" class="metric-value">0</span>
+                                        <span class="metric-label" data-i18n="stat_oi_low">Low Stock</span>
+                                    </div>
+                                </div>
+                                <div class="card metric-card">
+                                    <div class="metric-icon-box danger">
+                                        <i class="icon-package-x"></i>
+                                    </div>
+                                    <div class="metric-info">
+                                        <span id="stat-oi-out" class="metric-value">0</span>
+                                        <span class="metric-label" data-i18n="stat_oi_out">Out of Stock</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="table-container">
+                                <table id="oi-items-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="filterable-th" data-col="0">
+                                                <div class="th-content"><span data-i18n="col_oi_name">Item Name</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th class="filterable-th" data-col="1">
+                                                <div class="th-content"><span data-i18n="col_oi_unit">Unit</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th data-i18n="lbl_stock">Stock</th>
+                                            <th data-i18n="col_oi_min">Min</th>
+                                            <th class="filterable-th" data-col="4">
+                                                <div class="th-content"><span data-i18n="col_oi_updated">Updated</span><button type="button" class="filter-trigger-btn"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button></div>
+                                            </th>
+                                            <th style="width: 110px;" data-i18n="col_action">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="oi-items-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="tab-oi-release" class="tab-content hidden">
+                        <div class="card">
+                            <h3 class="card-title" data-i18n="oi_release_title">Stock Release</h3>
+                            <p style="font-size: 0.85rem; color: var(--text-muted);" data-i18n="oi_release_coming_soon">Coming soon.</p>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -2930,19 +3024,20 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=75"></script>
+    <script src="js/translations.js?v=76"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=4"></script>
-    <script src="js/auth.js?v=17"></script>
+    <script src="js/auth.js?v=18"></script>
     <script src="js/greenbean.js?v=22"></script>
     <script src="js/roasting.js?v=44"></script>
     <script src="js/packing.js?v=139"></script>
     <script src="js/sales.js?v=60"></script>
+    <script src="js/otheritems.js?v=1"></script>
     <script src="js/settings.js?v=27"></script>
     <script src="js/tracking.js?v=8"></script>
     <script src="js/purchasing.js?v=3"></script>
-    <script src="js/app.js?v=119"></script>
+    <script src="js/app.js?v=120"></script>
 </body>
 </html>
