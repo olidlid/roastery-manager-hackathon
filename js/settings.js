@@ -316,6 +316,17 @@ const PERMISSION_GROUPS = [
         { key: 'packed_edit', label: 'Edit' },
         { key: 'packed_delete', label: 'Delete' }
     ]},
+    // OTHER_ITEMS_PLAN.md §5: stock for goods bought from outside and resold
+    // as-is (not produced by this roastery) — filters, cups, merchandise.
+    // Its own section under the Inventory dropdown, not a Packing tab.
+    { label: '🏷️ Other Items', keys: [
+        { key: 'other_items_view', label: 'View' },
+        { key: 'other_items_add', label: 'Add Item' },
+        { key: 'other_items_edit', label: 'Edit Item / Correct Stock' },
+        { key: 'other_items_delete', label: 'Delete Item' },
+        { key: 'other_items_stock_in', label: 'Add Stock (goods in)' },
+        { key: 'other_items_release', label: 'Stock Release (non-sales goods out)' }
+    ]},
     { label: '🌿 Greenbean — Arrival', keys: [
         { key: 'greenbean_arrival_view', label: 'View' },
         { key: 'greenbean_arrival_add', label: 'Add Lot' },

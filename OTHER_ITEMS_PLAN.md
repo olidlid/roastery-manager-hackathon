@@ -128,14 +128,21 @@ CREATE OR REPLACE FUNCTION public.log_other_item_movement() RETURNS TRIGGER AS $
 DECLARE v_delta INTEGER;
 BEGIN
     IF TG_OP = 'DELETE' THEN
+        -- DELETE biasa tidak pernah mengisi mv_*, jadi isinya sisa RPC
+        -- terakhir. Membacanya di sini membuat penghapusan tercatat sebagai
+        -- mis. operation='stock_in' berdelta negatif, atas nama orang yang
+        -- terakhir menambah stok (§10b temuan #1). Jadi cabang ini
+        -- mengabaikan mv_* sepenuhnya. Untuk penghapusan yang ber-atribusi,
+        -- aplikasi memanggil other_item_set_qty(id, 0, 'item_deleted', ...)
+        -- LEBIH DULU; stok sudah 0 sehingga cabang ini tidak menulis apa pun.
         IF COALESCE(OLD.stock_qty, 0) <> 0 THEN
             INSERT INTO public.other_item_movements (
                 other_item_id, item_name, unit, movement_date,
                 delta_qty, balance_after, operation, category,
                 ref_table, ref_id, reason, performed_by)
-            VALUES (OLD.id, OLD.name, OLD.unit, COALESCE(OLD.mv_date, CURRENT_DATE),
-                -OLD.stock_qty, 0, COALESCE(OLD.mv_operation, 'item_deleted'), OLD.mv_category,
-                OLD.mv_ref_table, OLD.mv_ref_id, OLD.mv_reason, OLD.mv_user);
+            VALUES (OLD.id, OLD.name, OLD.unit, CURRENT_DATE,
+                -OLD.stock_qty, 0, 'item_deleted', NULL,
+                NULL, NULL, NULL, NULL);
         END IF;
         RETURN OLD;
     END IF;
@@ -313,9 +320,9 @@ Jalankan di SQL Editor bersamaan dengan migrasi:
 
 ```sql
 UPDATE public.custom_roles
-SET permissions = permissions
+SET permissions = COALESCE(permissions, '{}'::jsonb)   -- NULL || x = NULL (§10b #2)
     || jsonb_build_object(
-        'other_items_view',     name IN ('Developer','Admin','Production Leader','Packing Team','Sales Agent'),
+        'other_items_view',     name IN ('Developer','Admin','Production Leader','Packing Team','Sales Agent','Sales Manager','Retail Sales','Supermarket Sales'),
         'other_items_add',      name IN ('Developer','Admin','Production Leader'),
         'other_items_edit',     name IN ('Developer','Admin','Production Leader'),
         'other_items_delete',   name IN ('Developer','Admin','Production Leader'),
@@ -324,7 +331,19 @@ SET permissions = permissions
     );
 ```
 
-Catatan: di produksi ada role kustom di luar enam default (mis. "Sales Manager", "Retail Sales", "Supermarket Sales", "admin2"). Query di atas memberi mereka semua `false` — aman secara default. Tanyakan user apakah "Sales Manager" perlu `other_items_view`; kalau ya, tambahkan namanya di baris `other_items_view`.
+**Migrasi DIJALANKAN di produksi 2026-09-21** — backfill sudah masuk. Daftar role yang SEBENARNYA ada di produksi (11, hasil query setelah backfill):
+
+| Role | other_items_view | kelola |
+|---|---|---|
+| Developer, Admin, Production Leader | ✅ | ✅ |
+| Packing Team, Retail Sales, Sales Manager, Supermarket Sales | ✅ | ❌ |
+| Roaster, admin2, **Procurement**, **Sale 101** | ❌ | ❌ |
+
+Dua hal yang berbeda dari asumsi awal plan ini:
+- **Role "Sales Agent" TIDAK ADA di produksi.** Ia hanya hidup di seed `MOCK_DB` (dipakai kalau `custom_roles` kosong di instalasi baru). Jadi baris "Sales Agent" di matriks §5.2 tidak berpengaruh apa pun terhadap produksi sekarang — yang nyata adalah Retail Sales / Supermarket Sales / Sale 101.
+- **Ada role "Procurement" dan "Sale 101"** yang tidak terpikir saat menulis plan. Procurement adalah role yang membeli barang-barang ini dari luar, jadi kemungkinan besar ia yang butuh `other_items_stock_in`. **Keputusan user 2026-09-21: keduanya sengaja dibiarkan `false`** — admin yang akan menentukan sendiri lewat Settings → Role Management setelah fiturnya live. Jangan memberikannya lewat SQL tanpa diminta.
+
+**Keputusan user 2026-09-21:** role kustom "Sales Manager", "Retail Sales", dan "Supermarket Sales" ikut diberi `other_items_view` — mereka yang menjual barang ini dan perlu melihat sisa stok, level akses yang sama dengan Sales Agent (view saja, tidak bisa kelola). Role kustom lain di luar itu (mis. "admin2") tetap dapat `false` di semua enam key — aman secara default, bisa diaktifkan manual lewat Settings → Role Management kalau perlu.
 
 Selain itu, perbarui juga seed `MOCK_DB.custom_roles` di `js/app.js:137` dengan enam key yang sama, supaya instalasi baru (tabel `custom_roles` kosong) ikut membawanya.
 
@@ -384,7 +403,9 @@ Daftarkan di `index.html` **setelah** `js/sales.js` dan **sebelum** `js/app.js`:
 
 ### 6.4 js/app.js
 
-Tambah `case 'sec-other-items':` di `loadSectionData()` (js/app.js:1244, cari `case 'sec-packed-coffee':` di dalamnya) yang memanggil `loadOtherItemsSection()`, plus penanganan tab aktif seperti `sec-packing`.
+- Tambah `case 'sec-other-items':` di `loadSectionData()` (js/app.js:1244, cari `case 'sec-packed-coffee':` di dalamnya) yang memanggil `loadOtherItemsSection()`, plus penanganan tab aktif seperti `sec-packing`.
+- **`navigateTo()` js/app.js:980 punya array `inventorySections` sendiri** (`['sec-greenbean', 'sec-bulk-roasted', 'sec-packed-coffee']`), terpisah dari array `subItems` di `applyMenuVisibility()` (js/auth.js:427) — **tempat ketiga** yang meng-hardcode daftar section Inventory, ditemukan 2026-09-20 saat mengerjakan Fase 0. Array ini menentukan apakah menu "Inventory" ikut ter-highlight (class `active`) saat section anaknya dibuka. Tambahkan `'sec-other-items'` ke sini juga — kalau lupa, submenu Other Items tetap bisa dibuka tapi menu induk "Inventory" tidak ikut menyala saat sedang di section itu (bug kosmetik, bukan blocker, tapi tetap harus diperbaiki dalam PR yang sama).
+- `PAGE_METADATA` (js/app.js:506) tidak wajib diisi — kalau `sec-other-items` tidak ada entrinya, `navigateTo()` otomatis jatuh ke key i18n `header_title_other-items`/`header_subtitle_other-items` (lihat §9 untuk aturan i18n). Boleh diisi langsung di `PAGE_METADATA` sebagai jalan pintas kalau tidak ingin menambah key i18n untuk judul halaman.
 
 ---
 
@@ -471,6 +492,25 @@ Awalan key yang konsisten: `oi_*` (mis. `oi_title`, `oi_tab_list`, `oi_tab_relea
 
 ---
 
+## 10b. Temuan review Fase 0 (2026-09-21) — wajib dibaca saat Fase 1/4/5
+
+Empat hal yang ditemukan saat mereview SQL Fase 0. Dua sudah diperbaiki di migrasi; dua sisanya belum punya kode dan harus ditangani di fase yang disebut.
+
+**Sudah diperbaiki di `database/other_items_migration.sql`:**
+1. *Trigger salah melabeli penghapusan.* Cabang `TG_OP='DELETE'` semula memakai `COALESCE(OLD.mv_operation, 'item_deleted')`. Karena DELETE biasa tidak pernah mengisi `mv_*`, isinya adalah sisa dari RPC terakhir — sehingga menghapus item yang pernah diisi stok akan tercatat sebagai `stock_in` dengan delta negatif, atas nama orang yang terakhir menambah stok. Sekarang cabang itu mengabaikan `mv_*` dan menulis `'item_deleted'` apa adanya.
+2. *Backfill permission lewat begitu saja kalau `permissions` NULL.* `NULL || jsonb_build_object(...)` menghasilkan NULL, jadi role dengan permissions NULL tidak akan mendapat satu pun key baru. Sekarang dibungkus `COALESCE(permissions, '{}'::jsonb)`.
+
+**Belum ditangani — kerjakan di fasenya:**
+3. **`updated_at` tidak ikut terbarui saat edit non-stok (Fase 1).** Ketiga RPC menyetel `updated_at = NOW()`, tapi `saveData('other_items', ...)` untuk ubah nama/unit/min_stock tidak. Padahal kolom **Updated** ada di tabel daftar item (mockup layar 1). Pilih salah satu: kirim `updated_at` dari aplikasi saat menyimpan, atau pasang trigger `BEFORE UPDATE` yang mengisinya. Jangan dibiarkan — kolomnya akan terlihat basi dan tidak ada yang tahu kenapa.
+4. **Menghapus item yang masih dipesan bikin baris order yatim (Fase 4/5).** `request_order_other_items.other_item_id` memakai `ON DELETE SET NULL`. Nama item tetap terbaca karena disnapshot, tapi saat checkout tidak ada `other_item_id` untuk dipanggil ke `other_item_consume` — barisnya diam-diam tidak bisa dipenuhi. Tangani salah satu: tolak hapus item yang masih punya baris order belum ter-dispatch (pola `prevent_packed_coffee_delete_with_stock`), atau tangani `other_item_id IS NULL` secara eksplisit di checkout dan tandai barisnya unfulfilled.
+
+**Catatan kecil yang cukup diketahui, bukan bug:**
+- Ketiga RPC tidak seragam nilai kembaliannya: `other_item_stock_in` dan `other_item_set_qty` mengembalikan **stok baru**, sedangkan `other_item_consume` mengembalikan **jumlah yang terambil**. Ini menyalin kontrak `consume_packed_lot`/`refund_packed_lot` yang sudah ada. Jangan tertukar (lihat §7.4).
+- Item yang dibuat dengan stok 0 tidak menghasilkan baris ledger sama sekali (trigger keluar saat `v_delta = 0`), jadi riwayatnya kosong sampai ada pergerakan pertama.
+- `other_items_name_uniq` berlaku untuk semua baris termasuk yang `is_active = false`, jadi nama item yang dinonaktifkan tetap terpakai dan tidak bisa dipakai ulang.
+
+---
+
 ## 11. Fase pengerjaan
 
 | Fase | Isi | Selesai bila |
@@ -491,7 +531,7 @@ Setiap fase: `node test.js` harus lolos, dan `?v=` file yang diubah dinaikkan se
 
 1. **Jangan pakai kata "retail"** untuk fitur ini — `Retail` sudah berarti kategori customer (§3).
 2. **Backfill permission itu wajib, bukan opsional** (§5.3). Pelajaran dari `purchase_request_view_own`: key yang hanya ada di kode tapi tidak ada di baris `custom_roles` = fitur tak terlihat, dan role yang dibuat setelah rilis tidak otomatis mendapatkannya.
-3. **`applyMenuVisibility()` js/auth.js:427** punya daftar subitem yang di-hardcode. Lupa menambahkannya = menu Inventory hilang untuk role yang hanya punya akses ke section ini (§6.3).
+3. **Ada TIGA tempat berbeda yang meng-hardcode daftar section Inventory**, bukan satu: `applyMenuVisibility()` js/auth.js:427 (`subItems`), `getFirstAllowedSection()` js/auth.js:374, dan `navigateTo()` js/app.js:980 (`inventorySections`). Ketiganya harus ditambah `'sec-other-items'`. Lupa yang pertama = menu Inventory hilang total untuk role yang hanya punya akses ke section ini; lupa yang ketiga = menu induk "Inventory" tidak ikut menyala saat section ini dibuka (§6.3, §6.4).
 4. **`NOTIFY pgrst, 'reload schema';`** setelah migrasi — tanpa ini PostgREST masih memakai cache skema lama dan REST API menolak kolom yang jelas-jelas sudah ada. Kadang perlu dijalankan dua kali.
 5. **Jangan pernah menulis `stock_qty` langsung.** Semua lewat RPC, kalau tidak ledger akan melenceng dari stok dan tidak ada yang tahu sampai ada selisih (§4.4).
 6. **Kreditkan order dengan angka kembalian RPC**, bukan angka yang diminta (§7.4).

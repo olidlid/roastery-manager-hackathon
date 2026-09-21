@@ -1599,3 +1599,230 @@ ALTER TABLE public.purchase_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.purchase_request_items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY full_access ON public.purchase_requests FOR ALL USING (true);
 CREATE POLICY full_access ON public.purchase_request_items FOR ALL USING (true);
+
+-- ============================================================================
+-- Other Items (OTHER_ITEMS_PLAN.md, applied 2026-09-20) — stock for goods
+-- bought from outside and resold as-is (paper filters, cups, merchandise).
+-- Never touched by roasting/packing: no lot tracking, no FIFO, no expiry —
+-- one item carries one running stock_qty, with every change written to
+-- other_item_movements by a trigger (mv_* columns mirror
+-- packed_coffee_lots' pattern, see log_packed_stock_movement above).
+--
+-- Named "Other Items", not "Retail" — Retail already means a customer
+-- category in this app (customers.type, customer_cat_retail permission,
+-- RTL- code prefix, "Retail Sales" custom role).
+--
+-- No price column, no code/SKU column (user decisions 2026-09-20):
+-- request_order_items for coffee carries no price either, and the handful
+-- of items this manages are identified by name alone — other_items.name is
+-- UNIQUE (case-insensitive) and used as the item's identity everywhere.
+--
+-- request_order_other_items is a SEPARATE order-line table, not a new
+-- column on request_order_items: js/leader.js renders every line as
+-- `${item.bag_size_g}g (${item.quantity_requested} bags)`, and the whole
+-- checkout/packing pipeline assumes a line is coffee with a lot/machine/
+-- size. See OTHER_ITEMS_PLAN.md §4.6 for the full reasoning.
+-- ============================================================================
+
+-- 33. Other items — master item + running stock
+CREATE TABLE IF NOT EXISTS public.other_items (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT 'pcs',           -- pcs | box | roll | pack
+    stock_qty INTEGER NOT NULL DEFAULT 0,       -- the ONLY source of truth for stock
+    min_stock INTEGER NOT NULL DEFAULT 0,       -- threshold for the "Low" badge
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Movement context the ledger trigger reads (mirrors packed_coffee_lots.mv_*).
+    mv_operation TEXT,
+    mv_category  TEXT,
+    mv_ref_table TEXT,
+    mv_ref_id    INTEGER,
+    mv_reason    TEXT,
+    mv_user      TEXT,
+    mv_date      DATE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS other_items_name_uniq
+ON public.other_items (lower(name));
+
+-- 34. Other item stock movements (ledger). The Stock Release tab is a VIEW
+-- of this table filtered to operation='release' — not its own table, and
+-- NOT a reuse of stock_releases/stock_release_items (those are lot-shaped
+-- for coffee: packed_coffee_lot_id, coffee_name, bag_size_g).
+CREATE TABLE IF NOT EXISTS public.other_item_movements (
+    id BIGSERIAL PRIMARY KEY,
+    other_item_id INTEGER,           -- INTENTIONALLY no FK — history must
+                                      -- survive the item being deleted
+    item_name TEXT,                  -- snapshot
+    unit TEXT,                       -- snapshot
+    movement_date DATE NOT NULL DEFAULT CURRENT_DATE,  -- date the USER picked
+    delta_qty INTEGER NOT NULL,
+    balance_after INTEGER,
+    operation TEXT,                  -- item_created | stock_in | dispatch | release
+                                      -- | adjustment | undo | item_deleted
+    category TEXT,                   -- only for operation='release':
+                                      -- Sample | Internal | Marketing | Other
+    ref_table TEXT,                  -- 'request_order_other_items' on dispatch
+    ref_id INTEGER,
+    reason TEXT,
+    performed_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS oim_item_idx    ON public.other_item_movements (other_item_id, id);
+CREATE INDEX IF NOT EXISTS oim_created_idx ON public.other_item_movements (created_at);
+CREATE INDEX IF NOT EXISTS oim_op_idx      ON public.other_item_movements (operation, id);
+
+CREATE OR REPLACE FUNCTION public.log_other_item_movement() RETURNS TRIGGER AS $$
+DECLARE v_delta INTEGER;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        -- A plain DELETE never sets the mv_* columns, so whatever is sitting
+        -- in them is LEFTOVER from the last RPC call on this row. Reading
+        -- them here would file the deletion as e.g. operation='stock_in'
+        -- with a negative delta, crediting it to whoever last added stock.
+        -- So this branch ignores mv_* entirely and states the plain fact.
+        -- For an attributed deletion, the app calls
+        -- other_item_set_qty(id, 0, 'item_deleted', ..., p_reason, p_user)
+        -- FIRST; stock is then already 0 and this branch no-ops.
+        IF COALESCE(OLD.stock_qty, 0) <> 0 THEN
+            INSERT INTO public.other_item_movements (
+                other_item_id, item_name, unit, movement_date,
+                delta_qty, balance_after, operation, category,
+                ref_table, ref_id, reason, performed_by)
+            VALUES (OLD.id, OLD.name, OLD.unit, CURRENT_DATE,
+                -OLD.stock_qty, 0, 'item_deleted', NULL,
+                NULL, NULL, NULL, NULL);
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    IF TG_OP = 'INSERT' THEN
+        v_delta := COALESCE(NEW.stock_qty, 0);
+    ELSE
+        v_delta := COALESCE(NEW.stock_qty, 0) - COALESCE(OLD.stock_qty, 0);
+    END IF;
+
+    IF v_delta = 0 THEN RETURN NEW; END IF;
+
+    INSERT INTO public.other_item_movements (
+        other_item_id, item_name, unit, movement_date,
+        delta_qty, balance_after, operation, category,
+        ref_table, ref_id, reason, performed_by)
+    VALUES (NEW.id, NEW.name, NEW.unit, COALESCE(NEW.mv_date, CURRENT_DATE),
+        v_delta, NEW.stock_qty,
+        COALESCE(NEW.mv_operation, CASE WHEN TG_OP = 'INSERT' THEN 'item_created' ELSE 'unspecified' END),
+        NEW.mv_category, NEW.mv_ref_table, NEW.mv_ref_id, NEW.mv_reason, NEW.mv_user);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SET search_path = public;
+
+DROP TRIGGER IF EXISTS trg_log_other_item_movement ON public.other_items;
+CREATE TRIGGER trg_log_other_item_movement
+AFTER INSERT OR UPDATE OR DELETE ON public.other_items
+FOR EACH ROW EXECUTE FUNCTION log_other_item_movement();
+
+-- RPCs — every stock change MUST go through one of these three; the app
+-- must never write other_items.stock_qty directly via saveData().
+CREATE OR REPLACE FUNCTION public.other_item_stock_in(
+    p_item_id INTEGER, p_qty INTEGER, p_date DATE DEFAULT NULL,
+    p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+) RETURNS INTEGER LANGUAGE sql SET search_path = public AS $$
+    UPDATE public.other_items
+    SET stock_qty   = stock_qty + GREATEST(p_qty, 0),
+        updated_at  = NOW(),
+        mv_operation='stock_in', mv_category=NULL,
+        mv_ref_table=NULL, mv_ref_id=NULL,
+        mv_reason=p_reason, mv_user=p_user, mv_date=COALESCE(p_date, CURRENT_DATE)
+    WHERE id = p_item_id
+    RETURNING stock_qty;
+$$;
+
+CREATE OR REPLACE FUNCTION public.other_item_consume(
+    p_item_id INTEGER, p_qty INTEGER,
+    p_operation TEXT DEFAULT 'dispatch', p_category TEXT DEFAULT NULL,
+    p_ref_table TEXT DEFAULT NULL, p_ref_id INTEGER DEFAULT NULL,
+    p_date DATE DEFAULT NULL, p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+) RETURNS INTEGER LANGUAGE sql SET search_path = public AS $$
+    WITH before AS (
+        SELECT stock_qty FROM public.other_items WHERE id = p_item_id FOR UPDATE
+    ), updated AS (
+        UPDATE public.other_items
+        SET stock_qty   = stock_qty - LEAST(stock_qty, GREATEST(p_qty, 0)),
+            updated_at  = NOW(),
+            mv_operation=p_operation, mv_category=p_category,
+            mv_ref_table=p_ref_table, mv_ref_id=p_ref_id,
+            mv_reason=p_reason, mv_user=p_user, mv_date=COALESCE(p_date, CURRENT_DATE)
+        WHERE id = p_item_id
+        RETURNING stock_qty
+    )
+    SELECT COALESCE((SELECT stock_qty FROM before), 0)
+         - COALESCE((SELECT stock_qty FROM updated), 0);
+$$;
+
+CREATE OR REPLACE FUNCTION public.other_item_set_qty(
+    p_item_id INTEGER, p_qty INTEGER,
+    p_operation TEXT DEFAULT 'adjustment',
+    p_ref_table TEXT DEFAULT NULL, p_ref_id INTEGER DEFAULT NULL,
+    p_date DATE DEFAULT NULL, p_reason TEXT DEFAULT NULL, p_user TEXT DEFAULT NULL
+) RETURNS INTEGER LANGUAGE sql SET search_path = public AS $$
+    UPDATE public.other_items
+    SET stock_qty   = GREATEST(0, p_qty),
+        updated_at  = NOW(),
+        mv_operation=COALESCE(p_operation, 'adjustment'), mv_category=NULL,
+        mv_ref_table=p_ref_table, mv_ref_id=p_ref_id,
+        mv_reason=p_reason, mv_user=p_user, mv_date=COALESCE(p_date, CURRENT_DATE)
+    WHERE id = p_item_id
+    RETURNING stock_qty;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.other_item_stock_in(INTEGER, INTEGER, DATE, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.other_item_consume(INTEGER, INTEGER, TEXT, TEXT, TEXT, INTEGER, DATE, TEXT, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.other_item_set_qty(INTEGER, INTEGER, TEXT, TEXT, INTEGER, DATE, TEXT, TEXT) TO anon, authenticated;
+
+-- 35. Request order other items — other-item lines on a Sales Request. No
+-- quantity_prepared: nothing needs preparing, taken off the shelf at checkout.
+CREATE TABLE IF NOT EXISTS public.request_order_other_items (
+    id SERIAL PRIMARY KEY,
+    request_order_id INTEGER REFERENCES public.request_orders(id) ON DELETE CASCADE,
+    other_item_id INTEGER REFERENCES public.other_items(id) ON DELETE SET NULL,
+    item_name TEXT,                              -- snapshot at order creation time
+    unit TEXT,                                   -- snapshot
+    quantity_requested INTEGER NOT NULL DEFAULT 0,
+    quantity_dispatched INTEGER NOT NULL DEFAULT 0,
+    quantity_unfulfilled INTEGER NOT NULL DEFAULT 0,
+    item_status TEXT DEFAULT 'Pending Approval',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS rooi_order_idx ON public.request_order_other_items (request_order_id);
+
+DO $$
+DECLARE t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'other_items','other_item_movements','request_order_other_items' -- applied 2026-09-21
+  ] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);
+    EXECUTE format('CREATE POLICY full_access ON public.%I FOR ALL USING (true) WITH CHECK (true)', t);
+  END LOOP;
+END $$;
+
+-- Deliberately NOT wiring stock_take_freeze_guard onto other_items (see
+-- stock_take_freeze_guard above) — stock opname in this app counts coffee
+-- (green/bulk/packed); freezing other-item stock during a coffee opname
+-- would block sales of filters/cups/merch for no connected reason.
+
+-- NOTE — the 6 other_items_* permission keys need a one-time backfill into
+-- custom_roles.permissions (a role row missing a key reads as false, so the
+-- feature would be invisible to everyone, including Admin). That statement
+-- is DML, not schema, and deliberately lives ONLY in
+-- database/other_items_migration.sql §7 — putting it here would break this
+-- file's promise at the top that running it against production is
+-- non-destructive: it would silently reset those 6 keys on every role,
+-- wiping any later adjustment an admin made in Settings > Role Management.
