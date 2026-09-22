@@ -1278,7 +1278,7 @@ async function loadRoastingPlans() {
                 plan.status = 'Completed';
                 saveData('roasting_plans', plan);
                 syncPlanStatusToOrderItem(plan);
-                if (isSubPlan) tryAssemblePostBlend(plan.parent_plan_id);
+                if (isSubPlan) tryAssemblePostBlend(plan.parent_plan_id).then(problems => { if (problems.length > 0) showStockPartial(problems.join('\n')); });
             }
         }
 
@@ -2232,42 +2232,46 @@ async function deletePlan(id) {
     }
 }
 
+// Stock-path audit (2026-09-22): all-or-nothing. Order: take the output
+// back out of bulk (if it was ever added), return the green bean, then
+// delete the row — each step undoing the earlier ones if it fails. The old
+// version logged every failure to the console and deleted the batch anyway.
+let _deletingBatch = false;
 async function deleteBatch(id) {
-    if (await showDeleteConfirmModal('this roasting batch log')) {
-        const { data: batches } = await fetchData('roast_batches');
-        const batch = batches.find(b => b.id === id);
+    if (_deletingBatch) return;
+    if (!(await showDeleteConfirmModal('this roasting batch log'))) return;
+    if (!(await ensureNoStockOpname())) return;
+    _deletingBatch = true;
+    const sb = window.supabaseClient;
+    const userName = (currentUser && currentUser.name) || null;
+    const lock = lockProcessingScreen(stT('roast_deleting', 'Deleting batch…'));
+    let outcome;
+    try {
+        outcome = await (async () => {
+            const problems = [];
+            const { data: batch, error: readErr } = await sb.from('roast_batches').select('*').eq('id', id).maybeSingle();
+            if (readErr) return { failure: readErr.message };
+            if (!batch) return { failure: stT('roast_delete_gone', 'This batch no longer exists (already deleted?).') };
 
-        if (batch) {
-            // V2 1B: restore stock via the lots this batch actually drew from
-            // (green_coffee.stock_kg is DERIVED — see the comment above
-            // consumeGreenCoffeeLotsFifo). Must run before the roast_batches
-            // delete below, since roast_batch_green_lots cascades on it.
-            await refundGreenCoffeeLotsForBatch(id);
-
-            // Refund/deduct from bulk_roasted_coffee if it was already approved/Success
+            // 1. Output back out of bulk, if it was ever added.
+            let bulkTaken = null; // { bulkId, kg } for undo
             if (batch.qc_status === 'Success') {
                 // TEST_BATCH_CARD_PLAN.md follow-up: "Approve & Combine" can land this
                 // batch's output in a bulk row with a DIFFERENT machine/date than the
-                // batch itself (the leader's chosen target) — the old coffee+machine+
-                // date guess below only ever matches the auto-pool case, so it would
-                // silently find nothing for a combined batch and leave that kg stuck
-                // in the other lot forever. bulk_stock_movements always has the real
-                // answer: every roast-sourced add (auto-pool OR combine) logs
-                // ref_table='roast_batches', ref_id=<this batch> — look that up
-                // directly instead of re-deriving a guess.
+                // batch itself — bulk_stock_movements always has the real answer:
+                // every roast-sourced add (auto-pool OR combine) logs
+                // ref_table='roast_batches', ref_id=<this batch>.
                 let bulkId = null;
-                const { data: movement } = await window.supabaseClient
+                const { data: movement } = await sb
                     .from('bulk_stock_movements')
                     .select('bulk_roasted_coffee_id')
                     .eq('ref_table', 'roast_batches').eq('ref_id', id).eq('operation', 'roast')
                     .order('id', { ascending: false }).limit(1).maybeSingle();
                 if (movement) bulkId = movement.bulk_roasted_coffee_id;
-
                 if (!bulkId) {
-                    // Fallback for a row predating this ledger (or a fetch hiccup) —
-                    // the old guess, better than doing nothing.
+                    // Fallback for a row predating the ledger — the old guess.
                     const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-                    const bulkRec = bulkList.find(b =>
+                    const bulkRec = (bulkList || []).find(b =>
                         b.coffee_type === batch.coffee_type &&
                         (batch.coffee_type === 'Single' ? b.single_coffee_id === batch.single_coffee_id : b.blend_recipe_id === batch.blend_recipe_id) &&
                         b.machine_id === batch.machine_id &&
@@ -2275,28 +2279,63 @@ async function deleteBatch(id) {
                     );
                     bulkId = bulkRec ? bulkRec.id : null;
                 }
-
-                if (bulkId) {
-                    // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
-                    const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
-                        p_bulk_id: bulkId, p_kg: parseFloat(batch.output_weight_kg),
+                const outputKg = parseFloat(batch.output_weight_kg) || 0;
+                if (bulkId && outputKg > 0) {
+                    const { data: taken, error: consumeErr } = await sb.rpc('consume_bulk_lot', {
+                        p_bulk_id: bulkId, p_kg: outputKg,
                         p_operation: 'undo', p_ref_table: 'roast_batches', p_ref_id: id,
-                        p_reason: 'Roast batch log deleted', p_user: (currentUser && currentUser.name) || null
+                        p_reason: 'Roast batch log deleted', p_user: userName
                     });
-                    if (consumeErr) console.error('consume_bulk_lot RPC failed:', consumeErr);
+                    if (consumeErr) return { failure: consumeErr.message };
+                    const takenKg = parseFloat(taken) || 0;
+                    bulkTaken = { bulkId, kg: takenKg };
+                    if (takenKg + 0.001 < outputKg) {
+                        problems.push(`Only ${takenKg.toFixed(2)} of ${outputKg.toFixed(2)} kg could be removed from bulk — the rest was already packed or used.`);
+                    }
+                } else if (outputKg > 0) {
+                    problems.push('No bulk row found for this batch — its roasted output was not removed from bulk stock.');
                 }
             }
-        }
-        
-        const { error } = await deleteData('roast_batches', id);
-        if (error) {
-            await showWarningModal(window.t("alert_delete_failed").replace("{msg}", error.message), false);
-        } else {
-            loadRoastingBatches();
-            loadGreenbeanInventory();
-            scheduleDashboardRefresh();
-        }
+            const undoBulk = async () => {
+                if (!bulkTaken || bulkTaken.kg <= 0) return [];
+                const { data, error } = await sb.rpc('refund_bulk_lot', {
+                    p_bulk_id: bulkTaken.bulkId, p_kg: bulkTaken.kg,
+                    p_operation: 'undo', p_ref_table: 'roast_batches', p_ref_id: id,
+                    p_reason: 'Roast batch delete failed — rolled back', p_user: userName
+                });
+                return (error || data === null) ? [`bulk #${bulkTaken.bulkId}: ${bulkTaken.kg} kg not put back${error ? ' (' + error.message + ')' : ''}`] : [];
+            };
+
+            // 2. Green bean back to its lots (V2 1B — must run before the
+            // delete, since roast_batch_green_lots cascades on it).
+            const back = await refundGreenCoffeeLotsForBatch(id);
+            if (!back.ok) {
+                const leftovers = [...(await reapplyGreenDrawsForBatch(id, back.refunded)).failed, ...(await undoBulk())];
+                return leftovers.length ? { partial: [...back.failed, ...leftovers] } : { failure: back.failed.join('; ') };
+            }
+
+            // 3. The row itself.
+            const { error: delErr } = await deleteData('roast_batches', id);
+            if (delErr) {
+                const leftovers = [...(await reapplyGreenDrawsForBatch(id, back.refunded)).failed, ...(await undoBulk())];
+                const reason = window.t("alert_delete_failed").replace("{msg}", delErr.message);
+                return leftovers.length ? { partial: [reason, ...leftovers] } : { failure: reason };
+            }
+            return { partial: problems.length ? problems : null };
+        })();
+    } catch (err) {
+        console.error('deleteBatch error:', err);
+        outcome = { partial: [err && err.message ? err.message : String(err)] };
+    } finally {
+        lock.release();
+        _deletingBatch = false;
     }
+
+    loadRoastingBatches();
+    loadGreenbeanInventory();
+    scheduleDashboardRefresh();
+    if (outcome.failure) await showStockFailed(outcome.failure);
+    else if (outcome.partial) await showStockPartial(outcome.partial.join('\n'));
 }
 
 // roastDate scopes the pool to a single roast day — bulk is physically kept
@@ -2304,6 +2343,8 @@ async function deleteBatch(id) {
 // different day must land in its own row/card, not accumulate into an
 // older day's pool (which would blur FIFO and misdate printed lot codes —
 // see database/bulk_production_date_migration.sql).
+// Returns { ok, bulkId, error } — callers must surface !ok (it used to only
+// console.error, so roasted coffee could silently never reach bulk stock).
 async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, weightKg, roastDate, movementRefTable = 'roast_batches', movementRefId = null) {
     const { data: bulkList } = await fetchData('bulk_roasted_coffee');
     // V2 Repack: excludes is_repack rows on purpose — a repack bulk can
@@ -2323,12 +2364,16 @@ async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, 
         // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6) — two concurrent adds to
         // the same day's bulk row must not silently lose kg the way a plain
         // read-modify-write did for packed lots before Phase 1.
-        const { error: refundErr } = await window.supabaseClient.rpc('refund_bulk_lot', {
+        const { data: refundData, error: refundErr } = await window.supabaseClient.rpc('refund_bulk_lot', {
             p_bulk_id: existingBulk.id, p_kg: weightKg,
             p_operation: 'roast', p_ref_table: movementRefTable, p_ref_id: movementRefId,
             p_user: (currentUser && currentUser.name) || null
         });
-        if (refundErr) console.error('refund_bulk_lot RPC failed:', refundErr);
+        if (refundErr || refundData === null) {
+            console.error('refund_bulk_lot RPC failed:', refundErr);
+            return { ok: false, bulkId: existingBulk.id, error: refundErr ? refundErr.message : 'bulk row not found' };
+        }
+        return { ok: true, bulkId: existingBulk.id };
     } else {
         const newBulk = {
             coffee_type: type,
@@ -2345,7 +2390,9 @@ async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, 
             mv_operation: 'roast', mv_ref_table: movementRefTable, mv_ref_id: movementRefId,
             mv_user: (currentUser && currentUser.name) || null
         };
-        await saveData('bulk_roasted_coffee', newBulk);
+        const { data: saved, error } = await saveData('bulk_roasted_coffee', newBulk);
+        if (error || !saved) return { ok: false, bulkId: null, error: error ? error.message : 'bulk row not created' };
+        return { ok: true, bulkId: saved.id };
     }
 }
 
@@ -2355,19 +2402,22 @@ async function addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, 
 // assembles once every component has either hit its target or been
 // deliberately stopped short (see finalizePostBlendPlan for the scale-down
 // math).
+// Returns a list of problems (empty = nothing went wrong / nothing to do),
+// so callers that save a roast batch can report a failed assembly instead
+// of it disappearing into the console.
 async function tryAssemblePostBlend(parentPlanId) {
-    if (!parentPlanId) return;
+    if (!parentPlanId) return [];
     const { data: allPlans } = await fetchData('roasting_plans');
     const parent = (allPlans || []).find(p => p.id === parentPlanId);
-    if (!parent || parent.status === 'Completed') return;
+    if (!parent || parent.status === 'Completed') return [];
 
     const siblings = (allPlans || []).filter(p => p.parent_plan_id === parentPlanId);
-    if (siblings.length === 0) return;
+    if (siblings.length === 0) return [];
 
     const allTerminal = siblings.every(s => s.status === 'Completed' || s.status === 'Stopped');
-    if (!allTerminal) return;
+    if (!allTerminal) return [];
 
-    await finalizePostBlendPlan(parentPlanId);
+    return await finalizePostBlendPlan(parentPlanId);
 }
 
 // V2 1I-b: assembles the post-blend bulk_roasted_coffee row from a parent
@@ -2387,9 +2437,9 @@ async function finalizePostBlendPlan(parentPlanId) {
         fetchData('roast_batches')
     ]);
     const parent = (allPlans || []).find(p => p.id === parentPlanId);
-    if (!parent || parent.status === 'Completed') return;
+    if (!parent || parent.status === 'Completed') return [];
     const siblings = (allPlans || []).filter(p => p.parent_plan_id === parentPlanId);
-    if (siblings.length === 0) return;
+    if (siblings.length === 0) return [];
 
     const scale = Math.min(1, ...siblings.map(s => {
         const target = parseFloat(s.target_roasted_kg) || 0;
@@ -2400,6 +2450,13 @@ async function finalizePostBlendPlan(parentPlanId) {
     const recipe = (recipes || []).find(r => r.id === parent.blend_recipe_id);
     const blendName = recipe ? recipe.name : 'Post-Blend';
 
+    // Order matters (stock-path audit 2026-09-22): the blend row is created
+    // FIRST and the parent is only marked Completed after it exists. If the
+    // blend insert fails, nothing has moved and "Finalize now" can simply be
+    // pressed again; leftovers are only spilled into single-origin bulk once
+    // the blend itself succeeded, so a retry can never add them twice.
+    const problems = [];
+    const leftoverAdds = [];
     let assembledKg = 0;
     for (const s of siblings) {
         const target = parseFloat(s.target_roasted_kg) || 0;
@@ -2421,7 +2478,7 @@ async function finalizePostBlendPlan(parentPlanId) {
             const leftoverRoastDate = subPlanBatchDates.length > 0
                 ? subPlanBatchDates[subPlanBatchDates.length - 1]
                 : s.plan_date;
-            await addWeightToBulkRoastedCoffee('Single', s.single_coffee_id, null, s.machine_id, gb ? gb.name : 'Roasted Coffee', leftover, leftoverRoastDate, 'roasting_plans', s.id);
+            leftoverAdds.push({ s, name: gb ? gb.name : 'Roasted Coffee', leftover, leftoverRoastDate });
         }
     }
 
@@ -2433,7 +2490,7 @@ async function finalizePostBlendPlan(parentPlanId) {
         let suffix = 2;
         while ((bulkList || []).some(b => b.custom_blend_code === code)) code = `PB-${dateStr}-${suffix++}`;
 
-        await saveData('bulk_roasted_coffee', {
+        const { data: blendRow, error: blendErr } = await saveData('bulk_roasted_coffee', {
             coffee_name: blendName,
             coffee_type: 'Blend',
             blend_recipe_id: parent.blend_recipe_id,
@@ -2449,12 +2506,22 @@ async function finalizePostBlendPlan(parentPlanId) {
             mv_operation: 'blend', mv_ref_table: 'roasting_plans', mv_ref_id: parent.id,
             mv_user: (currentUser && currentUser.name) || null
         });
+        if (blendErr || !blendRow) {
+            return [`Post-blend "${blendName}" (${assembledKg.toFixed(2)} kg) was NOT assembled into bulk stock: ${blendErr ? blendErr.message : 'row not created'}. Nothing else changed — use "Finalize now" on the plan to try again.`];
+        }
+    }
+
+    for (const l of leftoverAdds) {
+        const r = await addWeightToBulkRoastedCoffee('Single', l.s.single_coffee_id, null, l.s.machine_id, l.name, l.leftover, l.leftoverRoastDate, 'roasting_plans', l.s.id);
+        if (!r.ok) problems.push(`Post-blend leftover ${l.name} (${l.leftover.toFixed(2)} kg) was NOT added to bulk stock: ${r.error}`);
     }
 
     parent.status = 'Completed';
     parent.fulfilled_roasted_kg = assembledKg;
-    await saveData('roasting_plans', parent);
+    const { error: parentErr } = await saveData('roasting_plans', parent);
+    if (parentErr) problems.push(`Post-blend assembled, but its plan could not be marked Completed: ${parentErr.message} — do NOT press Finalize again, report to admin`);
     await syncPlanStatusToOrderItem(parent);
+    return problems;
 }
 
 // V2 1I-b: manual "Stop" on one open sub-plan — marks it terminal short of
@@ -2469,10 +2536,12 @@ async function stopPostBlendComponent(subPlanId) {
     const subPlan = (allPlans || []).find(p => p.id === subPlanId);
     if (!subPlan) return;
 
+    if (!(await ensureNoStockOpname())) return;
     subPlan.status = 'Stopped';
     await saveData('roasting_plans', subPlan);
-    await tryAssemblePostBlend(subPlan.parent_plan_id);
+    const problems = await tryAssemblePostBlend(subPlan.parent_plan_id);
     await loadRoastingPlans();
+    if (problems.length > 0) await showStockPartial(problems.join('\n'));
 }
 
 // V2 1I-b: manual "Finalize now" on the PARENT plan — lets the team assemble
@@ -2484,12 +2553,14 @@ async function finalizePostBlendNow(parentPlanId) {
 
     const { data: allPlans } = await fetchData('roasting_plans');
     const siblings = (allPlans || []).filter(p => p.parent_plan_id === parentPlanId && p.status !== 'Completed' && p.status !== 'Stopped');
+    if (!(await ensureNoStockOpname())) return;
     for (const s of siblings) {
         s.status = 'Stopped';
         await saveData('roasting_plans', s);
     }
-    await finalizePostBlendPlan(parentPlanId);
+    const problems = await finalizePostBlendPlan(parentPlanId);
     await loadRoastingPlans();
+    if (problems.length > 0) await showStockPartial(problems.join('\n'));
 }
 
 // TEST_BATCH_CARD_PLAN.md §4: core approval logic factored out of the old
@@ -2498,57 +2569,100 @@ async function finalizePostBlendNow(parentPlanId) {
 // unchanged from before this refactor) and "Approve & Combine" (merge into
 // a leader-chosen bulk row instead, via openApproveAndCombineModal below).
 // targetBulkId is null for the plain path, a bulk_roasted_coffee.id for combine.
+// Stock-path audit (2026-09-22): the bulk add happens FIRST and the batch
+// is only marked Success once the kg is really in bulk — it used to be the
+// other way round, so a rejected bulk write (stock opname freeze) approved
+// the batch, removed its Test card, and the roasted coffee never appeared
+// anywhere. Also re-reads the batch and refuses if it is no longer Pending,
+// so a double click / second leader can't add the same output twice.
+const _approvingTestBatchIds = new Set();
 async function finalizeTestBatchApproval(batch, targetBulkId = null) {
-    // Only save fields that exist in production schema
-    const updateRecord = {
-        id: batch.id,
-        batch_code: batch.batch_code,
-        roast_date: batch.roast_date,
-        roasting_plan_id: batch.roasting_plan_id,
-        coffee_type: batch.coffee_type,
-        single_coffee_id: batch.single_coffee_id,
-        blend_recipe_id: batch.blend_recipe_id,
-        machine_id: batch.machine_id,
-        input_weight_kg: batch.input_weight_kg,
-        output_weight_kg: batch.output_weight_kg,
-        yield_percentage: batch.yield_percentage,
-        roast_type: batch.roast_type,
-        qc_status: 'Success',
-        notes: batch.notes
-    };
-    await saveData('roast_batches', updateRecord);
+    if (_approvingTestBatchIds.has(batch.id)) return;
+    if (!(await ensureNoStockOpname())) return;
+    _approvingTestBatchIds.add(batch.id);
+    const lock = lockProcessingScreen(stT('test_approve_saving', 'Approving batch…'));
+    let outcome;
+    try {
+        outcome = await (async () => {
+            const { data: fresh, error: freshErr } = await window.supabaseClient
+                .from('roast_batches').select('id, qc_status').eq('id', batch.id).maybeSingle();
+            if (freshErr) return { failure: freshErr.message };
+            if (!fresh || fresh.qc_status !== 'Pending') {
+                return { failure: stT('test_approve_not_pending', 'This test batch is no longer pending (already approved or deleted).') };
+            }
+            const outputKg = parseFloat(batch.output_weight_kg);
 
-    if (targetBulkId) {
-        // Approve & Combine: merge straight into the leader's chosen bulk
-        // row via the same atomic RPC addWeightToBulkRoastedCoffee uses for
-        // its own existing-match branch (STOCK_LEDGER_PLAN.md Phase 6) —
-        // just pointed at a manually-picked id instead of an auto match.
-        const { error: refundErr } = await window.supabaseClient.rpc('refund_bulk_lot', {
-            p_bulk_id: targetBulkId, p_kg: parseFloat(batch.output_weight_kg),
-            p_operation: 'roast', p_ref_table: 'roast_batches', p_ref_id: batch.id,
-            p_reason: `Test batch #${batch.id} digabung manual ke bulk #${targetBulkId}`,
-            p_user: (currentUser && currentUser.name) || null
-        });
-        if (refundErr) console.error('refund_bulk_lot RPC failed (combine):', refundErr);
-    } else {
-        // Fetch coffee name
-        const [
-            { data: greenbeans },
-            { data: recipes }
-        ] = await Promise.all([
-            fetchData('green_coffee'),
-            fetchData('blend_recipes')
-        ]);
-        let coffeeName = '';
-        if (batch.coffee_type === 'Single') {
-            const gb = greenbeans.find(g => g.id === batch.single_coffee_id);
-            coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
-        } else {
-            const r = recipes.find(rec => rec.id === batch.blend_recipe_id);
-            coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
-        }
+            // 1. Bulk first.
+            let bulkId = null;
+            if (targetBulkId) {
+                // Approve & Combine: merge straight into the leader's chosen bulk
+                // row via the same atomic RPC addWeightToBulkRoastedCoffee uses for
+                // its own existing-match branch (STOCK_LEDGER_PLAN.md Phase 6) —
+                // just pointed at a manually-picked id instead of an auto match.
+                const { data: refundData, error: refundErr } = await window.supabaseClient.rpc('refund_bulk_lot', {
+                    p_bulk_id: targetBulkId, p_kg: outputKg,
+                    p_operation: 'roast', p_ref_table: 'roast_batches', p_ref_id: batch.id,
+                    p_reason: `Test batch #${batch.id} digabung manual ke bulk #${targetBulkId}`,
+                    p_user: (currentUser && currentUser.name) || null
+                });
+                if (refundErr || refundData === null) return { failure: refundErr ? refundErr.message : 'selected bulk row not found' };
+                bulkId = targetBulkId;
+            } else {
+                const [
+                    { data: greenbeans },
+                    { data: recipes }
+                ] = await Promise.all([
+                    fetchData('green_coffee'),
+                    fetchData('blend_recipes')
+                ]);
+                let coffeeName = '';
+                if (batch.coffee_type === 'Single') {
+                    const gb = greenbeans.find(g => g.id === batch.single_coffee_id);
+                    coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
+                } else {
+                    const r = recipes.find(rec => rec.id === batch.blend_recipe_id);
+                    coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+                }
+                const added = await addWeightToBulkRoastedCoffee(batch.coffee_type, batch.single_coffee_id, batch.blend_recipe_id, batch.machine_id, coffeeName, outputKg, batch.roast_date, 'roast_batches', batch.id);
+                if (!added.ok) return { failure: added.error };
+                bulkId = added.bulkId;
+            }
 
-        await addWeightToBulkRoastedCoffee(batch.coffee_type, batch.single_coffee_id, batch.blend_recipe_id, batch.machine_id, coffeeName, parseFloat(batch.output_weight_kg), batch.roast_date, 'roast_batches', batch.id);
+            // 2. Then mark the batch approved (only fields that exist in production schema).
+            const { error: saveErr } = await saveData('roast_batches', {
+                id: batch.id,
+                batch_code: batch.batch_code,
+                roast_date: batch.roast_date,
+                roasting_plan_id: batch.roasting_plan_id,
+                coffee_type: batch.coffee_type,
+                single_coffee_id: batch.single_coffee_id,
+                blend_recipe_id: batch.blend_recipe_id,
+                machine_id: batch.machine_id,
+                input_weight_kg: batch.input_weight_kg,
+                output_weight_kg: batch.output_weight_kg,
+                yield_percentage: batch.yield_percentage,
+                roast_type: batch.roast_type,
+                qc_status: 'Success',
+                notes: batch.notes
+            });
+            if (saveErr) {
+                // Undo the bulk add so the batch can be approved again cleanly.
+                const { error: undoErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
+                    p_bulk_id: bulkId, p_kg: outputKg,
+                    p_operation: 'undo', p_ref_table: 'roast_batches', p_ref_id: batch.id,
+                    p_reason: 'Test batch approval failed — rolled back', p_user: (currentUser && currentUser.name) || null
+                });
+                if (undoErr) return { partial: [`Batch not approved (${saveErr.message}), and its ${outputKg} kg could not be removed from bulk #${bulkId} again: ${undoErr.message}`] };
+                return { failure: saveErr.message };
+            }
+            return { ok: true };
+        })();
+    } catch (err) {
+        console.error('finalizeTestBatchApproval error:', err);
+        outcome = { partial: [err && err.message ? err.message : String(err)] };
+    } finally {
+        lock.release();
+        _approvingTestBatchIds.delete(batch.id);
     }
 
     // This approval can now be triggered from the Batch Log table OR the
@@ -2556,6 +2670,9 @@ async function finalizeTestBatchApproval(batch, targetBulkId = null) {
     if (document.getElementById('roast-batches-tbody')) loadRoastingBatches();
     if (document.getElementById('ready-to-pack-cards')) loadPackingSection();
     scheduleDashboardRefresh();
+
+    if (outcome.failure) await showStockFailed(outcome.failure);
+    else if (outcome.partial) await showStockPartial(outcome.partial.join('\n'));
 }
 
 async function approveTestBatch(id) {
@@ -3526,8 +3643,12 @@ async function openRoastBatchModal(plan = null, editId = null) {
     if (!editId) roastedWeightInput.focus();
 
     // Submit handler
+    // In-flight guard: the stock work below spans many writes, and the
+    // db.js submit-button spinner is released after the first of them.
+    let batchSaving = false;
     document.getElementById('modal-batch-form').addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (batchSaving) return;
 
         if (validateRoastedNotOverGreenbean()) {
             alert(window.t ? window.t("alert_roasted_exceeds_greenbean") : "Roasted weight can't exceed greenbean weight.");
@@ -3577,275 +3698,317 @@ async function openRoastBatchModal(plan = null, editId = null) {
         const singleId = type === 'Single' ? coffeeId : null;
         const blendId = type === 'Blend' ? coffeeId : null;
 
-        // V2 1B: green_coffee.stock_kg is DERIVED (trigger-summed from
-        // green_coffee_lots.remaining_kg — see database/v2_lot_tracking_migration.sql),
-        // so consumption must go through the lots, not a direct stock_kg write
-        // (a direct write here would get silently reverted the next time any
-        // lot for that coffee changes, same class of bug fixed in 1A for
-        // intake edit/delete). On edit, first refund exactly what the old
-        // batch drew (via its recorded roast_batch_green_lots rows), then
-        // re-consume FIFO oldest-first for the new input weight.
-        if (editId) {
-            await refundGreenCoffeeLotsForBatch(editId);
-        }
+        const saveBatchWork = async () => {
+            // V2 1B: green_coffee.stock_kg is DERIVED (trigger-summed from
+            // green_coffee_lots.remaining_kg — see database/v2_lot_tracking_migration.sql),
+            // so consumption must go through the lots, not a direct stock_kg write
+            // (a direct write here would get silently reverted the next time any
+            // lot for that coffee changes, same class of bug fixed in 1A for
+            // intake edit/delete). On edit, first refund exactly what the old
+            // batch drew (via its recorded roast_batch_green_lots rows), then
+            // re-consume FIFO oldest-first for the new input weight.
+            // Stock-path audit (2026-09-22): everything below is one unit of work.
+            // A failure before the batch row is saved undoes the green draw (and,
+            // on edit, re-takes what the old version had drawn), so the user can
+            // simply try again; a failure after it is collected in `problems` and
+            // reported instead of being swallowed into the console.
+            const draw = await (async () => {
+                let oldDraws = [];
+                if (editId) {
+                    const back = await refundGreenCoffeeLotsForBatch(editId);
+                    oldDraws = back.refunded;
+                    if (!back.ok) {
+                        const redo = await reapplyGreenDrawsForBatch(editId, back.refunded);
+                        return redo.ok ? { failure: back.failed.join('; ') } : { partial: [...back.failed, ...redo.failed] };
+                    }
+                }
+                const drawn = await drawGreenForBatch({ type, singleId, blendId, inputKg, ingredients });
+                if (!drawn.ok) {
+                    const restore = (editId && oldDraws.length) ? await reapplyGreenDrawsForBatch(editId, oldDraws) : { failed: [] };
+                    const leftovers = [...(drawn.undoFailed || []), ...restore.failed];
+                    return leftovers.length ? { partial: [drawn.reason, ...leftovers] } : { failure: drawn.reason };
+                }
+                return { drawn, oldDraws };
+            })();
+            if (draw.failure || draw.partial) return { failure: draw.failure || null, problems: draw.partial || [] };
+            const { lotDraws, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId } = draw.drawn;
+            const problems = [];
+            // Undo for a failure after the draw: return the new draw and, on
+            // edit, re-take what the old version had drawn.
+            const undoDraw = async () => {
+                const out = (await refundGreenDraws(lotDraws)).failed;
+                if (editId && draw.oldDraws.length) out.push(...(await reapplyGreenDrawsForBatch(editId, draw.oldDraws)).failed);
+                return out;
+            };
 
-        const lotDraws = [];
-        // V2 Greenbean Data Analyze: which lot each origin's FIRST FIFO draw
-        // came from — Single gets one entry, Blend gets one per ingredient —
-        // feeds recordBatchAnalysisSnapshot below (freezes that lot's latest
-        // lab reading onto this batch).
-        const firstLotIdByCoffeeId = {};
-        const ingredientPercentageByCoffeeId = {};
-        if (type === 'Single') {
-            const { draws } = await consumeGreenCoffeeLotsFifo(singleId, inputKg);
-            lotDraws.push(...draws);
-            if (draws.length > 0) firstLotIdByCoffeeId[singleId] = draws[0].lotId;
-        } else {
-            const recipeIngs = ingredients.filter(ing => ing.blend_recipe_id === blendId);
-            for (const ing of recipeIngs) {
-                const req = (parseFloat(ing.percentage) / 100) * inputKg;
-                const { draws } = await consumeGreenCoffeeLotsFifo(ing.green_coffee_id, req);
-                lotDraws.push(...draws);
-                if (draws.length > 0) firstLotIdByCoffeeId[ing.green_coffee_id] = draws[0].lotId;
-                ingredientPercentageByCoffeeId[ing.green_coffee_id] = parseFloat(ing.percentage);
+            // Save Cookies
+            setCookie('last_machine_id', machineId.toString());
+            setCookie('last_coffee_val', coffeeVal);
+
+            // 3. Save Roast Batch Record (match production schema)
+            const yieldPct = outputKg > 0 && inputKg > 0 ? parseFloat(((outputKg / inputKg) * 100).toFixed(2)) : null;
+            const record = {
+                batch_code: code,
+                roast_date: roastDate,
+                roasting_plan_id: editId ? existingBatch.roasting_plan_id : (plan ? plan.id : null),
+                coffee_type: type,
+                single_coffee_id: singleId || null,
+                blend_recipe_id: blendId || null,
+                machine_id: machineId,
+                input_weight_kg: inputKg,
+                output_weight_kg: outputKg,
+                yield_percentage: yieldPct,
+                roast_type: isTest ? 'Test' : 'Regular',
+                qc_status: qcStatus,
+                notes: notes || null,
+                roast_degree: degreeInput.value ? parseFloat(degreeInput.value) : null
+            };
+
+            if (editId) {
+                record.id = editId;
             }
-        }
 
-        // Save Cookies
-        setCookie('last_machine_id', machineId.toString());
-        setCookie('last_coffee_val', coffeeVal);
+            const { data: savedBatch, error } = await saveData('roast_batches', record);
+            if (error) {
+                // Auto-retrying with a regenerated code was considered here, but
+                // rejected: a duplicate-key error can also mean the user
+                // double-submitted this exact batch (double-click, browser
+                // resubmit), in which case silently retrying would log the same
+                // physical batch twice under two different codes — a worse,
+                // harder-to-notice outcome than stopping and asking. Surface a
+                // clear, actionable message instead and let the user check the
+                // Batch Logs list before retrying manually.
+                const isDuplicateCode = /duplicate key|unique constraint/i.test(error.message || '');
+                const msg = isDuplicateCode
+                    ? `A batch with code "${code}" already exists. This can happen if you double-submitted, or logged another batch for the same coffee/machine/date at nearly the same moment.\n\nPlease check the Batch Logs list to confirm this batch wasn't already saved, then close this form and try again — a fresh code will be generated.`
+                    : "Logging batch failed: " + error.message;
+                const leftovers = await undoDraw();
+                return leftovers.length ? { failure: null, problems: [msg, ...leftovers] } : { failure: msg, problems: [] };
+            }
 
-        // 3. Save Roast Batch Record (match production schema)
-        const yieldPct = outputKg > 0 && inputKg > 0 ? parseFloat(((outputKg / inputKg) * 100).toFixed(2)) : null;
-        const record = {
-            batch_code: code,
-            roast_date: roastDate,
-            roasting_plan_id: editId ? existingBatch.roasting_plan_id : (plan ? plan.id : null),
-            coffee_type: type,
-            single_coffee_id: singleId || null,
-            blend_recipe_id: blendId || null,
-            machine_id: machineId,
-            input_weight_kg: inputKg,
-            output_weight_kg: outputKg,
-            yield_percentage: yieldPct,
-            roast_type: isTest ? 'Test' : 'Regular',
-            qc_status: qcStatus,
-            notes: notes || null,
-            roast_degree: degreeInput.value ? parseFloat(degreeInput.value) : null
-        };
+            // V2 1B: persist which lot(s) this batch drew from, now that the
+            // batch has an id (feeds future costing + Tracking traceability).
+            problems.push(...(await recordRoastBatchGreenLots(savedBatch.id, lotDraws)));
+            await recordBatchAnalysisSnapshot(savedBatch.id, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId);
 
-        if (editId) {
-            record.id = editId;
-        }
-
-        const { data: savedBatch, error } = await saveData('roast_batches', record);
-        if (error) {
-            // Auto-retrying with a regenerated code was considered here, but
-            // rejected: a duplicate-key error can also mean the user
-            // double-submitted this exact batch (double-click, browser
-            // resubmit), in which case silently retrying would log the same
-            // physical batch twice under two different codes — a worse,
-            // harder-to-notice outcome than stopping and asking. Surface a
-            // clear, actionable message instead and let the user check the
-            // Batch Logs list before retrying manually.
-            const isDuplicateCode = /duplicate key|unique constraint/i.test(error.message || '');
-            const msg = isDuplicateCode
-                ? `A batch with code "${code}" already exists. This can happen if you double-submitted, or logged another batch for the same coffee/machine/date at nearly the same moment.\n\nPlease check the Batch Logs list to confirm this batch wasn't already saved, then close this form and try again — a fresh code will be generated.`
-                : "Logging batch failed: " + error.message;
-            alert(msg);
-            return;
-        }
-
-        // V2 1B: persist which lot(s) this batch drew from, now that the
-        // batch has an id (feeds future costing + Tracking traceability).
-        await recordRoastBatchGreenLots(savedBatch.id, lotDraws);
-        await recordBatchAnalysisSnapshot(savedBatch.id, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId);
-
-        // 4. Update associated plan status
-        const { data: plans } = await fetchData('roasting_plans');
+            // 4. Update associated plan status
+            const { data: plans } = await fetchData('roasting_plans');
         
-        // If editing, subtract the old output weight from the linked plan first
-        if (editId && existingBatch && existingBatch.roasting_plan_id) {
-            const oldPlan = plans.find(p => p.id === existingBatch.roasting_plan_id);
-            if (oldPlan) {
-                oldPlan.fulfilled_roasted_kg = Math.max(0, parseFloat(oldPlan.fulfilled_roasted_kg || 0) - parseFloat(existingBatch.output_weight_kg || 0));
-                oldPlan.status = (oldPlan.fulfilled_roasted_kg >= parseFloat(oldPlan.target_roasted_kg)) ? 'Completed' : 'On Process';
-                await saveData('roasting_plans', oldPlan);
-                await syncPlanStatusToOrderItem(oldPlan);
+            // If editing, subtract the old output weight from the linked plan first
+            if (editId && existingBatch && existingBatch.roasting_plan_id) {
+                const oldPlan = plans.find(p => p.id === existingBatch.roasting_plan_id);
+                if (oldPlan) {
+                    oldPlan.fulfilled_roasted_kg = Math.max(0, parseFloat(oldPlan.fulfilled_roasted_kg || 0) - parseFloat(existingBatch.output_weight_kg || 0));
+                    oldPlan.status = (oldPlan.fulfilled_roasted_kg >= parseFloat(oldPlan.target_roasted_kg)) ? 'Completed' : 'On Process';
+                    await saveData('roasting_plans', oldPlan);
+                    await syncPlanStatusToOrderItem(oldPlan);
+                }
             }
-        }
 
-        // Find ALL matching active/on-process plans for this coffee and machine
-        let matchingPlans = plans.filter(p => 
-            p.coffee_type === type && 
-            (type === 'Single' ? p.single_coffee_id === singleId : p.blend_recipe_id === blendId) &&
-            p.machine_id === machineId &&
-            p.status !== 'Completed'
-        );
+            // Find ALL matching active/on-process plans for this coffee and machine
+            let matchingPlans = plans.filter(p => 
+                p.coffee_type === type && 
+                (type === 'Single' ? p.single_coffee_id === singleId : p.blend_recipe_id === blendId) &&
+                p.machine_id === machineId &&
+                p.status !== 'Completed'
+            );
 
-        if (matchingPlans.length > 0) {
-            // V2 1I-b: an open post-blend sub-plan for this exact coffee+
-            // machine always fills first — accepted limitation per the
-            // roadmap (a normal single plan sharing the same coffee+machine
-            // while the sub-plan is open gets filled second, even if older).
-            // Within the same priority tier, earliest plan_date first, then
-            // id ascending (plan_date alone doesn't disambiguate same-day plans).
-            matchingPlans.sort((a, b) => {
-                const aSub = a.is_post_blend_component ? 0 : 1;
-                const bSub = b.is_post_blend_component ? 0 : 1;
-                if (aSub !== bSub) return aSub - bSub;
-                return (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id);
-            });
+            if (matchingPlans.length > 0) {
+                // V2 1I-b: an open post-blend sub-plan for this exact coffee+
+                // machine always fills first — accepted limitation per the
+                // roadmap (a normal single plan sharing the same coffee+machine
+                // while the sub-plan is open gets filled second, even if older).
+                // Within the same priority tier, earliest plan_date first, then
+                // id ascending (plan_date alone doesn't disambiguate same-day plans).
+                matchingPlans.sort((a, b) => {
+                    const aSub = a.is_post_blend_component ? 0 : 1;
+                    const bSub = b.is_post_blend_component ? 0 : 1;
+                    if (aSub !== bSub) return aSub - bSub;
+                    return (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id);
+                });
 
-            let remainingOutput = outputKg;
+                let remainingOutput = outputKg;
 
-            for (let i = 0; i < matchingPlans.length; i++) {
-                if (remainingOutput <= 0) break;
+                for (let i = 0; i < matchingPlans.length; i++) {
+                    if (remainingOutput <= 0) break;
 
-                const p = matchingPlans[i];
-                const target = parseFloat(p.target_roasted_kg || 0);
-                const currentFulfilled = parseFloat(p.fulfilled_roasted_kg || 0);
-                const capacity = Math.max(0, target - currentFulfilled);
+                    const p = matchingPlans[i];
+                    const target = parseFloat(p.target_roasted_kg || 0);
+                    const currentFulfilled = parseFloat(p.fulfilled_roasted_kg || 0);
+                    const capacity = Math.max(0, target - currentFulfilled);
 
-                if (remainingOutput <= capacity) {
-                    p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
-                    p.status = (p.fulfilled_roasted_kg >= target) ? 'Completed' : 'On Process';
-                    remainingOutput = 0;
-                    await saveData('roasting_plans', p);
-                    await syncPlanStatusToOrderItem(p);
-                    if (p.is_post_blend_component && p.status === 'Completed') await tryAssemblePostBlend(p.parent_plan_id);
-                } else {
-                    // Exceeds this plan's capacity
-                    if (i === matchingPlans.length - 1) {
-                        // If this is the LAST matching plan, it absorbs all the remainder
+                    if (remainingOutput <= capacity) {
                         p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
-                        p.status = 'Completed';
+                        p.status = (p.fulfilled_roasted_kg >= target) ? 'Completed' : 'On Process';
                         remainingOutput = 0;
                         await saveData('roasting_plans', p);
                         await syncPlanStatusToOrderItem(p);
-                        if (p.is_post_blend_component) await tryAssemblePostBlend(p.parent_plan_id);
+                        if (p.is_post_blend_component && p.status === 'Completed') problems.push(...(await tryAssemblePostBlend(p.parent_plan_id)));
                     } else {
-                        // Fill this plan to target and continue to next
-                        p.fulfilled_roasted_kg = target;
-                        p.status = 'Completed';
-                        remainingOutput -= capacity;
-                        await saveData('roasting_plans', p);
-                        await syncPlanStatusToOrderItem(p);
-                        if (p.is_post_blend_component) await tryAssemblePostBlend(p.parent_plan_id);
+                        // Exceeds this plan's capacity
+                        if (i === matchingPlans.length - 1) {
+                            // If this is the LAST matching plan, it absorbs all the remainder
+                            p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
+                            p.status = 'Completed';
+                            remainingOutput = 0;
+                            await saveData('roasting_plans', p);
+                            await syncPlanStatusToOrderItem(p);
+                            if (p.is_post_blend_component) problems.push(...(await tryAssemblePostBlend(p.parent_plan_id)));
+                        } else {
+                            // Fill this plan to target and continue to next
+                            p.fulfilled_roasted_kg = target;
+                            p.status = 'Completed';
+                            remainingOutput -= capacity;
+                            await saveData('roasting_plans', p);
+                            await syncPlanStatusToOrderItem(p);
+                            if (p.is_post_blend_component) problems.push(...(await tryAssemblePostBlend(p.parent_plan_id)));
+                        }
                     }
                 }
             }
+
+            // --- Bulk Roasted Coffee Sync ---
+            // Determine previous qc_status (for edit mode)
+            const prevQcStatus = (editId && existingBatch) ? existingBatch.qc_status : null;
+
+            if (qcStatus === 'Success' && prevQcStatus !== 'Success') {
+                // Transition: Pending → Success (or new Regular batch)
+                // ADD weight to bulk roasted coffee
+                let coffeeName = '';
+                if (type === 'Single') {
+                    const gb = greenbeans.find(g => g.id === singleId);
+                    coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
+                } else {
+                    const r = recipes.find(rec => rec.id === blendId);
+                    coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+                }
+                const bulkAdd = await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate, 'roast_batches', savedBatch.id);
+                if (!bulkAdd.ok) problems.push(`Roasted coffee (${outputKg} kg) was NOT added to bulk stock: ${bulkAdd.error}`);
+
+            } else if (prevQcStatus === 'Success' && qcStatus !== 'Success') {
+                // Transition: Success → Pending  (approved checkbox unchecked)
+                // SUBTRACT weight from bulk roasted coffee
+                const { data: bulkList } = await fetchData('bulk_roasted_coffee');
+                const existingBulk = bulkList.find(b =>
+                    b.coffee_type === existingBatch.coffee_type &&
+                    (existingBatch.coffee_type === 'Single'
+                        ? b.single_coffee_id === existingBatch.single_coffee_id
+                        : b.blend_recipe_id === existingBatch.blend_recipe_id) &&
+                    b.machine_id === existingBatch.machine_id &&
+                    b.production_date === existingBatch.roast_date
+                );
+                if (existingBulk) {
+                    const prevOutputKg = parseFloat(existingBatch.output_weight_kg || 0);
+                    // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
+                    const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
+                        p_bulk_id: existingBulk.id, p_kg: prevOutputKg,
+                        p_operation: 'correction', p_ref_table: 'roast_batches', p_ref_id: existingBatch.id,
+                        p_reason: 'QC status reverted from Success', p_user: (currentUser && currentUser.name) || null
+                    });
+                    if (consumeErr) {
+                        console.error('consume_bulk_lot RPC failed:', consumeErr);
+                        problems.push(`Bulk stock was NOT reduced by ${prevOutputKg} kg after un-approving: ${consumeErr.message}`);
+                    }
+                } else {
+                    problems.push('No bulk row found for this batch — bulk stock was NOT reduced after un-approving.');
+                }
+
+            } else if (qcStatus === 'Success' && prevQcStatus === 'Success' && editId && existingBatch) {
+                // Staying Success but the batch was edited (e.g. yield/output weight
+                // changed) — bulk_available was already counted using the OLD
+                // output weight and never gets touched again once it's "already
+                // counted", so an edited yield silently never reached bulk stock
+                // (bug reported 2026-07-15). Refund the exact old amount from the
+                // OLD identity's bulk record, then add the new amount via the
+                // normal helper (which resolves/creates the current identity's
+                // record) — robust even if coffee/machine also changed on edit.
+                const { data: bulkList } = await fetchData('bulk_roasted_coffee');
+                const oldBulk = bulkList.find(b =>
+                    b.coffee_type === existingBatch.coffee_type &&
+                    (existingBatch.coffee_type === 'Single'
+                        ? b.single_coffee_id === existingBatch.single_coffee_id
+                        : b.blend_recipe_id === existingBatch.blend_recipe_id) &&
+                    b.machine_id === existingBatch.machine_id &&
+                    b.production_date === existingBatch.roast_date
+                );
+                if (oldBulk) {
+                    // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
+                    const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
+                        p_bulk_id: oldBulk.id, p_kg: parseFloat(existingBatch.output_weight_kg || 0),
+                        p_operation: 'correction', p_ref_table: 'roast_batches', p_ref_id: existingBatch.id,
+                        p_reason: 'Output weight edited — refund old amount before re-adding new', p_user: (currentUser && currentUser.name) || null
+                    });
+                    if (consumeErr) {
+                        console.error('consume_bulk_lot RPC failed:', consumeErr);
+                        problems.push(`Old output (${existingBatch.output_weight_kg} kg) was NOT removed from bulk stock: ${consumeErr.message}`);
+                    }
+                } else {
+                    problems.push('No bulk row found for the old version of this batch — its old output was NOT removed from bulk stock.');
+                }
+                let coffeeName = '';
+                if (type === 'Single') {
+                    const gb = greenbeans.find(g => g.id === singleId);
+                    coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
+                } else {
+                    const r = recipes.find(rec => rec.id === blendId);
+                    coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+                }
+                // Refund matched the OLD roast_date (existingBatch.roast_date);
+                // re-add uses the NEW roastDate (form value) — these can differ
+                // if the user also changed the roast date during this edit.
+                const bulkAdd = await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate, 'roast_batches', savedBatch.id);
+                if (!bulkAdd.ok) problems.push(`Roasted coffee (${outputKg} kg) was NOT added to bulk stock: ${bulkAdd.error}`);
+            }
+            // else: new batch not Success (Pending, first save) → nothing counted yet
+
+
+            // 5. If QC fails, log to waste inventory.
+            //    Was writing `weight_kg`, but the column is `waste_kg` — every
+            //    failed-QC batch silently failed to record its discarded weight
+            //    (waste_inventory was empty in production as a result). Also fills
+            //    source_type/source_name so the row is identifiable on its own.
+            if (qcStatus === 'Failed') {
+                const wasteCoffee = type === 'Single'
+                    ? ((greenbeans.find(g => g.id === singleId) || {}).name || 'Single Origin')
+                    : ((recipes.find(rec => rec.id === blendId) || {}).name || 'Blend Recipe');
+                const wasteRecord = {
+                    roast_batch_id: savedBatch.id,
+                    source_type: 'Roast Batch',
+                    source_name: `${wasteCoffee} (${code})`,
+                    waste_kg: outputKg,
+                    discard_date: new Date().toISOString().split('T')[0],
+                    reason: `Failed QC inspection: ${notes}`,
+                    recorded_by: (currentUser && currentUser.name) || null
+                };
+                const { error: wasteErr } = await saveData('waste_inventory', wasteRecord);
+                if (wasteErr) {
+                    console.error('Failed to log waste for failed QC batch:', wasteErr);
+                    problems.push(`Waste record not saved: ${wasteErr.message}`);
+                }
+            }
+            return { failure: null, problems };
+        };
+
+        if (!(await ensureNoStockOpname())) return;
+        batchSaving = true;
+        const lock = lockProcessingScreen(stT('roast_saving', 'Saving batch…'));
+        let outcome;
+        try {
+            outcome = await saveBatchWork();
+        } catch (err) {
+            console.error('Roast batch save error:', err);
+            outcome = { failure: null, problems: [err && err.message ? err.message : String(err)] };
+        } finally {
+            lock.release();
+            batchSaving = false;
         }
-
-        // --- Bulk Roasted Coffee Sync ---
-        // Determine previous qc_status (for edit mode)
-        const prevQcStatus = (editId && existingBatch) ? existingBatch.qc_status : null;
-
-        if (qcStatus === 'Success' && prevQcStatus !== 'Success') {
-            // Transition: Pending → Success (or new Regular batch)
-            // ADD weight to bulk roasted coffee
-            let coffeeName = '';
-            if (type === 'Single') {
-                const gb = greenbeans.find(g => g.id === singleId);
-                coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
-            } else {
-                const r = recipes.find(rec => rec.id === blendId);
-                coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
-            }
-            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate, 'roast_batches', savedBatch.id);
-
-        } else if (prevQcStatus === 'Success' && qcStatus !== 'Success') {
-            // Transition: Success → Pending  (approved checkbox unchecked)
-            // SUBTRACT weight from bulk roasted coffee
-            const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-            const existingBulk = bulkList.find(b =>
-                b.coffee_type === existingBatch.coffee_type &&
-                (existingBatch.coffee_type === 'Single'
-                    ? b.single_coffee_id === existingBatch.single_coffee_id
-                    : b.blend_recipe_id === existingBatch.blend_recipe_id) &&
-                b.machine_id === existingBatch.machine_id &&
-                b.production_date === existingBatch.roast_date
-            );
-            if (existingBulk) {
-                const prevOutputKg = parseFloat(existingBatch.output_weight_kg || 0);
-                // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
-                const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
-                    p_bulk_id: existingBulk.id, p_kg: prevOutputKg,
-                    p_operation: 'correction', p_ref_table: 'roast_batches', p_ref_id: existingBatch.id,
-                    p_reason: 'QC status reverted from Success', p_user: (currentUser && currentUser.name) || null
-                });
-                if (consumeErr) console.error('consume_bulk_lot RPC failed:', consumeErr);
-            }
-
-        } else if (qcStatus === 'Success' && prevQcStatus === 'Success' && editId && existingBatch) {
-            // Staying Success but the batch was edited (e.g. yield/output weight
-            // changed) — bulk_available was already counted using the OLD
-            // output weight and never gets touched again once it's "already
-            // counted", so an edited yield silently never reached bulk stock
-            // (bug reported 2026-07-15). Refund the exact old amount from the
-            // OLD identity's bulk record, then add the new amount via the
-            // normal helper (which resolves/creates the current identity's
-            // record) — robust even if coffee/machine also changed on edit.
-            const { data: bulkList } = await fetchData('bulk_roasted_coffee');
-            const oldBulk = bulkList.find(b =>
-                b.coffee_type === existingBatch.coffee_type &&
-                (existingBatch.coffee_type === 'Single'
-                    ? b.single_coffee_id === existingBatch.single_coffee_id
-                    : b.blend_recipe_id === existingBatch.blend_recipe_id) &&
-                b.machine_id === existingBatch.machine_id &&
-                b.production_date === existingBatch.roast_date
-            );
-            if (oldBulk) {
-                // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 6).
-                const { error: consumeErr } = await window.supabaseClient.rpc('consume_bulk_lot', {
-                    p_bulk_id: oldBulk.id, p_kg: parseFloat(existingBatch.output_weight_kg || 0),
-                    p_operation: 'correction', p_ref_table: 'roast_batches', p_ref_id: existingBatch.id,
-                    p_reason: 'Output weight edited — refund old amount before re-adding new', p_user: (currentUser && currentUser.name) || null
-                });
-                if (consumeErr) console.error('consume_bulk_lot RPC failed:', consumeErr);
-            }
-            let coffeeName = '';
-            if (type === 'Single') {
-                const gb = greenbeans.find(g => g.id === singleId);
-                coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
-            } else {
-                const r = recipes.find(rec => rec.id === blendId);
-                coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
-            }
-            // Refund matched the OLD roast_date (existingBatch.roast_date);
-            // re-add uses the NEW roastDate (form value) — these can differ
-            // if the user also changed the roast date during this edit.
-            await addWeightToBulkRoastedCoffee(type, singleId, blendId, machineId, coffeeName, outputKg, roastDate, 'roast_batches', savedBatch.id);
-        }
-        // else: new batch not Success (Pending, first save) → nothing counted yet
-
-
-        // 5. If QC fails, log to waste inventory.
-        //    Was writing `weight_kg`, but the column is `waste_kg` — every
-        //    failed-QC batch silently failed to record its discarded weight
-        //    (waste_inventory was empty in production as a result). Also fills
-        //    source_type/source_name so the row is identifiable on its own.
-        if (qcStatus === 'Failed') {
-            const wasteCoffee = type === 'Single'
-                ? ((greenbeans.find(g => g.id === singleId) || {}).name || 'Single Origin')
-                : ((recipes.find(rec => rec.id === blendId) || {}).name || 'Blend Recipe');
-            const wasteRecord = {
-                roast_batch_id: savedBatch.id,
-                source_type: 'Roast Batch',
-                source_name: `${wasteCoffee} (${code})`,
-                waste_kg: outputKg,
-                discard_date: new Date().toISOString().split('T')[0],
-                reason: `Failed QC inspection: ${notes}`,
-                recorded_by: (currentUser && currentUser.name) || null
-            };
-            const { error: wasteErr } = await saveData('waste_inventory', wasteRecord);
-            if (wasteErr) console.error('Failed to log waste for failed QC batch:', wasteErr);
-        }
+        if (outcome.failure) { await showStockFailed(outcome.failure); return; }
 
         modalContainer.classList.add('hidden');
         loadRoastingSection();
         loadGreenbeanInventory();
         scheduleDashboardRefresh();
+        if (outcome.problems.length > 0) await showStockPartial(outcome.problems.join('\n'));
     });
 }
 
@@ -4073,6 +4236,10 @@ async function consumeGreenCoffeeLotsFifo(greenCoffeeId, kgToConsume, preferredL
 
     let remainingNeeded = kgToConsume;
     const draws = [];
+    // errors: RPC failures (e.g. a stock opname freeze, network). Callers
+    // must treat any error as "the draw did not happen as intended" and undo
+    // `draws` — shortfallKg alone can't tell a failure from genuinely low stock.
+    const errors = [];
     for (const lot of ordered) {
         if (remainingNeeded <= 0) break;
         const { data: taken, error } = await window.supabaseClient.rpc('consume_green_coffee_lot', {
@@ -4081,6 +4248,7 @@ async function consumeGreenCoffeeLotsFifo(greenCoffeeId, kgToConsume, preferredL
         });
         if (error) {
             console.error('consume_green_coffee_lot RPC failed for lot', lot.id, error);
+            errors.push(`${lot.lot_code || '#' + lot.id}: ${error.message}`);
             continue;
         }
         const takenKg = parseFloat(taken) || 0;
@@ -4088,35 +4256,116 @@ async function consumeGreenCoffeeLotsFifo(greenCoffeeId, kgToConsume, preferredL
         draws.push({ lotId: lot.id, kg: takenKg });
         remainingNeeded -= takenKg;
     }
-    return { draws, shortfallKg: Math.max(0, remainingNeeded) };
+    return { draws, shortfallKg: Math.max(0, remainingNeeded), errors };
 }
 
-// Reverses a batch's previously recorded consumption (used before
-// re-consuming on edit) by adding kg back to the exact lots it was drawn
-// from, then removes those roast_batch_green_lots rows. Safe no-op if the
-// batch has none (e.g. logged before 1B shipped, or a lot was deleted since).
+// Puts in-memory draws ({ lotId, kg }) back into their lots — the undo for a
+// draw whose surrounding save then failed. Returns { ok, failed[] }.
+async function refundGreenDraws(draws) {
+    const failed = [];
+    for (const d of (draws || [])) {
+        if (!(d.kg > 0)) continue;
+        const { data, error } = await window.supabaseClient.rpc('refund_green_coffee_lot', { p_lot_id: d.lotId, p_kg: d.kg });
+        if (error || data === null) failed.push(`green lot #${d.lotId}: +${d.kg} kg not returned${error ? ' (' + error.message + ')' : ''}`);
+    }
+    return { ok: failed.length === 0, failed };
+}
+
+// Draws the green bean for one roast batch — a Single from its coffee
+// (preferring a scanned lot), a Blend per recipe ingredient. All-or-nothing
+// on RPC errors: if any draw errored, everything drawn here is refunded and
+// { ok:false } comes back. A plain shortfall (system stock lower than the
+// input weight) is NOT an error — the Log form already asked the operator
+// about low stock — and is reported back as shortKg.
+async function drawGreenForBatch({ type, singleId, blendId, inputKg, ingredients, preferredLotId = null }) {
+    const lotDraws = [];
+    const firstLotIdByCoffeeId = {};
+    const ingredientPercentageByCoffeeId = {};
+    const errors = [];
+    let shortKg = 0;
+    const take = async (coffeeId, kg, pref) => {
+        const r = await consumeGreenCoffeeLotsFifo(coffeeId, kg, pref);
+        lotDraws.push(...r.draws);
+        if (r.draws.length > 0) firstLotIdByCoffeeId[coffeeId] = r.draws[0].lotId;
+        shortKg += r.shortfallKg;
+        errors.push(...r.errors);
+    };
+    if (type === 'Single') {
+        await take(singleId, inputKg, preferredLotId);
+    } else {
+        for (const ing of (ingredients || []).filter(i => i.blend_recipe_id === blendId)) {
+            ingredientPercentageByCoffeeId[ing.green_coffee_id] = parseFloat(ing.percentage);
+            await take(ing.green_coffee_id, (parseFloat(ing.percentage) / 100) * inputKg, null);
+        }
+    }
+    if (errors.length > 0) {
+        const undo = await refundGreenDraws(lotDraws);
+        return { ok: false, reason: errors.join('; '), undoFailed: undo.failed };
+    }
+    return { ok: true, lotDraws, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId, shortKg };
+}
+
+// Reverses a batch's previously recorded consumption (before re-consuming
+// on edit, or before deleting the batch) by adding kg back to the exact lots
+// it was drawn from. A draw row is deleted ONLY after its refund succeeded —
+// it used to be deleted regardless, so a refund rejected by a stock opname
+// freeze lost the green bean AND the record of where it came from. That
+// also makes a retry safe: rows still present are exactly the ones not yet
+// returned. Returns { ok, failed[], refunded: [{ lotId, kg }] }.
 async function refundGreenCoffeeLotsForBatch(roastBatchId) {
-    const { data: allDraws } = await fetchData('roast_batch_green_lots');
-    const mine = (allDraws || []).filter(d => d.roast_batch_id === roastBatchId);
-    if (mine.length === 0) return;
-    for (const d of mine) {
-        // V2 concurrency fix: atomic increment via RPC, same reasoning as
-        // consumeGreenCoffeeLotsFifo above — no read-then-write on
-        // remaining_kg from the client.
-        const { error } = await window.supabaseClient.rpc('refund_green_coffee_lot', {
-            p_lot_id: d.green_coffee_lot_id,
-            p_kg: parseFloat(d.kg_consumed || 0)
-        });
-        if (error) console.error('refund_green_coffee_lot RPC failed for lot', d.green_coffee_lot_id, error);
-        await deleteData('roast_batch_green_lots', d.id);
+    const { data: mine, error: readErr } = await window.supabaseClient
+        .from('roast_batch_green_lots').select('*').eq('roast_batch_id', roastBatchId);
+    if (readErr) return { ok: false, failed: [readErr.message], refunded: [] };
+    const failed = [];
+    const refunded = [];
+    for (const d of (mine || [])) {
+        const kg = parseFloat(d.kg_consumed || 0);
+        if (d.green_coffee_lot_id && kg > 0) {
+            // V2 concurrency fix: atomic increment via RPC, same reasoning as
+            // consumeGreenCoffeeLotsFifo above — no read-then-write on
+            // remaining_kg from the client.
+            const { data, error } = await window.supabaseClient.rpc('refund_green_coffee_lot', {
+                p_lot_id: d.green_coffee_lot_id,
+                p_kg: kg
+            });
+            if (error || data === null) {
+                console.error('refund_green_coffee_lot RPC failed for lot', d.green_coffee_lot_id, error);
+                failed.push(`green lot #${d.green_coffee_lot_id}: +${kg} kg not returned${error ? ' (' + error.message + ')' : ''}`);
+                continue;
+            }
+            refunded.push({ lotId: d.green_coffee_lot_id, kg });
+        }
+        const { error: delErr } = await deleteData('roast_batch_green_lots', d.id);
+        if (delErr) failed.push(`green lot #${d.green_coffee_lot_id}: returned, but its usage record could not be removed (${delErr.message}) — do not retry, report to admin`);
     }
+    return { ok: failed.length === 0, failed, refunded };
 }
 
-// Persists the per-lot draws for a just-saved roast batch.
-async function recordRoastBatchGreenLots(roastBatchId, draws) {
-    for (const d of draws) {
-        await saveData('roast_batch_green_lots', { roast_batch_id: roastBatchId, green_coffee_lot_id: d.lotId, kg_consumed: d.kg });
+// Undo for refundGreenCoffeeLotsForBatch when the edit it was part of then
+// failed: takes the same kg from the same lots again and re-records them
+// against the batch. Returns { ok, failed[] }.
+async function reapplyGreenDrawsForBatch(roastBatchId, draws) {
+    const failed = [];
+    for (const d of (draws || [])) {
+        const { data: taken, error } = await window.supabaseClient.rpc('consume_green_coffee_lot', { p_lot_id: d.lotId, p_kg_requested: d.kg });
+        const takenKg = parseFloat(taken) || 0;
+        if (error || takenKg <= 0) { failed.push(`green lot #${d.lotId}: ${d.kg} kg not re-taken${error ? ' (' + error.message + ')' : ''}`); continue; }
+        const { error: insErr } = await saveData('roast_batch_green_lots', { roast_batch_id: roastBatchId, green_coffee_lot_id: d.lotId, kg_consumed: takenKg });
+        if (insErr) failed.push(`green lot #${d.lotId}: re-taken but not recorded (${insErr.message})`);
+        if (takenKg + 1e-6 < d.kg) failed.push(`green lot #${d.lotId}: only ${takenKg} of ${d.kg} kg re-taken`);
     }
+    return { ok: failed.length === 0, failed };
+}
+
+// Persists the per-lot draws for a just-saved roast batch. Returns the
+// failures (the stock itself already moved — these only lose traceability).
+async function recordRoastBatchGreenLots(roastBatchId, draws) {
+    const failed = [];
+    for (const d of draws) {
+        const { error } = await saveData('roast_batch_green_lots', { roast_batch_id: roastBatchId, green_coffee_lot_id: d.lotId, kg_consumed: d.kg });
+        if (error) failed.push(`green lot #${d.lotId} (${d.kg} kg) usage not recorded: ${error.message}`);
+    }
+    return failed;
 }
 
 // V2 Greenbean Data Analyze: freezes one lab reading per origin at the
@@ -4494,8 +4743,10 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
     }, 300);
 
     // Form submit - reuse the same save logic
+    let quickRoastSaving = false;
     document.getElementById('modal-batch-form').addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (quickRoastSaving) return;
 
         if (validateRoastedNotOverGreenbean()) {
             alert(window.t ? window.t("alert_roasted_exceeds_greenbean") : "Roasted weight can't exceed greenbean weight.");
@@ -4522,150 +4773,165 @@ async function openQuickRoastModal(coffeeType, coffeeId, machineId, scannedLotId
         const singleId = type === 'Single' ? id : null;
         const blendId = type === 'Blend' ? id : null;
         
-        // V2 1B: consume from green_coffee_lots (FIFO), not a direct stock_kg
-        // write — see the matching comment in openRoastBatchModal's submit
-        // handler for why. A single scanned via a sack barcode draws from
-        // that exact lot first, then any shortfall oldest-first; a blend
-        // (or a manually re-picked single) has no lot preference.
-        const lotDraws = [];
-        // V2 Greenbean Data Analyze — see the matching comment in
-        // openRoastBatchModal's submit handler.
-        const firstLotIdByCoffeeId = {};
-        const ingredientPercentageByCoffeeId = {};
-        if (type === 'Single') {
-            const { draws } = await consumeGreenCoffeeLotsFifo(id, inputKg, scannedLotId);
-            lotDraws.push(...draws);
-            if (draws.length > 0) firstLotIdByCoffeeId[id] = draws[0].lotId;
-        } else {
-            const recipeIngs = (ingredients || []).filter(ing => ing.blend_recipe_id === blendId);
-            for (const ing of recipeIngs) {
-                const req = (parseFloat(ing.percentage) / 100) * inputKg;
-                const { draws } = await consumeGreenCoffeeLotsFifo(ing.green_coffee_id, req);
-                lotDraws.push(...draws);
-                if (draws.length > 0) firstLotIdByCoffeeId[ing.green_coffee_id] = draws[0].lotId;
-                ingredientPercentageByCoffeeId[ing.green_coffee_id] = parseFloat(ing.percentage);
+        const quickRoastWork = async () => {
+            // V2 1B: consume from green_coffee_lots (FIFO), not a direct stock_kg
+            // write — see the matching comment in openRoastBatchModal's submit
+            // handler for why. A single scanned via a sack barcode draws from
+            // that exact lot first, then any shortfall oldest-first; a blend
+            // (or a manually re-picked single) has no lot preference.
+            const drawn = await drawGreenForBatch({ type, singleId, blendId, inputKg, ingredients, preferredLotId: scannedLotId });
+            if (!drawn.ok) {
+                return (drawn.undoFailed && drawn.undoFailed.length)
+                    ? { failure: null, problems: [drawn.reason, ...drawn.undoFailed] }
+                    : { failure: drawn.reason, problems: [] };
             }
-        }
+            const { lotDraws, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId } = drawn;
+            const problems = [];
+            // Quick Roast has no low-stock confirmation of its own — a shortfall
+            // (system green stock below the input weight) is reported, not blocked.
+            if (drawn.shortKg > 0.001) problems.push(`Green bean stock was ${drawn.shortKg.toFixed(2)} kg short — only the available amount was deducted. Check the green bean stock.`);
 
-        const qcStatus = isTest ? 'Pending' : 'Success';
+            const qcStatus = isTest ? 'Pending' : 'Success';
 
-        const yieldPct = outputKg > 0 && inputKg > 0 ? parseFloat(((outputKg / inputKg) * 100).toFixed(2)) : null;
-        const record = {
-            batch_code: code,
-            roast_date: roastDate,
-            roasting_plan_id: null,
-            coffee_type: type,
-            single_coffee_id: singleId || null,
-            blend_recipe_id: blendId || null,
-            machine_id: mId,
-            input_weight_kg: inputKg,
-            output_weight_kg: outputKg,
-            yield_percentage: yieldPct,
-            roast_type: isTest ? 'Test' : 'Regular',
-            qc_status: qcStatus,
-            notes: notes || null,
-            roast_degree: degreeInput.value ? parseFloat(degreeInput.value) : null
-        };
+            const yieldPct = outputKg > 0 && inputKg > 0 ? parseFloat(((outputKg / inputKg) * 100).toFixed(2)) : null;
+            const record = {
+                batch_code: code,
+                roast_date: roastDate,
+                roasting_plan_id: null,
+                coffee_type: type,
+                single_coffee_id: singleId || null,
+                blend_recipe_id: blendId || null,
+                machine_id: mId,
+                input_weight_kg: inputKg,
+                output_weight_kg: outputKg,
+                yield_percentage: yieldPct,
+                roast_type: isTest ? 'Test' : 'Regular',
+                qc_status: qcStatus,
+                notes: notes || null,
+                roast_degree: degreeInput.value ? parseFloat(degreeInput.value) : null
+            };
 
-        const { data: savedBatch, error } = await saveData('roast_batches', record);
-        if (error) {
-            // See the same comment in openRoastBatchModal — auto-retrying
-            // with a new code risks silently double-logging a batch if this
-            // error was actually caused by a double-submit/double-scan
-            // rather than a stale sequence number, so this stops and asks
-            // instead of guessing.
-            const isDuplicateCode = /duplicate key|unique constraint/i.test(error.message || '');
-            const msg = isDuplicateCode
-                ? `A batch with code "${code}" already exists. This can happen if you scanned/submitted twice, or logged another batch for the same coffee/machine at nearly the same moment.\n\nPlease check the Batch Logs list to confirm this batch wasn't already saved, then close this form and scan again — a fresh code will be generated.`
-                : 'Failed to save batch: ' + error.message;
-            alert(msg);
-            return;
-        }
+            const { data: savedBatch, error } = await saveData('roast_batches', record);
+            if (error) {
+                // See the same comment in openRoastBatchModal — auto-retrying
+                // with a new code risks silently double-logging a batch if this
+                // error was actually caused by a double-submit/double-scan
+                // rather than a stale sequence number, so this stops and asks
+                // instead of guessing.
+                const isDuplicateCode = /duplicate key|unique constraint/i.test(error.message || '');
+                const msg = isDuplicateCode
+                    ? `A batch with code "${code}" already exists. This can happen if you scanned/submitted twice, or logged another batch for the same coffee/machine at nearly the same moment.\n\nPlease check the Batch Logs list to confirm this batch wasn't already saved, then close this form and scan again — a fresh code will be generated.`
+                    : 'Failed to save batch: ' + error.message;
+                const undo = await refundGreenDraws(lotDraws);
+                return undo.ok ? { failure: msg, problems: [] } : { failure: null, problems: [msg, ...undo.failed] };
+            }
 
-        // V2 1B: persist which lot(s) this batch drew from.
-        await recordRoastBatchGreenLots(savedBatch.id, lotDraws);
-        await recordBatchAnalysisSnapshot(savedBatch.id, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId);
+            // V2 1B: persist which lot(s) this batch drew from.
+            problems.push(...(await recordRoastBatchGreenLots(savedBatch.id, lotDraws)));
+            await recordBatchAnalysisSnapshot(savedBatch.id, firstLotIdByCoffeeId, ingredientPercentageByCoffeeId);
 
-        // Update associated plan(s) — same matching/fulfillment logic as the
-        // regular Roasting Log form (openRoastBatchModal). Without this, a
-        // batch logged via barcode scan never advances its roasting plan's
-        // fulfilled_roasted_kg, so the plan stays stuck at 0/target forever.
-        const { data: plans } = await fetchData('roasting_plans');
-        let matchingPlans = (plans || []).filter(p =>
-            p.coffee_type === type &&
-            (type === 'Single' ? p.single_coffee_id === singleId : p.blend_recipe_id === blendId) &&
-            p.machine_id === mId &&
-            p.status !== 'Completed'
-        );
+            // Update associated plan(s) — same matching/fulfillment logic as the
+            // regular Roasting Log form (openRoastBatchModal). Without this, a
+            // batch logged via barcode scan never advances its roasting plan's
+            // fulfilled_roasted_kg, so the plan stays stuck at 0/target forever.
+            const { data: plans } = await fetchData('roasting_plans');
+            let matchingPlans = (plans || []).filter(p =>
+                p.coffee_type === type &&
+                (type === 'Single' ? p.single_coffee_id === singleId : p.blend_recipe_id === blendId) &&
+                p.machine_id === mId &&
+                p.status !== 'Completed'
+            );
 
-        if (matchingPlans.length > 0) {
-            // Same tiebreak as openRoastBatchModal (including the V2 1I-b
-            // "open sub-plan fills first" priority): sub-plans before normal
-            // plans, then earliest plan_date, then id ascending.
-            matchingPlans.sort((a, b) => {
-                const aSub = a.is_post_blend_component ? 0 : 1;
-                const bSub = b.is_post_blend_component ? 0 : 1;
-                if (aSub !== bSub) return aSub - bSub;
-                return (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id);
-            });
-            let remainingOutput = outputKg;
+            if (matchingPlans.length > 0) {
+                // Same tiebreak as openRoastBatchModal (including the V2 1I-b
+                // "open sub-plan fills first" priority): sub-plans before normal
+                // plans, then earliest plan_date, then id ascending.
+                matchingPlans.sort((a, b) => {
+                    const aSub = a.is_post_blend_component ? 0 : 1;
+                    const bSub = b.is_post_blend_component ? 0 : 1;
+                    if (aSub !== bSub) return aSub - bSub;
+                    return (new Date(a.plan_date) - new Date(b.plan_date)) || (a.id - b.id);
+                });
+                let remainingOutput = outputKg;
 
-            for (let i = 0; i < matchingPlans.length; i++) {
-                if (remainingOutput <= 0) break;
-                const p = matchingPlans[i];
-                const target = parseFloat(p.target_roasted_kg || 0);
-                const currentFulfilled = parseFloat(p.fulfilled_roasted_kg || 0);
-                const capacity = Math.max(0, target - currentFulfilled);
+                for (let i = 0; i < matchingPlans.length; i++) {
+                    if (remainingOutput <= 0) break;
+                    const p = matchingPlans[i];
+                    const target = parseFloat(p.target_roasted_kg || 0);
+                    const currentFulfilled = parseFloat(p.fulfilled_roasted_kg || 0);
+                    const capacity = Math.max(0, target - currentFulfilled);
 
-                if (remainingOutput <= capacity) {
-                    p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
-                    p.status = (p.fulfilled_roasted_kg >= target) ? 'Completed' : 'On Process';
-                    remainingOutput = 0;
-                    await saveData('roasting_plans', p);
-                    await syncPlanStatusToOrderItem(p);
-                    if (p.is_post_blend_component && p.status === 'Completed') await tryAssemblePostBlend(p.parent_plan_id);
-                } else if (i === matchingPlans.length - 1) {
-                    p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
-                    p.status = 'Completed';
-                    remainingOutput = 0;
-                    await saveData('roasting_plans', p);
-                    await syncPlanStatusToOrderItem(p);
-                    if (p.is_post_blend_component) await tryAssemblePostBlend(p.parent_plan_id);
-                } else {
-                    p.fulfilled_roasted_kg = target;
-                    p.status = 'Completed';
-                    remainingOutput -= capacity;
-                    await saveData('roasting_plans', p);
-                    await syncPlanStatusToOrderItem(p);
-                    if (p.is_post_blend_component) await tryAssemblePostBlend(p.parent_plan_id);
+                    if (remainingOutput <= capacity) {
+                        p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
+                        p.status = (p.fulfilled_roasted_kg >= target) ? 'Completed' : 'On Process';
+                        remainingOutput = 0;
+                        await saveData('roasting_plans', p);
+                        await syncPlanStatusToOrderItem(p);
+                        if (p.is_post_blend_component && p.status === 'Completed') problems.push(...(await tryAssemblePostBlend(p.parent_plan_id)));
+                    } else if (i === matchingPlans.length - 1) {
+                        p.fulfilled_roasted_kg = currentFulfilled + remainingOutput;
+                        p.status = 'Completed';
+                        remainingOutput = 0;
+                        await saveData('roasting_plans', p);
+                        await syncPlanStatusToOrderItem(p);
+                        if (p.is_post_blend_component) problems.push(...(await tryAssemblePostBlend(p.parent_plan_id)));
+                    } else {
+                        p.fulfilled_roasted_kg = target;
+                        p.status = 'Completed';
+                        remainingOutput -= capacity;
+                        await saveData('roasting_plans', p);
+                        await syncPlanStatusToOrderItem(p);
+                        if (p.is_post_blend_component) problems.push(...(await tryAssemblePostBlend(p.parent_plan_id)));
+                    }
                 }
             }
-        }
 
-        // Bulk Roasted Coffee sync — a new Quick Roast batch is always a fresh
-        // insert (never an edit), so the only transition possible is into
-        // 'Success' (or 'Pending' if Batch Test, which adds nothing yet).
-        if (qcStatus === 'Success') {
-            let coffeeName = 'Roasted Coffee';
-            if (type === 'Single') {
-                const gb = (greenbeans || []).find(g => g.id === singleId);
-                coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
-            } else {
-                const r = (recipes || []).find(rec => rec.id === blendId);
-                coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+            // Bulk Roasted Coffee sync — a new Quick Roast batch is always a fresh
+            // insert (never an edit), so the only transition possible is into
+            // 'Success' (or 'Pending' if Batch Test, which adds nothing yet).
+            if (qcStatus === 'Success') {
+                let coffeeName = 'Roasted Coffee';
+                if (type === 'Single') {
+                    const gb = (greenbeans || []).find(g => g.id === singleId);
+                    coffeeName = gb ? `${gb.name} (Single)` : 'Single Origin';
+                } else {
+                    const r = (recipes || []).find(rec => rec.id === blendId);
+                    coffeeName = r ? `${r.name} (Blend)` : 'Blend Recipe';
+                }
+                const bulkAdd = await addWeightToBulkRoastedCoffee(type, singleId, blendId, mId, coffeeName, outputKg, roastDate, 'roast_batches', savedBatch.id);
+                if (!bulkAdd.ok) problems.push(`Roasted coffee (${outputKg} kg) was NOT added to bulk stock: ${bulkAdd.error}`);
             }
-            await addWeightToBulkRoastedCoffee(type, singleId, blendId, mId, coffeeName, outputKg, roastDate, 'roast_batches', savedBatch.id);
-        }
 
-        // Show success toast
-        const toast = document.createElement('div');
-        toast.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#16a34a; color:white; padding:12px 20px; border-radius:8px; font-weight:700; z-index:99999; box-shadow:0 4px 12px rgba(0,0,0,0.3); animation: fadeIn 0.3s;';
-        toast.textContent = `✅ Batch ${code} saved! Ready for next scan.`;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
+            return { failure: null, problems, code };
+        };
+
+        if (!(await ensureNoStockOpname())) return;
+        quickRoastSaving = true;
+        const lock = lockProcessingScreen(stT('roast_saving', 'Saving batch…'));
+        let outcome;
+        try {
+            outcome = await quickRoastWork();
+        } catch (err) {
+            console.error('Quick roast save error:', err);
+            outcome = { failure: null, problems: [err && err.message ? err.message : String(err)] };
+        } finally {
+            lock.release();
+            quickRoastSaving = false;
+        }
+        if (outcome.failure) { await showStockFailed(outcome.failure); return; }
+
+        if (outcome.code) {
+            // Show success toast
+            const toast = document.createElement('div');
+            toast.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#16a34a; color:white; padding:12px 20px; border-radius:8px; font-weight:700; z-index:99999; box-shadow:0 4px 12px rgba(0,0,0,0.3); animation: fadeIn 0.3s;';
+            toast.textContent = `✅ Batch ${outcome.code} saved! Ready for next scan.`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
 
         // Close modal
         document.getElementById('btn-close-modal').click();
+        if (outcome.problems.length > 0) await showStockPartial(outcome.problems.join('\n'));
 
         // Refresh if on roasting page
         if (!document.getElementById('sec-roasting')?.classList.contains('hidden')) {

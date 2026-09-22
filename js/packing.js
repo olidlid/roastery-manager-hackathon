@@ -783,6 +783,7 @@ async function openCloseLotModal(bulkId) {
         const notes = document.getElementById('m-closelot-notes').value.trim();
 
         if (!await showWarningModal(window.t ? window.t('close_lot_confirm') : 'Close this lot?')) return;
+        if (!(await ensureNoStockOpname())) return;
 
         const { data: wasteRow, error: wasteErr } = await saveData('waste_inventory', {
             source_type: 'Bulk',
@@ -806,7 +807,9 @@ async function openCloseLotModal(bulkId) {
             p_reason: reason, p_user: (currentUser && currentUser.name) || null
         });
         if (bulkErr) {
-            await showWarningModal('Could not close the lot: ' + bulkErr.message, false);
+            // Don't leave a waste record for a lot that is still open.
+            if (wasteRow) await deleteData('waste_inventory', wasteRow.id);
+            await showStockFailed('Could not close the lot: ' + bulkErr.message);
             return;
         }
 
@@ -1285,7 +1288,31 @@ async function openCustomBlendModal() {
     });
 }
 
+// Stock-path audit (2026-09-22): all-or-nothing — a source that fails to
+// draw (or a blend row that fails to save) puts back everything this submit
+// already took, instead of silently building a smaller blend / losing the
+// sources.
 async function submitCustomBlend({ name, coffeeCode, sourceRows, machineId }) {
+    if (!(await ensureNoStockOpname())) return;
+    const userName = (currentUser && currentUser.name) || null;
+    const taken = []; // { kind: 'bulk'|'packed', id, amount } for undo
+    const undoTaken = async () => {
+        const failed = [];
+        for (const t of taken) {
+            const rpc = t.kind === 'bulk' ? 'refund_bulk_lot' : 'refund_packed_lot';
+            const args = t.kind === 'bulk'
+                ? { p_bulk_id: t.id, p_kg: t.amount, p_operation: 'undo', p_reason: `Custom blend "${name}" failed — rolled back`, p_user: userName }
+                : { p_lot_id: t.id, p_pcs: t.amount, p_operation: 'undo', p_reason: `Custom blend "${name}" failed — rolled back`, p_user: userName };
+            const { data, error } = await window.supabaseClient.rpc(rpc, args);
+            if (error || data === null) failed.push(`${t.kind} #${t.id}: ${t.amount} not put back${error ? ' (' + error.message + ')' : ''}`);
+        }
+        return failed;
+    };
+    const failWith = async (reason) => {
+        const left = await undoTaken();
+        if (left.length) await showStockPartial([reason, ...left].join('\n'));
+        else await showStockFailed(reason);
+    };
     // Re-fetch fresh right before mutating, same idiom used elsewhere (e.g.
     // openPackBulkModal's bulk_available decrement), to avoid acting on a
     // stale snapshot.
@@ -1314,8 +1341,9 @@ async function submitCustomBlend({ name, coffeeCode, sourceRows, machineId }) {
                 p_bulk_id: fresh.id, p_kg: row.amountKg,
                 p_operation: 'blend', p_reason: `Custom blend: ${name}`, p_user: (currentUser && currentUser.name) || null
             });
-            if (consumeErr) { console.error('consume_bulk_lot RPC failed:', consumeErr); continue; }
+            if (consumeErr) { console.error('consume_bulk_lot RPC failed:', consumeErr); await failWith(consumeErr.message); return; }
             const kg = parseFloat(kgTaken) || 0;
+            if (kg > 0) taken.push({ kind: 'bulk', id: fresh.id, amount: kg });
             if (kg <= 0) continue;
             totalKg += kg;
             componentsToInsert.push({ source_type: 'Bulk', source_bulk_id: row.refId, source_packed_lot_id: null, kg });
@@ -1338,8 +1366,9 @@ async function submitCustomBlend({ name, coffeeCode, sourceRows, machineId }) {
                 p_lot_id: lot.id, p_pcs: bagsUsed,
                 p_operation: 'blend', p_reason: `Custom blend: ${name}`, p_user: (currentUser && currentUser.name) || null
             });
-            if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+            if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); await failWith(consumeErr.message); return; }
             const actualBags = parseInt(bagsTaken) || 0;
+            if (actualBags > 0) taken.push({ kind: 'packed', id: lot.id, amount: actualBags });
             if (actualBags <= 0) continue;
             const actualKg = bagSizeG > 0 ? (actualBags * bagSizeG) / 1000 : 0;
             totalKg += actualKg;
@@ -1384,12 +1413,21 @@ async function submitCustomBlend({ name, coffeeCode, sourceRows, machineId }) {
     });
 
     if (error || !newBulk) {
-        await showWarningModal('Failed to save the new blend. Please try again.', false);
+        await failWith('Failed to save the new blend' + (error ? ': ' + error.message : '.'));
         return;
     }
 
+    const compProblems = [];
     for (const comp of componentsToInsert) {
-        await saveData('post_blend_components', { ...comp, blend_bulk_id: newBulk.id });
+        const { error: compErr } = await saveData('post_blend_components', { ...comp, blend_bulk_id: newBulk.id });
+        if (compErr) compProblems.push(`Blend component record not saved (${comp.kg.toFixed(2)} kg): ${compErr.message}`);
+    }
+    if (compProblems.length > 0) {
+        const closeBtnP = document.getElementById('btn-close-modal');
+        if (closeBtnP) closeBtnP.click();
+        await loadCustomBlendSection();
+        await showStockPartial(compProblems.join('\n'));
+        return;
     }
 
     const closeBtn = document.getElementById('btn-close-modal');
@@ -1576,6 +1614,8 @@ async function openEditPackingRecordModal(recordId) {
         }
 
         const newRemaining = Math.max(0, currentRemaining + delta);
+        if (!(await ensureNoStockOpname())) return;
+        const problems = [];
 
         // packed_coffee.quantity is trigger-derived from this lots write
         // (sync_packed_coffee_quantity) — no separate packed_coffee write
@@ -1588,8 +1628,9 @@ async function openEditPackingRecordModal(recordId) {
             p_operation: 'correction', p_ref_table: 'packing_records', p_ref_id: record.id,
             p_reason: `${currentQty} → ${newQty} bags`, p_user: (currentUser && currentUser.name) || null
         });
-        if (setErr) { console.error('set_packed_lot_remaining RPC failed:', setErr); return; }
-        await saveData('packed_coffee_lots', { id: lot.id, quantity_pcs: newQty });
+        if (setErr) { console.error('set_packed_lot_remaining RPC failed:', setErr); await showStockFailed(setErr.message); return; }
+        const { error: qtyErr } = await saveData('packed_coffee_lots', { id: lot.id, quantity_pcs: newQty });
+        if (qtyErr) problems.push(`Lot's original packed quantity not updated: ${qtyErr.message}`);
 
         // More bags packed = more bulk kg consumed, so bulk moves the
         // opposite direction of the packed-quantity delta. Optional: the
@@ -1608,10 +1649,13 @@ async function openEditPackingRecordModal(recordId) {
                 p_operation: 'correction', p_ref_table: 'packing_records', p_ref_id: record.id,
                 p_reason: `${currentQty} → ${newQty} bags`, p_user: (currentUser && currentUser.name) || null
             });
-            if (bulkErr) console.error(`${rpcName} RPC failed:`, bulkErr);
+            if (bulkErr) {
+                console.error(`${rpcName} RPC failed:`, bulkErr);
+                problems.push(`Packed stock was corrected, but bulk stock was NOT adjusted (${bulkDeltaKg.toFixed(2)} kg): ${bulkErr.message}`);
+            }
         }
 
-        await saveData('packing_records', {
+        const { error: recErr } = await saveData('packing_records', {
             date: new Date().toISOString().split('T')[0],
             pack_date: new Date().toISOString().split('T')[0],
             source_type: record.source_type,
@@ -1626,8 +1670,10 @@ async function openEditPackingRecordModal(recordId) {
             notes: `Correction of record #${record.id} (${lot.lot_code}): ${currentQty} → ${newQty} bags`
         });
 
+        if (recErr) problems.push(`Correction record not saved: ${recErr.message}`);
         document.getElementById('btn-close-modal').click();
-        await showWarningModal('Correction saved.', false, null, null, 'success');
+        if (problems.length > 0) await showStockPartial(problems.join('\n'));
+        else await showWarningModal('Correction saved.', false, null, null, 'success');
         loadPackingRecordsTable();
         loadPackedCoffeeSection();
         loadPackingSection();
@@ -2027,12 +2073,17 @@ async function buildOrderUnwindBreakdown(orderId) {
     const ledgerCoveredKeys = new Set();
     const refundTasks = []; // { itemId, lotId, qty, label } — the ledger-tracked ones
     for (const [key, net] of perItemLotNet.entries()) {
+        // Covered = the pair has ANY ledger movement (per the legacy
+        // fallback's own definition below) — including one whose net is
+        // already <= 0. Marking only outstanding pairs let a legacy row be
+        // refunded a second time when Stop order was retried after a
+        // partly failed first attempt (its refund made the net positive).
+        ledgerCoveredKeys.add(key);
         const qty = -net;
         if (qty <= 0) continue;
         const [itemIdStr, lotIdStr] = key.split(':');
         const lotId = parseInt(lotIdStr);
         refundTasks.push({ itemId: parseInt(itemIdStr), lotId, qty, label: lotLabel(lotId) });
-        ledgerCoveredKeys.add(key);
     }
     // Legacy fallback: a dispatch_lot_items row whose (item, lot) pair has
     // no ledger movement at all (pre-Phase-3 draw — same case
@@ -2183,18 +2234,38 @@ async function stopOrderFromPacking(breakdown, reason) {
         return;
     }
     const { order, orderItems, refundTasks, bulkReservationIds, dispatchLotItemIdsToDelete, plansWithoutBatch } = breakdown;
+    if (!(await ensureNoStockOpname())) return;
 
     // 1) Refund every outstanding lot — §7.6: through the RPC, not a direct
     // UPDATE, so the movement ledger records the refund instead of just the
     // final number changing with no trail.
+    const refundFailures = [];
     for (const t of refundTasks) {
-        const { error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
+        const { data: refundData, error: refundErr } = await window.supabaseClient.rpc('refund_packed_lot', {
             p_lot_id: t.lotId, p_pcs: t.qty,
             p_operation: 'unable_to_fulfill', p_ref_table: 'request_order_items', p_ref_id: t.itemId,
             p_reason: `Order ${order.order_number || order.id} marked Unable to Fulfill from packing`,
             p_user: (currentUser && currentUser.name) || null
         });
-        if (refundErr) console.error('refund_packed_lot RPC failed while stopping order:', refundErr);
+        if (refundErr || refundData === null) {
+            console.error('refund_packed_lot RPC failed while stopping order:', refundErr);
+            refundFailures.push(`${t.label}: ${t.qty} pcs${refundErr ? ' (' + refundErr.message + ')' : ' (lot not found)'}`);
+        }
+    }
+    // Stock-path audit (2026-09-22): stop HERE if any refund failed — the
+    // old code deleted the dispatch trail and closed the order anyway, so a
+    // rejected refund lost the bags and the record of them. Refunds already
+    // done are in the ledger, and buildOrderUnwindBreakdown derives the
+    // outstanding amount from that ledger, so pressing Stop order again only
+    // retries what is still outstanding.
+    if (refundFailures.length > 0) {
+        const modalCloseBtnF = document.getElementById('btn-close-modal');
+        if (modalCloseBtnF) modalCloseBtnF.click();
+        await loadPackingRequestsSection();
+        await showWarningModal(
+            stT('stop_order_incomplete', 'The order was NOT stopped — some bags could not be returned to stock:\n{lines}\n\nBags already returned are recorded. Open Stop order again to finish; it will only retry what is still outstanding.').replace('{lines}', refundFailures.join('\n')),
+            false, stT('stop_order_incomplete_title', 'Order not stopped'), null, 'warning');
+        return;
     }
 
     // 2) Drop the dispatch_lot_items trail for this order — it no longer
@@ -3121,6 +3192,7 @@ async function openDispatchCheckoutModal(orderId) {
         if (!item) return;
         const prepared = itemPreparedQty(item);
         if (prepared <= 0) return;
+        if (!(await ensureNoStockOpname())) return;
 
         // Guard claimed BEFORE the confirmation dialog, not after (found live
         // testing 7af6953): showWarningModal binds a fresh keydown listener
@@ -3270,6 +3342,7 @@ async function openDispatchCheckoutModal(orderId) {
 
     async function onCheckoutClicked() {
         if (checkoutInFlight) return;
+        if (!(await ensureNoStockOpname())) return;
         if (cart.size === 0) {
             await showWarningModal('Add at least one lot to the cart before checking out.', false);
             return;
@@ -3381,17 +3454,22 @@ async function openDispatchCheckoutModal(orderId) {
         // if a race clamps a take below what was requested, the order must
         // not be credited for stock it never got.
         const qtyByItem = new Map();
+        // Lines that did not (fully) come out of stock. Stock-path audit
+        // (2026-09-22): these used to vanish into the console, and with
+        // "process as is" the missing bags were then recorded as unfulfilled.
+        const failedRows = [];
         for (const row of cartRows) {
             const lot = (freshLots || []).find(l => l.id === row.lotId);
-            if (!lot) continue;
+            if (!lot) { failedRows.push(`lot #${row.lotId}: not found`); continue; }
             const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', {
                 p_lot_id: lot.id, p_pcs: row.qty,
                 p_operation: 'dispatch', p_ref_table: 'request_order_items', p_ref_id: row.orderItemId,
                 p_reason: order && order.order_number ? `Checkout ${order.order_number}` : null,
                 p_user: (currentUser && currentUser.name) || null
             });
-            if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+            if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); failedRows.push(`${lot.lot_code || '#' + lot.id}: ${consumeErr.message}`); continue; }
             const actualQty = parseInt(taken) || 0;
+            if (actualQty < row.qty) failedRows.push(`${lot.lot_code || '#' + lot.id}: only ${actualQty} of ${row.qty} pcs taken`);
             if (actualQty <= 0) continue;
             qtyByItem.set(row.orderItemId, (qtyByItem.get(row.orderItemId) || 0) + actualQty);
 
@@ -3419,6 +3497,9 @@ async function openDispatchCheckoutModal(orderId) {
         // Bug 1 fix (found live testing 7af6953): quantity_unfulfilled can
         // already carry a LEADER's decision from a partial approval — adding
         // to it, never overwriting it, is what keeps that decision intact.
+        // Bags that never left stock must never be written off as
+        // unfulfilled — keep the order open for them instead.
+        if (failedRows.length > 0 && choice === 'finish') choice = 'continue';
         let stillShort = false;
         for (const item of items) {
             const fresh = (freshItems || []).find(i => i.id === item.id);
@@ -3452,7 +3533,13 @@ async function openDispatchCheckoutModal(orderId) {
             : stillShort
                 ? 'Checkout saved. This order still has lines pending — it stays open for the remainder.'
                 : 'Checkout saved. All lines are fulfilled — ready to dispatch.';
-        await showWarningModal(message, false, null, null, 'success');
+        if (failedRows.length > 0) {
+            await showWarningModal(
+                dcT('dc_checkout_partial', 'Checkout saved, but some lots could NOT be taken out of stock:\n{lines}\n\nThose bags are still in stock and the order stays open for them — nothing was recorded as unfulfilled.').replace('{lines}', failedRows.join('\n')),
+                false, dcT('dc_checkout_partial_title', 'Checkout incomplete'), null, 'warning');
+        } else {
+            await showWarningModal(message, false, null, null, 'success');
+        }
 
         const printNow = await showWarningModal('Print the waybill now?', true);
         if (printNow) await printOrderDetail(order.id);
@@ -4470,6 +4557,7 @@ async function openPrintBarcodeModal(bulkId) {
             return;
         }
 
+        if (!(await ensureNoStockOpname())) return;
         const lot = await getOrCreateProductionLot(bulk, machines, greenbeans, recipes, roastBatches);
 
         // V2 barcode label fix: each requested size needs its OWN
@@ -4484,6 +4572,12 @@ async function openPrintBarcodeModal(bulkId) {
             r.packedCoffeeLotId = packedLot ? packedLot.id : null;
             r.lotCode = packedLot ? packedLot.lot_code : null;
             r.stripCode = packedLot ? packedLot.strip_code : null;
+        }
+        // A label without its lot id can never be scanned at checkout — don't print it.
+        const missing = requested.filter(r => !r.packedCoffeeLotId);
+        if (missing.length > 0) {
+            await showStockFailed(`Could not reserve a lot for ${missing.map(r => r.label).join(', ')} — no labels were printed.`);
+            return;
         }
 
         printLotBarcodeLabels(lot, requested, machines);
@@ -5207,9 +5301,11 @@ async function adjustPackedStock(id) {
     if (!isNaN(newQty) && newQty >= 0) {
         // quantity is trigger-derived from packed_coffee_lots — apply the
         // change as a lot delta, not a direct write (see applyPackedCoffeeManualQtyDelta).
-        await applyPackedCoffeeManualQtyDelta(id, newQty - (parseInt(record.quantity) || 0), 'manual_edit', 'packed_coffee', id);
+        if (!(await ensureNoStockOpname())) return;
+        const ok = await applyPackedCoffeeManualQtyDelta(id, newQty - (parseInt(record.quantity) || 0), 'manual_edit', 'packed_coffee', id);
         loadPackingSection();
         scheduleDashboardRefresh();
+        if (!ok) await showStockPartial('The stock change was not fully applied — check this item\'s lots in Stock by Lot.');
     } else {
         alert(window.t("alert_invalid_qty"));
     }
@@ -5292,13 +5388,17 @@ async function loadBulkRoastedSection() {
             const coffeeName = decodeURIComponent(btn.getAttribute('data-coffee'));
             const confirmed = await showWarningModal(`Are you sure you want to delete all bulk stock for "${coffeeName}"?\n\nThis action cannot be undone.`);
             if (!confirmed) return;
+            if (!(await ensureNoStockOpname())) return;
             const { data: allBulk } = await fetchData('bulk_roasted_coffee');
             const toDelete = (allBulk || []).filter(b => b.coffee_name === coffeeName);
+            const failed = [];
             for (const item of toDelete) {
-                await deleteData('bulk_roasted_coffee', item.id);
+                const { error } = await deleteData('bulk_roasted_coffee', item.id);
+                if (error) failed.push(`bulk #${item.id}: ${error.message}`);
             }
             await loadBulkRoastedSection();
             scheduleDashboardRefresh();
+            if (failed.length > 0) await showStockPartial(failed.join('\n'));
         });
     });
 }
@@ -5856,6 +5956,8 @@ async function openStockByLotModal(coffeeName) {
     });
 
     document.getElementById('sbl-btn-save').addEventListener('click', async () => {
+        if (!(await ensureNoStockOpname())) return;
+        const sblProblems = [];
         const inputs = document.querySelectorAll('.sbl-qty-input');
         for (const inp of inputs) {
             const lotId = parseInt(inp.getAttribute('data-lot-id'));
@@ -5875,7 +5977,10 @@ async function openStockByLotModal(coffeeName) {
                     p_operation: 'manual_edit', p_ref_table: 'packed_coffee_lots', p_ref_id: lotId,
                     p_reason: `${row.remaining} → ${newVal} pcs (Stock by Lot)`, p_user: (currentUser && currentUser.name) || null
                 });
-                if (setErr) console.error('set_packed_lot_remaining RPC failed:', setErr);
+                if (setErr) {
+                    console.error('set_packed_lot_remaining RPC failed:', setErr);
+                    sblProblems.push(`lot #${lotId}: not changed (${setErr.message})`);
+                }
             }
         }
         // A straight DELETE, not an RPC — Phase 1's RPCs exist to make a
@@ -5885,12 +5990,14 @@ async function openStockByLotModal(coffeeName) {
         // negative delta, so this is a fully audited write-off, not a
         // silent loss.
         for (const lotId of deletedLotIds) {
-            await deleteData('packed_coffee_lots', lotId);
+            const { error: delErr } = await deleteData('packed_coffee_lots', lotId);
+            if (delErr) sblProblems.push(`lot #${lotId}: not deleted (${delErr.message})`);
         }
 
         document.getElementById('btn-close-modal').click();
         loadPackedCoffeeSection();
         scheduleDashboardRefresh();
+        if (sblProblems.length > 0) await showStockPartial(sblProblems.join('\n'));
     });
 }
 
@@ -6144,7 +6251,9 @@ async function openCustomPackingModal() {
             alert("Please input quantity for at least one package size.");
             return;
         }
+        if (!(await ensureNoStockOpname())) return;
 
+        const packFailures = [];
         for (const item of packsToSave) {
             // getOrCreatePackedCoffeeRow (shared with the bulk-pack flow,
             // race-safe via the DB's partial unique index) resolves the row
@@ -6155,15 +6264,20 @@ async function openCustomPackingModal() {
             // packed_coffee.quantity is trigger-derived (sync_packed_coffee_quantity)
             // from the packed_coffee_lots write below — no separate write needed.
             // V2 1G-1: no source bulk/production lot for a manual entry — link left null.
-            if (packedCoffeeId) {
-                await getOrCreatePackedCoffeeLot(packedCoffeeId, item.qty, null);
-            }
+            const addedLot = packedCoffeeId ? await getOrCreatePackedCoffeeLot(packedCoffeeId, item.qty, null) : null;
+            if (!addedLot) packFailures.push(`${item.qty} × ${item.gram}g`);
         }
 
         modalContainer.classList.add('hidden');
         loadPackedCoffeeSection();
         scheduleDashboardRefresh();
-        await showWarningModal("Custom packing stock added successfully.", false, null, null, 'success');
+        if (packFailures.length === packsToSave.length) {
+            await showStockFailed(`None of the sizes could be added: ${packFailures.join(', ')}`);
+        } else if (packFailures.length > 0) {
+            await showStockPartial(`These were NOT added to stock: ${packFailures.join(', ')}. The other sizes were added.`);
+        } else {
+            await showWarningModal("Custom packing stock added successfully.", false, null, null, 'success');
+        }
     });
 }
 
@@ -6924,8 +7038,8 @@ async function openNewRepackModal() {
             roastDate = distinctDates[0] || new Date().toISOString().split('T')[0];
         }
 
-        await submitRepack(group, rows, roastDate);
-        document.getElementById('btn-close-modal').click();
+        const repacked = await submitRepack(group, rows, roastDate);
+        if (repacked) document.getElementById('btn-close-modal').click();
     });
 }
 
@@ -6934,52 +7048,97 @@ async function openNewRepackModal() {
 // UNCHANGED (no renaming — explicit user requirement), and record one
 // repack_sources row per opened lot for traceability (js/tracking.js walks
 // this exactly like it already walks post_blend_components).
+// Stock-path audit (2026-09-22): the opened lots are consumed FIRST and
+// the new bulk row is created from what was ACTUALLY taken. The old order
+// (bulk first at the full requested kg, then consume) meant a rejected
+// consume left the same coffee counted twice — once as packed, once as bulk.
+// Any consume error, or a failed bulk insert, puts every bag back.
 async function submitRepack(group, rows, roastDate) {
-    const totalKg = rows.reduce((sum, r) => sum + (r.pcs * r.sizeG) / 1000, 0);
+    if (!(await ensureNoStockOpname())) return false;
+    const sb = window.supabaseClient;
+    const userName = (currentUser && currentUser.name) || null;
+    const lock = lockProcessingScreen(stT('repack_saving', 'Saving repack…'));
+    let outcome;
+    try {
+        outcome = await (async () => {
+            const taken = []; // { r, pcs }
+            const putBack = async () => {
+                const failed = [];
+                for (const t of taken) {
+                    const { data, error } = await sb.rpc('refund_packed_lot', {
+                        p_lot_id: t.r.lotId, p_pcs: t.pcs,
+                        p_operation: 'undo', p_reason: 'Repack failed — rolled back', p_user: userName
+                    });
+                    if (error || data === null) failed.push(`lot #${t.r.lotId}: ${t.pcs} pcs not put back${error ? ' (' + error.message + ')' : ''}`);
+                }
+                return failed;
+            };
+            for (const r of rows) {
+                // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — packed_coffee.quantity
+                // is trigger-derived (sync_packed_coffee_quantity) from this lots write.
+                const { data: got, error: consumeErr } = await sb.rpc('consume_packed_lot', {
+                    p_lot_id: r.lotId, p_pcs: r.pcs,
+                    p_operation: 'repack', p_ref_table: 'packed_coffee_lots', p_ref_id: r.lotId,
+                    p_user: userName
+                });
+                if (consumeErr) {
+                    console.error('consume_packed_lot RPC failed:', consumeErr);
+                    const left = await putBack();
+                    return left.length ? { partial: [consumeErr.message, ...left] } : { failure: consumeErr.message };
+                }
+                const pcs = parseInt(got) || 0;
+                if (pcs > 0) taken.push({ r, pcs });
+            }
+            const totalKg = taken.reduce((sum, t) => sum + (t.pcs * t.r.sizeG) / 1000, 0);
+            if (totalKg <= 0) return { failure: 'Nothing could be taken from the selected lots (they may be empty).' };
 
-    const { data: newBulk, error: bulkError } = await saveData('bulk_roasted_coffee', {
-        coffee_name: group.coffeeName,
-        coffee_type: group.coffeeType,
-        single_coffee_id: group.singleId,
-        blend_recipe_id: group.blendId,
-        machine_id: rows[0].machineId,
-        bulk_available: totalKg,
-        production_date: roastDate,
-        is_repack: true,
-        // Movement context on the fresh INSERT (STOCK_LEDGER_PLAN.md
-        // Phase 4 addendum lesson).
-        mv_operation: 'repack', mv_reason: `Repacked from ${rows.length} lot(s)`, mv_user: (currentUser && currentUser.name) || null
-    });
-    if (bulkError || !newBulk) {
-        alert('Failed to create repack bulk: ' + (bulkError ? bulkError.message : 'unknown error'));
-        return;
-    }
+            const { data: newBulk, error: bulkError } = await saveData('bulk_roasted_coffee', {
+                coffee_name: group.coffeeName,
+                coffee_type: group.coffeeType,
+                single_coffee_id: group.singleId,
+                blend_recipe_id: group.blendId,
+                machine_id: rows[0].machineId,
+                bulk_available: totalKg,
+                production_date: roastDate,
+                is_repack: true,
+                // Movement context on the fresh INSERT (STOCK_LEDGER_PLAN.md
+                // Phase 4 addendum lesson).
+                mv_operation: 'repack', mv_reason: `Repacked from ${taken.length} lot(s)`, mv_user: userName
+            });
+            if (bulkError || !newBulk) {
+                const reason = 'Failed to create repack bulk: ' + (bulkError ? bulkError.message : 'unknown error');
+                const left = await putBack();
+                return left.length ? { partial: [reason, ...left] } : { failure: reason };
+            }
 
-    for (const r of rows) {
-        // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — packed_coffee.quantity
-        // is trigger-derived (sync_packed_coffee_quantity) from this lots
-        // write, no separate packed_coffee write needed. repack_sources
-        // below records the pcs ACTUALLY taken, in case a race clamped it
-        // below what was requested.
-        const { data: taken, error: consumeErr } = await window.supabaseClient.rpc('consume_packed_lot', {
-            p_lot_id: r.lotId, p_pcs: r.pcs,
-            p_operation: 'repack', p_ref_table: 'bulk_roasted_coffee', p_ref_id: newBulk.id,
-            p_user: (currentUser && currentUser.name) || null
-        });
-        if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
-        const actualPcs = parseInt(taken) || 0;
-        if (actualPcs <= 0) continue;
-        await saveData('repack_sources', {
-            repack_bulk_id: newBulk.id,
-            source_packed_lot_id: r.lotId,
-            pcs: actualPcs,
-            kg: (actualPcs * r.sizeG) / 1000
-        });
+            const problems = [];
+            for (const t of taken) {
+                const { error: srcErr } = await saveData('repack_sources', {
+                    repack_bulk_id: newBulk.id,
+                    source_packed_lot_id: t.r.lotId,
+                    pcs: t.pcs,
+                    kg: (t.pcs * t.r.sizeG) / 1000
+                });
+                if (srcErr) problems.push(`Repack source record for lot #${t.r.lotId} not saved: ${srcErr.message}`);
+            }
+            const requestedPcs = rows.reduce((s2, r) => s2 + r.pcs, 0);
+            const takenPcs = taken.reduce((s2, t) => s2 + t.pcs, 0);
+            if (takenPcs < requestedPcs) problems.push(`Only ${takenPcs} of ${requestedPcs} bags could be taken (lots had less than expected) — the repack bulk holds ${totalKg.toFixed(2)} kg.`);
+            return { partial: problems.length ? problems : null };
+        })();
+    } catch (err) {
+        console.error('submitRepack error:', err);
+        outcome = { partial: [err && err.message ? err.message : String(err)] };
+    } finally {
+        lock.release();
     }
 
     await loadPackingSection();
     await loadRepackHistorySection();
     scheduleDashboardRefresh();
+    if (outcome.failure) { await showStockFailed(outcome.failure); return false; }
+    if (outcome.partial) await showStockPartial(outcome.partial.join('\n'));
+    return true;
 }
 
 // ============================================================================
@@ -7760,6 +7919,7 @@ async function submitStockRelease({ date, category, salesName, notes, lines }) {
         await showWarningModal('Enter a note — it is required for the "Other" category.', false);
         return;
     }
+    if (!(await ensureNoStockOpname())) return;
 
     // Re-check against freshly fetched rows rather than the modal's snapshot:
     // stock can move while this modal is open (another dispatch, a repack),
@@ -7787,6 +7947,11 @@ async function submitStockRelease({ date, category, salesName, notes, lines }) {
         return;
     }
 
+    // Stock-path audit (2026-09-22): lines that fail are reported instead of
+    // skipped silently; if nothing at all left stock, the empty header is
+    // removed again.
+    const releaseFailures = [];
+    let releasedAny = false;
     for (const line of lines) {
         // Atomic RPC (STOCK_LEDGER_PLAN.md Phase 1) — packed_coffee.quantity
         // is trigger-derived (sync_packed_coffee_quantity) from this lots
@@ -7798,9 +7963,11 @@ async function submitStockRelease({ date, category, salesName, notes, lines }) {
             p_operation: 'release', p_ref_table: 'stock_releases', p_ref_id: header.id,
             p_user: (currentUser && currentUser.name) || null
         });
-        if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); continue; }
+        if (consumeErr) { console.error('consume_packed_lot RPC failed:', consumeErr); releaseFailures.push(`${line.coffeeName} ${line.sizeG}g: ${consumeErr.message}`); continue; }
         const actualQty = parseInt(taken) || 0;
+        if (actualQty < line.qty) releaseFailures.push(`${line.coffeeName} ${line.sizeG}g: only ${actualQty} of ${line.qty} released`);
         if (actualQty <= 0) continue;
+        releasedAny = true;
 
         await saveData('stock_release_items', {
             stock_release_id: header.id,
@@ -7812,8 +7979,14 @@ async function submitStockRelease({ date, category, salesName, notes, lines }) {
         });
     }
 
+    if (!releasedAny) {
+        await deleteData('stock_releases', header.id);
+        await showStockFailed(releaseFailures.join('\n') || 'Nothing could be released.');
+        return;
+    }
     document.getElementById('btn-close-modal').click();
     await loadStockReleaseSection();
     await loadPackingSection();
     scheduleDashboardRefresh();
+    if (releaseFailures.length > 0) await showStockPartial(`The release was recorded, but these lines did not (fully) leave stock:\n${releaseFailures.join('\n')}`);
 }

@@ -154,9 +154,71 @@ function daysBetween(dateStrA, dateStrB) {
 function _handleStockFreezeError(e) {
     if (e && typeof e.message === 'string' && e.message.includes('Stock opname sedang berjalan')) {
         if (typeof showWarningModal === 'function') {
-            showWarningModal(e.message, false, null, null, 'warning');
+            // The trigger's own RAISE text is Indonesian (database side);
+            // show the translated app message instead.
+            showWarningModal(stT('stock_freeze_active', STOCK_FREEZE_FALLBACK), false, stT('stock_freeze_title', 'Stock opname in progress'), null, 'warning');
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Shared stock-write safety helpers (stock-path audit, 2026-09-22).
+// Every flow that changes green/bulk/packed stock calls ensureNoStockOpname()
+// BEFORE its first write: while a stock opname is 'counting'/'posting' the
+// database freeze trigger rejects every stock-lot write, and flows that only
+// console.error'd that rejection left half-saved records (the BRAZIL ROSA
+// 1620 kg lot, the 26 Aug pack-from-bulk). Checking up front means nothing is
+// written at all, and the user is told why.
+// ---------------------------------------------------------------------------
+const STOCK_FREEZE_FALLBACK = 'A stock count (stock opname) is in progress. Stock cannot change until it is finished or cancelled — nothing was saved.';
+
+function stT(key, fallback) {
+    if (!window.t) return fallback;
+    const v = window.t(key);
+    return v && v !== key ? v : fallback;
+}
+
+// { running: boolean, error } — error set when the check itself failed.
+async function isStockOpnameRunning() {
+    try {
+        const { data, error } = await window.supabaseClient
+            .from('stock_takes').select('id').in('status', ['counting', 'posting']).limit(1);
+        if (error) return { running: false, error };
+        return { running: !!(data && data.length), error: null };
+    } catch (e) {
+        return { running: false, error: e };
+    }
+}
+
+// Returns true when it is safe to write stock; otherwise shows why and
+// returns false. A failed check is treated as "not safe" — the same network
+// problem would make the writes themselves fail half-way.
+async function ensureNoStockOpname() {
+    const { running, error } = await isStockOpnameRunning();
+    if (error) {
+        await showStockFailed(error.message || String(error));
+        return false;
+    }
+    if (running) {
+        await showWarningModal(stT('stock_freeze_active', STOCK_FREEZE_FALLBACK), false, stT('stock_freeze_title', 'Stock opname in progress'), null, 'warning');
+        return false;
+    }
+    return true;
+}
+
+// Nothing was written (or everything written was undone) — safe to retry.
+async function showStockFailed(reason) {
+    await showWarningModal(
+        stT('stock_op_failed_msg', 'Nothing was changed — stock is the same as before. You can try again.\n\nReason: {reason}').replace('{reason}', reason || '-'),
+        false, stT('stock_op_failed_title', 'Not saved'), null, 'warning');
+}
+
+// Something was written and could not be fully undone or confirmed — the
+// user must NOT simply repeat the action.
+async function showStockPartial(detail) {
+    await showWarningModal(
+        stT('stock_op_partial_msg', 'Part of this action could not be completed. Do NOT repeat it yet — check the stock first and report this to the admin.\n\nDetail: {detail}').replace('{detail}', detail || '-'),
+        false, stT('stock_op_partial_title', 'Check stock before retrying'), null, 'warning');
 }
 
 async function saveDataImpl(table, record) {

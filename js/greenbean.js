@@ -1,8 +1,9 @@
 // GREENBEAN MODULE - ROASTERY MANAGER V2
 // Plain script (shared global scope — NOT an ES module). Split out of app.js
 // during the V1 refactor. Covers Greenbean Inventory (Tab 1) and Arrival/
-// Intake (Tab 3), plus adjustGreenbeanStock() which roasting.js calls when
-// a batch is logged. Load order: after db.js/auth.js, before app.js.
+// Intake (Tab 3) and Outbound. Green stock only ever moves through
+// green_coffee_lots (stock_kg is trigger-derived). Load order: after
+// db.js/auth.js, before app.js.
 
 // ==========================================================================
 // SECTION 2: GREENBEANS (TAB 1, 2, 3)
@@ -175,6 +176,7 @@ async function openEditGreenbeanStockModal(id) {
         const newStock = parseFloat(document.getElementById('m-gb-stock').value) || 0;
         const prevStock = parseFloat(bean.stock_kg || 0);
         const stockDelta = newStock - prevStock;
+        if (Math.abs(stockDelta) > 0.0001 && !(await ensureNoStockOpname())) return;
 
         // V2: stock_kg is DERIVED (trigger-summed from green_coffee_lots.remaining_kg
         // — see database/v2_lot_tracking_migration.sql), so it's intentionally NOT
@@ -1570,47 +1572,50 @@ async function printGreenLotStickersKecil(lot, coffee, stickerCount) {
     printWin.document.close();
 }
 
+// Stock-path audit (2026-09-22): the stock change is removing the intake's
+// lot — green_coffee.stock_kg is trigger-derived from lots and is no longer
+// written directly here (that direct write, followed by an unchecked lot
+// delete, could leave stock_kg and the lots disagreeing — the same class of
+// desync as the BRAZIL ROSA 1620 kg case). Lot first, then the record.
+let _deletingIntake = false;
 async function deleteIntake(deleteId) {
-    if (await showDeleteConfirmModal('this intake lot')) {
-        const [
-            { data: history },
-            { data: inventory }
-        ] = await Promise.all([
-            fetchData('green_coffee_intake'),
-            fetchData('green_coffee')
-        ]);
-        const item = history.find(i => i.id === deleteId);
-        if (!item) return;
+    if (_deletingIntake) return;
+    if (!(await showDeleteConfirmModal('this intake lot'))) return;
+    if (!(await ensureNoStockOpname())) return;
+    _deletingIntake = true;
+    const lock = lockProcessingScreen(stT('gi_deleting', 'Deleting arrival…'));
+    let outcome;
+    try {
+        outcome = await (async () => {
+            const { data: item, error: readErr } = await window.supabaseClient
+                .from('green_coffee_intake').select('*').eq('id', deleteId).maybeSingle();
+            if (readErr) return { failure: readErr.message };
+            if (!item) return { failure: stT('gi_delete_gone', 'This arrival no longer exists (already deleted?).') };
 
-        // Deduct quantity from warehouse inventory. Prefer the green_coffee_id
-        // FK; fall back to name+code text match only for legacy intake rows
-        // saved before this FK was populated (pre this fix).
-        const match = inventory.find(g =>
-            (item.green_coffee_id && g.id === item.green_coffee_id) ||
-            (!item.green_coffee_id && g.name.toLowerCase() === (item.name || '').toLowerCase() && (g.code || '').toLowerCase() === (item.code || '').toLowerCase()));
-        if (match) {
-            match.stock_kg = Math.max(0, parseFloat(match.stock_kg) - parseFloat(item.quantity));
-            await saveData('green_coffee', match);
-        }
-
-        // V2 1A: delete the lot this intake created (if any) — green_coffee.stock_kg
-        // is DERIVED from green_coffee_lots.remaining_kg via trigger, so leaving the
-        // lot behind would silently resurrect the "deleted" stock the next time any
-        // lot for this coffee changes and the trigger recomputes the sum.
-        if (item.green_coffee_lot_id) {
-            await deleteData('green_coffee_lots', item.green_coffee_lot_id);
-        }
-
-        // Delete from DB
-        const { error } = await deleteData('green_coffee_intake', deleteId);
-        if (error) {
-            alert(window.t("alert_delete_failed").replace("{msg}", error.message));
-        } else {
-            loadIntakeHistory();
-            loadGreenbeanInventory();
-            scheduleDashboardRefresh();
-        }
+            if (item.green_coffee_lot_id) {
+                const { error: lotErr } = await deleteData('green_coffee_lots', item.green_coffee_lot_id);
+                if (lotErr) return { failure: lotErr.message };
+            }
+            const { error } = await deleteData('green_coffee_intake', deleteId);
+            if (error) {
+                return item.green_coffee_lot_id
+                    ? { partial: [`The arrival's lot was removed from stock, but the arrival record itself could not be deleted: ${error.message}`] }
+                    : { failure: window.t("alert_delete_failed").replace("{msg}", error.message) };
+            }
+            return {};
+        })();
+    } catch (err) {
+        console.error('deleteIntake error:', err);
+        outcome = { partial: [err && err.message ? err.message : String(err)] };
+    } finally {
+        lock.release();
+        _deletingIntake = false;
     }
+    loadIntakeHistory();
+    loadGreenbeanInventory();
+    scheduleDashboardRefresh();
+    if (outcome.failure) await showStockFailed(outcome.failure);
+    else if (outcome.partial) await showStockPartial(outcome.partial.join('\n'));
 }
 
 // ==========================================================================
@@ -1664,20 +1669,48 @@ async function loadOutboundHistory() {
 // green_coffee_outbound_lots rows. Mirrors refundGreenCoffeeLotsForBatch in
 // js/roasting.js. Safe no-op if the shipment predates this tracking.
 async function refundGreenCoffeeLotsForOutbound(outboundId) {
-    const { data: allDraws } = await fetchData('green_coffee_outbound_lots');
-    const mine = (allDraws || []).filter(d => d.green_coffee_outbound_id === outboundId);
-    if (mine.length === 0) return;
-    for (const d of mine) {
-        // V2 concurrency fix: atomic increment via RPC — see
-        // refundGreenCoffeeLotsForBatch in js/roasting.js for the same
-        // pattern and the reasoning behind it.
-        const { error } = await window.supabaseClient.rpc('refund_green_coffee_lot', {
-            p_lot_id: d.green_coffee_lot_id,
-            p_kg: parseFloat(d.kg || 0)
-        });
-        if (error) console.error('refund_green_coffee_lot RPC failed for lot', d.green_coffee_lot_id, error);
-        await deleteData('green_coffee_outbound_lots', d.id);
+    // Same contract as refundGreenCoffeeLotsForBatch (js/roasting.js): a draw
+    // row is only deleted after its refund succeeded, so a failed refund
+    // never loses the kg AND the record of where it came from, and a retry
+    // only touches what is still outstanding. Returns { ok, failed[], refunded[] }.
+    const { data: mine, error: readErr } = await window.supabaseClient
+        .from('green_coffee_outbound_lots').select('*').eq('green_coffee_outbound_id', outboundId);
+    if (readErr) return { ok: false, failed: [readErr.message], refunded: [] };
+    const failed = [];
+    const refunded = [];
+    for (const d of (mine || [])) {
+        const kg = parseFloat(d.kg || 0);
+        if (d.green_coffee_lot_id && kg > 0) {
+            // V2 concurrency fix: atomic increment via RPC.
+            const { data, error } = await window.supabaseClient.rpc('refund_green_coffee_lot', {
+                p_lot_id: d.green_coffee_lot_id,
+                p_kg: kg
+            });
+            if (error || data === null) {
+                console.error('refund_green_coffee_lot RPC failed for lot', d.green_coffee_lot_id, error);
+                failed.push(`green lot #${d.green_coffee_lot_id}: +${kg} kg not returned${error ? ' (' + error.message + ')' : ''}`);
+                continue;
+            }
+            refunded.push({ lotId: d.green_coffee_lot_id, kg });
+        }
+        const { error: delErr } = await deleteData('green_coffee_outbound_lots', d.id);
+        if (delErr) failed.push(`green lot #${d.green_coffee_lot_id}: returned, but its shipment record could not be removed (${delErr.message}) — do not retry, report to admin`);
     }
+    return { ok: failed.length === 0, failed, refunded };
+}
+
+// Undo for refundGreenCoffeeLotsForOutbound when the edit/delete it was part
+// of then failed: re-takes the same kg from the same lots and re-records them.
+async function reapplyGreenDrawsForOutbound(outboundId, draws) {
+    const failed = [];
+    for (const d of (draws || [])) {
+        const { data: taken, error } = await window.supabaseClient.rpc('consume_green_coffee_lot', { p_lot_id: d.lotId, p_kg_requested: d.kg });
+        const takenKg = parseFloat(taken) || 0;
+        if (error || takenKg <= 0) { failed.push(`green lot #${d.lotId}: ${d.kg} kg not re-taken${error ? ' (' + error.message + ')' : ''}`); continue; }
+        const { error: insErr } = await saveData('green_coffee_outbound_lots', { green_coffee_outbound_id: outboundId, green_coffee_lot_id: d.lotId, kg: takenKg });
+        if (insErr) failed.push(`green lot #${d.lotId}: re-taken but not recorded (${insErr.message})`);
+    }
+    return { ok: failed.length === 0, failed };
 }
 
 async function openOutboundModal(editId = null) {
@@ -1776,8 +1809,10 @@ async function openOutboundModal(editId = null) {
     qtyInput.addEventListener('input', refreshHint);
     refreshHint();
 
+    let outboundSaving = false;
     document.getElementById('modal-outbound-form').addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (outboundSaving) return;
         const opt = coffeeSelect.selectedOptions[0];
         if (!opt || !opt.value) return;
         const coffeeId = parseInt(opt.value);
@@ -1798,73 +1833,118 @@ async function openOutboundModal(editId = null) {
             if (!proceed) return;
         }
 
-        // On edit, first refund whatever lots the previous version of this
-        // shipment drew from, before re-consuming for the new coffee/qty —
-        // mirrors js/roasting.js's refundGreenCoffeeLotsForBatch.
-        if (editId) {
-            await refundGreenCoffeeLotsForOutbound(editId);
-        }
+        // Stock-path audit (2026-09-22): all-or-nothing. On edit, the old
+        // shipment's draws are returned first; any failure after that puts
+        // everything back (new draw returned, old draw re-taken) so the form
+        // can simply be submitted again. Consumption goes through the lots
+        // (FIFO) — stock_kg is trigger-derived.
+        if (!(await ensureNoStockOpname())) return;
+        outboundSaving = true;
+        const lock = lockProcessingScreen(stT('go_saving', 'Saving shipment…'));
+        let outcome;
+        try {
+            outcome = await (async () => {
+                let oldDraws = [];
+                if (editId) {
+                    const back = await refundGreenCoffeeLotsForOutbound(editId);
+                    oldDraws = back.refunded;
+                    if (!back.ok) {
+                        const redo = await reapplyGreenDrawsForOutbound(editId, back.refunded);
+                        return redo.ok ? { failure: back.failed.join('; ') } : { partial: [...back.failed, ...redo.failed] };
+                    }
+                }
+                const restoreOld = async () => (editId && oldDraws.length) ? (await reapplyGreenDrawsForOutbound(editId, oldDraws)).failed : [];
 
-        // V2 Stock History: consume via green_coffee_lots (FIFO), not a
-        // direct stock_kg write — stock_kg is DERIVED (trigger-summed from
-        // green_coffee_lots.remaining_kg, see v2_lot_tracking_migration.sql),
-        // so writing it directly here would get silently reverted the next
-        // time any lot for this coffee changes, and left Outbound rows with
-        // no lot to show in Stock History.
-        const { draws } = await consumeGreenCoffeeLotsFifo(coffeeId, quantity);
+                const taken = await consumeGreenCoffeeLotsFifo(coffeeId, quantity);
+                if (taken.errors.length > 0) {
+                    const left = [...(await refundGreenDraws(taken.draws)).failed, ...(await restoreOld())];
+                    return left.length ? { partial: [...taken.errors, ...left] } : { failure: taken.errors.join('; ') };
+                }
 
-        const record = {
-            id: editId || undefined,
-            green_coffee_id: coffeeId,
-            date,
-            code: bean.code || null,
-            name: bean.name,
-            origin: bean.origin || null,
-            process: bean.process || null,
-            quantity,
-            destination,
-            notes: notes || null
-        };
-        const { data: savedOut, error } = await saveData('green_coffee_outbound', record);
-        if (error) {
-            alert((window.t ? window.t('alert_save_failed').replace('{msg}', error.message) : 'Save failed: ' + error.message));
-            return;
-        }
+                const record = {
+                    id: editId || undefined,
+                    green_coffee_id: coffeeId,
+                    date,
+                    code: bean.code || null,
+                    name: bean.name,
+                    origin: bean.origin || null,
+                    process: bean.process || null,
+                    quantity,
+                    destination,
+                    notes: notes || null
+                };
+                const { data: savedOut, error } = await saveData('green_coffee_outbound', record);
+                if (error || !savedOut) {
+                    const reason = error ? error.message : 'shipment record not saved';
+                    const left = [...(await refundGreenDraws(taken.draws)).failed, ...(await restoreOld())];
+                    return left.length ? { partial: [reason, ...left] } : { failure: reason };
+                }
 
-        for (const d of draws) {
-            await saveData('green_coffee_outbound_lots', {
-                green_coffee_outbound_id: savedOut.id,
-                green_coffee_lot_id: d.lotId,
-                kg: d.kg
-            });
+                const problems = [];
+                for (const d of taken.draws) {
+                    const { error: drawErr } = await saveData('green_coffee_outbound_lots', {
+                        green_coffee_outbound_id: savedOut.id,
+                        green_coffee_lot_id: d.lotId,
+                        kg: d.kg
+                    });
+                    if (drawErr) problems.push(`green lot #${d.lotId} (${d.kg} kg) shipment record not saved: ${drawErr.message}`);
+                }
+                return { partial: problems.length ? problems : null };
+            })();
+        } catch (err) {
+            console.error('Outbound save error:', err);
+            outcome = { partial: [err && err.message ? err.message : String(err)] };
+        } finally {
+            lock.release();
+            outboundSaving = false;
         }
+        if (outcome.failure) { await showStockFailed(outcome.failure); return; }
 
         modalContainer.classList.add('hidden');
         loadOutboundHistory();
         loadGreenbeanInventory();
         scheduleDashboardRefresh();
+        if (outcome.partial) await showStockPartial(outcome.partial.join('\n'));
     });
 }
 
+let _deletingOutbound = false;
 async function deleteOutbound(deleteId) {
+    if (_deletingOutbound) return;
     if (!(await showDeleteConfirmModal('this outbound shipment'))) return;
-    const { data: history } = await fetchData('green_coffee_outbound');
-    const item = (history || []).find(i => i.id === deleteId);
-    if (!item) return;
-
-    // Deleting an outbound record means the beans never left — refund
-    // whatever lots it drew from (V2 Stock History; same helper the edit
-    // path uses) instead of writing green_coffee.stock_kg directly.
-    await refundGreenCoffeeLotsForOutbound(deleteId);
-
-    const { error } = await deleteData('green_coffee_outbound', deleteId);
-    if (error) {
-        alert(window.t("alert_delete_failed").replace("{msg}", error.message));
-    } else {
-        loadOutboundHistory();
-        loadGreenbeanInventory();
-        scheduleDashboardRefresh();
+    if (!(await ensureNoStockOpname())) return;
+    _deletingOutbound = true;
+    const lock = lockProcessingScreen(stT('go_deleting', 'Deleting shipment…'));
+    let outcome;
+    try {
+        outcome = await (async () => {
+            // Deleting an outbound record means the beans never left — return
+            // whatever lots it drew from first, then remove the record.
+            const back = await refundGreenCoffeeLotsForOutbound(deleteId);
+            if (!back.ok) {
+                const redo = await reapplyGreenDrawsForOutbound(deleteId, back.refunded);
+                return redo.ok ? { failure: back.failed.join('; ') } : { partial: [...back.failed, ...redo.failed] };
+            }
+            const { error } = await deleteData('green_coffee_outbound', deleteId);
+            if (error) {
+                const reason = window.t("alert_delete_failed").replace("{msg}", error.message);
+                const redo = await reapplyGreenDrawsForOutbound(deleteId, back.refunded);
+                return redo.ok ? { failure: reason } : { partial: [reason, ...redo.failed] };
+            }
+            return {};
+        })();
+    } catch (err) {
+        console.error('deleteOutbound error:', err);
+        outcome = { partial: [err && err.message ? err.message : String(err)] };
+    } finally {
+        lock.release();
+        _deletingOutbound = false;
     }
+    loadOutboundHistory();
+    loadGreenbeanInventory();
+    scheduleDashboardRefresh();
+    if (outcome.failure) await showStockFailed(outcome.failure);
+    else if (outcome.partial) await showStockPartial(outcome.partial.join('\n'));
 }
 
 // --- modal: ADD / EDIT GREENBEAN ---
@@ -1979,37 +2059,6 @@ async function deleteGreenbean(id) {
         } else {
             loadGreenbeanInventory();
             scheduleDashboardRefresh();
-        }
-    }
-}
-
-async function adjustGreenbeanStock(type, id, targetRoastedKg, sign = 1) {
-    const [
-        { data: greenbeans },
-        { data: ingredients }
-    ] = await Promise.all([
-        fetchData('green_coffee'),
-        fetchData('blend_ingredients')
-    ]);
-
-    const requiredTotalGb = (targetRoastedKg / 0.85) * sign;
-
-    if (type === 'Single') {
-        const gb = greenbeans.find(g => g.id === id);
-        if (gb) {
-            gb.stock_kg = Math.max(0, parseFloat(gb.stock_kg || 0) - requiredTotalGb);
-            await saveData('green_coffee', gb);
-        }
-    } else {
-        const recipeIngs = ingredients.filter(ing => ing.blend_recipe_id === id);
-        for (const ing of recipeIngs) {
-            const gb = greenbeans.find(g => g.id === ing.green_coffee_id);
-            if (gb) {
-                const ratio = parseFloat(ing.percentage) / 100;
-                const requiredIngGb = requiredTotalGb * ratio;
-                gb.stock_kg = Math.max(0, parseFloat(gb.stock_kg || 0) - requiredIngGb);
-                await saveData('green_coffee', gb);
-            }
         }
     }
 }
