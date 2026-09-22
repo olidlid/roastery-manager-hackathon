@@ -4798,23 +4798,25 @@ function updateStockTakeSaveButton() {
     btn.disabled = n === 0 || stockTakeSaveInFlight;
 }
 
-// Full-screen processing lock for the stock count sheet. Sits above the
-// global Saving pill (z-index 100000) so the per-write pill no longer
-// flashes on and off underneath while a batch of rows is being written.
-function lockStockTakeScreen(text) {
+// Full-screen processing lock for multi-step saves (stock count sheet,
+// green bean arrival). Sits above the global Saving pill (z-index 100000)
+// so the per-write pill no longer flashes on and off underneath while a
+// batch of rows is being written. Nothing on the page can be clicked until
+// release().
+function lockProcessingScreen(text) {
     const overlay = document.createElement('div');
-    overlay.className = 'stockopname-lock';
+    overlay.className = 'processing-lock';
     overlay.setAttribute('role', 'status');
     overlay.setAttribute('aria-live', 'polite');
     overlay.innerHTML = `
-        <div class="stockopname-lock-card">
-            <div class="stockopname-lock-spinner"></div>
-            <div class="stockopname-lock-text"></div>
-            <div class="stockopname-lock-hint"></div>
+        <div class="processing-lock-card">
+            <div class="processing-lock-spinner"></div>
+            <div class="processing-lock-text"></div>
+            <div class="processing-lock-hint"></div>
         </div>
     `;
-    const textEl = overlay.querySelector('.stockopname-lock-text');
-    const hintEl = overlay.querySelector('.stockopname-lock-hint');
+    const textEl = overlay.querySelector('.processing-lock-text');
+    const hintEl = overlay.querySelector('.processing-lock-hint');
     textEl.textContent = text;
     hintEl.textContent = soT('stockopname_lock_hint', 'Please wait, do not close or refresh this page.');
     document.body.appendChild(overlay);
@@ -4839,7 +4841,7 @@ async function saveStockTakeCounts({ silentSuccess = false } = {}) {
     }
     stockTakeSaveInFlight = true;
     updateStockTakeSaveButton();
-    const lock = lockStockTakeScreen(soT('stockopname_saving_counts', 'Saving counts…'));
+    const lock = lockProcessingScreen(soT('stockopname_saving_counts', 'Saving counts…'));
     const byItemId = new Map(currentStockTakeGroups.filter(g => g.itemId).map(g => [g.itemId, g]));
     const expected = new Map();   // itemId -> number|null
     const failed = [];            // group labels

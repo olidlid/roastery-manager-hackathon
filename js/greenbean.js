@@ -203,9 +203,12 @@ async function openEditGreenbeanStockModal(id) {
             // lot (dated today, so it doesn't masquerade as an old arrival);
             // a decrease is deducted FIFO oldest-first via the same consumption
             // helper roasting.js uses, so it comes off the stalest stock first.
+            // Stock correction failures used to be silent (e.g. rejected by a
+            // running stock opname's freeze) — now reported after the save.
+            let stockProblem = null;
             if (Math.abs(stockDelta) > 0.0001) {
                 if (stockDelta > 0) {
-                    await createGreenCoffeeLot({
+                    const adjLot = await createGreenCoffeeLot({
                         coffeeId: bean.id,
                         coffeeCode: record.code,
                         arrivalDate: new Date().toISOString().split('T')[0],
@@ -213,12 +216,16 @@ async function openEditGreenbeanStockModal(id) {
                         supplier: 'Manual Stock Adjustment',
                         purchasePricePerKg: null
                     });
+                    if (!adjLot) stockProblem = giT('gi_adjust_not_applied', 'The stock change was NOT applied (stock is unchanged). If a stock opname is running, try again after it is finished.');
                 } else {
                     // V2 Stock History: persist which lot(s) this decrease
                     // drew from — without this, a manual correction is
                     // invisible to any later reconstruction of the ledger,
                     // unlike every other consumption path in the app.
-                    const { draws } = await consumeGreenCoffeeLotsFifo(bean.id, Math.abs(stockDelta));
+                    const { draws, shortfallKg } = await consumeGreenCoffeeLotsFifo(bean.id, Math.abs(stockDelta));
+                    if (shortfallKg > 0.0001) {
+                        stockProblem = giT('gi_adjust_short', 'Only part of the decrease was applied — {kg} kg could not be deducted from the lots. If a stock opname is running, try again after it is finished.').replace('{kg}', shortfallKg.toFixed(2));
+                    }
                     for (const d of draws) {
                         await saveData('green_coffee_lot_adjustments', {
                             green_coffee_id: bean.id,
@@ -232,6 +239,7 @@ async function openEditGreenbeanStockModal(id) {
             }
 
             document.getElementById('modal-container').classList.add('hidden');
+            if (stockProblem) await showWarningModal(stockProblem, false);
             loadGreenbeanInventory();
             initAppDashboard();
             loadRecipeProductionPotential();
@@ -512,8 +520,13 @@ async function openIntakeModal(editId = null) {
     coffeeSelect.addEventListener('change', syncFieldsFromSelect);
     syncFieldsFromSelect();
 
+    // In-flight guard — the submit button alone is not enough (db.js
+    // re-enables it after the first write of a multi-write save).
+    let intakeSaving = false;
+
     document.getElementById('modal-intake-form').addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (intakeSaving) return;
         const date = document.getElementById('m-int-date').value;
         const code = codeInput.value.trim();
         const origin = originInput.value.trim();
@@ -532,21 +545,10 @@ async function openIntakeModal(editId = null) {
 
         if (!coffeeSelectVal) return; // native `required` blocks this, but guard anyway
 
-        // If editing, restore the quantity this record previously added to
-        // whichever bean it was linked to, before applying the new amount below
-        // — otherwise editing a lot's quantity would double-count the delta.
-        if (editId && intakeItem && linkedBean) {
-            const oldBean = inventory.find(g => g.id === linkedBean.id);
-            if (oldBean) {
-                oldBean.stock_kg = Math.max(0, parseFloat(oldBean.stock_kg) - parseFloat(intakeItem.quantity));
-                await saveData('green_coffee', oldBean);
-            }
-        }
-
-        let targetCoffeeId, targetName;
-
+        let newName = null;
+        let existingBean = null;
         if (coffeeSelectVal === '__new__') {
-            const newName = document.getElementById('m-int-new-name').value.trim();
+            newName = document.getElementById('m-int-new-name').value.trim();
             if (!newName) { alert('Please enter a name for the new coffee.'); return; }
 
             // Guard against silently creating a duplicate of an existing coffee —
@@ -560,104 +562,227 @@ async function openIntakeModal(editId = null) {
                 );
                 if (!proceed) return;
             }
-
-            const newBean = {
-                code, name: newName, origin, process,
-                stock_kg: quantity, purchase_price_per_kg: priceRaw || 0.0, supplier
-                // moisture_content/water_activity/density intentionally
-                // omitted — set below via saveAnalysisRecord once the lot
-                // exists, which also syncs the read-only cache on this row.
-            };
-            const { data: savedBean, error } = await saveData('green_coffee', newBean);
-            if (error) { alert('Failed to create coffee: ' + error.message); return; }
-            targetCoffeeId = savedBean.id;
-            targetName = newName;
         } else {
-            const coffeeId = parseInt(coffeeSelectVal);
-            const bean = inventory.find(g => g.id === coffeeId);
-            if (!bean) { alert('Selected coffee not found — please refresh and try again.'); return; }
-            bean.stock_kg = parseFloat(bean.stock_kg || 0) + quantity;
-            if (code) bean.code = code;
-            if (origin) bean.origin = origin;
-            if (process) bean.process = process;
-            if (supplier) bean.supplier = supplier;
-            if (priceRaw !== null) bean.purchase_price_per_kg = priceRaw;
-            // moisture_content/water_activity/density intentionally omitted
-            // — set below via saveAnalysisRecord once the lot exists.
-            await saveData('green_coffee', bean);
-            targetCoffeeId = bean.id;
-            targetName = bean.name;
+            existingBean = inventory.find(g => g.id === parseInt(coffeeSelectVal));
+            if (!existingBean) { alert('Selected coffee not found — please refresh and try again.'); return; }
         }
 
-        const intakeRecord = {
-            id: editId || undefined,
-            green_coffee_id: targetCoffeeId,
-            date,
-            code,
-            name: targetName,
-            origin,
-            process,
-            quantity,
-            supplier
-        };
-        const { data: savedIntake } = await saveData('green_coffee_intake', intakeRecord);
+        // Editing: the stock effect lives entirely in the intake's own lot
+        // (green_coffee.stock_kg is trigger-derived from lots), so a quantity
+        // change needs that lot, and the lot can't follow a coffee change.
+        const editLotId = editId && intakeItem ? intakeItem.green_coffee_lot_id : null;
+        const qtyDelta = editId ? quantity - parseFloat((intakeItem && intakeItem.quantity) || 0) : quantity;
+        if (editId && Math.abs(qtyDelta) > 1e-9 && !editLotId) {
+            await showWarningModal(giT('gi_edit_no_lot', 'This arrival has no lot record, so its quantity cannot be changed here. Use Edit on the coffee to adjust stock instead.'), false);
+            return;
+        }
+        if (editId && editLotId && (!existingBean || !linkedBean || existingBean.id !== linkedBean.id)) {
+            await showWarningModal(giT('gi_edit_coffee_locked', 'The coffee of an arrival that already has a lot cannot be changed. Delete this arrival and enter it again instead.'), false);
+            return;
+        }
 
-        // V2 1A: one intake = one green lot. green_coffee.stock_kg is now a
-        // DERIVED value (trigger-summed from green_coffee_lots.remaining_kg
-        // — see database/v2_lot_tracking_migration.sql), so the lot itself
-        // must stay in sync with the intake or the manual stock_kg writes
-        // above get silently reverted the next time any lot changes.
-        if (!editId) {
-            const newLot = await createGreenCoffeeLot({
-                coffeeId: targetCoffeeId,
-                coffeeCode: code,
-                arrivalDate: date,
-                quantityKg: quantity,
-                supplier,
-                purchasePricePerKg: priceRaw
-            });
-            if (newLot) {
-                // Link the intake back to the lot it created so a later edit/delete
-                // of this intake can find and adjust the same lot.
-                await saveData('green_coffee_intake', { id: savedIntake.id, green_coffee_lot_id: newLot.id });
+        intakeSaving = true;
+        const lock = lockProcessingScreen(giT('gi_saving', 'Saving arrival…'));
+        let result;
+        try {
+            result = await saveGreenIntake({
+                editId, intakeItem, editLotId, qtyDelta, newName, existingBean,
+                date, code, origin, process, quantity, supplier, priceRaw,
+                moistureRaw, waterActivityRaw, densityRaw
+            }, lock);
+        } catch (err) {
+            console.error('Green intake save error:', err);
+            result = { status: 'unknown', detail: err && err.message ? err.message : String(err) };
+        } finally {
+            lock.release();
+            intakeSaving = false;
+        }
 
-                // Optional at arrival — only recorded if at least one of the
-                // 3 fields was actually filled in. This is the ONE time this
-                // lot's lab reading can be entered from the Arrival modal;
-                // saveAnalysisRecord tags it 'arrival' since it's the first
-                // (only) record for a brand new lot.
-                if (moistureRaw !== null || waterActivityRaw !== null || densityRaw !== null) {
-                    await saveAnalysisRecord({
-                        greenCoffeeId: targetCoffeeId,
-                        lotId: newLot.id,
-                        testDate: date,
-                        moisture: moistureRaw,
-                        waterActivity: waterActivityRaw,
-                        density: densityRaw
-                    });
-                }
-                if (stickerCount > 0) {
-                    if (stickerSize === 'kecil') {
-                        await printGreenLotStickersKecil(newLot, { code, name: targetName }, stickerCount);
-                    } else {
-                        await printGreenLotStickersBesar(newLot, { code, name: targetName }, stickerCount);
-                    }
-                }
-            }
-        } else if (intakeItem && intakeItem.green_coffee_lot_id) {
-            // Editing a lot that may already be partially consumed (once 1B
-            // ships) is still out of scope — this assumes nothing has drawn
-            // from the lot yet, so quantity_kg and remaining_kg move together.
-            const delta = quantity - parseFloat(intakeItem.quantity || 0);
-            await adjustGreenCoffeeLotQuantity(intakeItem.green_coffee_lot_id, delta);
+        if (result.status === 'failed') {
+            // Nothing changed — keep the form open with everything still filled in.
+            await showWarningModal(result.message, false, giT('gi_fail_title', 'Arrival not saved'), null, 'warning');
+            return;
         }
 
         modalContainer.classList.add('hidden');
+        if (result.status === 'success') {
+            await showWarningModal(result.message, false, giT('gi_success_title', 'Arrival saved'), null, 'success');
+            if (!editId && stickerCount > 0 && result.lot) {
+                if (stickerSize === 'kecil') {
+                    await printGreenLotStickersKecil(result.lot, { code, name: result.coffeeName }, stickerCount);
+                } else {
+                    await printGreenLotStickersBesar(result.lot, { code, name: result.coffeeName }, stickerCount);
+                }
+            }
+        } else {
+            await showWarningModal(
+                giT('gi_unknown_msg', 'The system could not confirm this arrival was saved correctly. Do NOT enter it again yet — check the coffee\'s stock and lots first, and report this to the admin.\n\nDetail: {detail}').replace('{detail}', result.detail || '-'),
+                false, giT('gi_unknown_title', 'Check stock before retrying'), null, 'warning');
+        }
 
         loadIntakeHistory();
         loadGreenbeanInventory();
         scheduleDashboardRefresh(); // Update stats
     });
+}
+
+function giT(key, fallback) {
+    if (!window.t) return fallback;
+    const v = window.t(key);
+    return v && v !== key ? v : fallback;
+}
+
+// Green bean arrival save, all-or-nothing (found 2026-09-22: a 1620 kg
+// BRAZIL ROSA arrival entered while a packed stock opname was running got
+// its stock_kg bumped and its intake row saved, but the lot insert was
+// rejected by the opname freeze and silently skipped — the stock showed in
+// the table but no lot existed to roast from). Now:
+//   1. refuse up front while any stock opname is running,
+//   2. update the coffee's descriptive fields only — never stock_kg, which
+//      the sync_green_coffee_stock trigger derives from lots,
+//   3. create (or, on edit, adjust) the lot — the actual stock movement,
+//   4. save the intake row already linked to that lot,
+//   5. re-read the rows to prove it all landed.
+// A failure in 3-4 undoes this submit's own writes so the user can retry.
+// Returns { status: 'success'|'failed'|'unknown', message?, detail?, lot?, coffeeName? }.
+async function saveGreenIntake(ctx, lock) {
+    const sb = window.supabaseClient;
+    const failed = (reason) => ({
+        status: 'failed',
+        message: giT('gi_fail_msg', 'Nothing was changed — stock is the same as before. You can try again.\n\nReason: {reason}').replace('{reason}', reason)
+    });
+
+    // 1. Stock opname freeze (green_coffee_lots is frozen, green_coffee and
+    // green_coffee_intake are not — exactly what let the half-save happen).
+    const { data: activeTakes, error: takeErr } = await sb.from('stock_takes').select('id').in('status', ['counting', 'posting']).limit(1);
+    if (takeErr) return failed(takeErr.message);
+    if (activeTakes && activeTakes.length > 0) {
+        return failed(giT('gi_fail_opname', 'A stock count (stock opname) is in progress. Stock cannot change until it is finished or cancelled.'));
+    }
+
+    // 2. Coffee identity + descriptive fields.
+    let coffeeId, coffeeName, createdCoffeeId = null;
+    if (ctx.newName) {
+        const { data: savedBean, error } = await saveData('green_coffee', {
+            code: ctx.code, name: ctx.newName, origin: ctx.origin, process: ctx.process,
+            stock_kg: 0, purchase_price_per_kg: ctx.priceRaw || 0.0, supplier: ctx.supplier
+        });
+        if (error || !savedBean) return failed(error ? error.message : 'could not create the coffee');
+        coffeeId = savedBean.id;
+        coffeeName = ctx.newName;
+        createdCoffeeId = savedBean.id;
+    } else {
+        coffeeId = ctx.existingBean.id;
+        coffeeName = ctx.existingBean.name;
+        const patch = { id: coffeeId };
+        if (ctx.code) patch.code = ctx.code;
+        if (ctx.origin) patch.origin = ctx.origin;
+        if (ctx.process) patch.process = ctx.process;
+        if (ctx.supplier) patch.supplier = ctx.supplier;
+        if (ctx.priceRaw !== null) patch.purchase_price_per_kg = ctx.priceRaw;
+        const { error } = await saveData('green_coffee', patch);
+        if (error) return failed(error.message);
+    }
+
+    // 3. The lot — the only place the stock itself moves.
+    let lot = null;
+    let lotAdjusted = false;
+    if (!ctx.editId) {
+        lot = await createGreenCoffeeLot({
+            coffeeId, coffeeCode: ctx.code, arrivalDate: ctx.date,
+            quantityKg: ctx.quantity, supplier: ctx.supplier, purchasePricePerKg: ctx.priceRaw
+        });
+        if (!lot) {
+            if (createdCoffeeId) await deleteData('green_coffee', createdCoffeeId);
+            return failed(giT('gi_fail_lot', 'The lot could not be created.'));
+        }
+    } else if (ctx.editLotId && Math.abs(ctx.qtyDelta) > 1e-9) {
+        const { error } = await sb.rpc('adjust_green_coffee_lot', { p_lot_id: ctx.editLotId, p_delta_kg: ctx.qtyDelta });
+        if (error) return failed(error.message);
+        lotAdjusted = true;
+    }
+
+    // 4. The intake row, linked to its lot in the same write.
+    const intakeRecord = {
+        id: ctx.editId || undefined,
+        green_coffee_id: coffeeId,
+        date: ctx.date,
+        code: ctx.code,
+        name: coffeeName,
+        origin: ctx.origin,
+        process: ctx.process,
+        quantity: ctx.quantity,
+        supplier: ctx.supplier
+    };
+    if (lot) intakeRecord.green_coffee_lot_id = lot.id;
+    const { data: savedIntake, error: intakeErr } = await saveData('green_coffee_intake', intakeRecord);
+    if (intakeErr || !savedIntake) {
+        const reason = intakeErr ? intakeErr.message : 'could not save the arrival record';
+        const problems = [];
+        if (lot) {
+            const { error } = await deleteData('green_coffee_lots', lot.id);
+            if (error) problems.push(`lot ${lot.lot_code}: ${error.message}`);
+            else if (createdCoffeeId) await deleteData('green_coffee', createdCoffeeId);
+        }
+        if (lotAdjusted) {
+            const { error } = await sb.rpc('adjust_green_coffee_lot', { p_lot_id: ctx.editLotId, p_delta_kg: -ctx.qtyDelta });
+            if (error) problems.push(`lot #${ctx.editLotId}: ${error.message}`);
+        }
+        if (problems.length > 0) return { status: 'unknown', detail: `${reason} | rollback: ${problems.join('; ')}` };
+        return failed(reason);
+    }
+
+    // Optional lab reading at arrival — not part of the stock movement, so a
+    // failure here is reported but doesn't undo the arrival.
+    let labNote = '';
+    if (lot && (ctx.moistureRaw !== null || ctx.waterActivityRaw !== null || ctx.densityRaw !== null)) {
+        try {
+            await saveAnalysisRecord({
+                greenCoffeeId: coffeeId, lotId: lot.id, testDate: ctx.date,
+                moisture: ctx.moistureRaw, waterActivity: ctx.waterActivityRaw, density: ctx.densityRaw
+            });
+        } catch (err) {
+            console.error('Arrival lab reading failed:', err);
+            labNote = '\n\n' + giT('gi_lab_failed', 'The lab reading was not saved — add it from the Data Analysis tab.');
+        }
+    }
+
+    // 5. Verify from the database.
+    lock.setText(giT('gi_verifying', 'Checking the database…'));
+    const lotId = lot ? lot.id : ctx.editLotId;
+    const [intakeRes, lotsRes, beanRes] = await Promise.all([
+        sb.from('green_coffee_intake').select('id, quantity, green_coffee_lot_id').eq('id', savedIntake.id).maybeSingle(),
+        sb.from('green_coffee_lots').select('id, lot_code, quantity_kg, remaining_kg').eq('green_coffee_id', coffeeId),
+        sb.from('green_coffee').select('stock_kg').eq('id', coffeeId).maybeSingle()
+    ]);
+    if (intakeRes.error || lotsRes.error || beanRes.error) {
+        return { status: 'unknown', detail: `verification query failed: ${(intakeRes.error || lotsRes.error || beanRes.error).message}` };
+    }
+    const problems = [];
+    const iRow = intakeRes.data;
+    if (!iRow || Math.abs(parseFloat(iRow.quantity) - ctx.quantity) > 1e-6) problems.push('arrival record missing or wrong quantity');
+    if (lotId && (!iRow || iRow.green_coffee_lot_id !== lotId)) problems.push('arrival record not linked to its lot');
+    const lots = lotsRes.data || [];
+    const myLot = lotId ? lots.find(l => l.id === lotId) : null;
+    if (lot && (!myLot || Math.abs(parseFloat(myLot.quantity_kg) - ctx.quantity) > 1e-6 || Math.abs(parseFloat(myLot.remaining_kg) - ctx.quantity) > 1e-6)) {
+        problems.push('lot missing or wrong quantity');
+    }
+    const lotSum = lots.reduce((s, l) => s + (parseFloat(l.remaining_kg) || 0), 0);
+    const stockKg = beanRes.data ? parseFloat(beanRes.data.stock_kg) || 0 : null;
+    if (stockKg === null || Math.abs(stockKg - lotSum) > 0.01) {
+        problems.push(`coffee stock ${stockKg} kg does not match its lots (${lotSum.toFixed(2)} kg)`);
+    }
+    if (problems.length > 0) return { status: 'unknown', detail: problems.join('; ') };
+
+    const lotCode = myLot ? myLot.lot_code : '-';
+    const message = (ctx.editId
+        ? giT('gi_success_edit', 'Arrival updated and verified. {name} stock is now {stock} kg.')
+        : giT('gi_success_new', 'Arrival saved and verified: {qty} kg of {name} in lot {lot}. {name} stock is now {stock} kg.'))
+        .replace('{qty}', ctx.quantity)
+        .replace(/\{name\}/g, coffeeName)
+        .replace('{lot}', lotCode)
+        .replace('{stock}', stockKg.toFixed(1)) + labNote;
+    return { status: 'success', message, lot: lot ? { ...lot, lot_code: lotCode } : null, coffeeName };
 }
 
 // V2 1A: builds a green_coffee_lots row for a fresh intake and generates its
@@ -696,9 +821,9 @@ async function createGreenCoffeeLot({ coffeeId, coffeeCode, arrivalDate, quantit
         const isDupCode = error.code === '23505' || /duplicate key|already exists/i.test(error.message || '');
         if (isDupCode && attempt < MAX_ATTEMPTS - 1) continue; // re-fetch and retry with the next sequence number
 
-        // Non-fatal: the intake record itself already saved and green_coffee.stock_kg
-        // was already updated directly above, so the arrival is not lost — only the
-        // lot-level breakdown (FIFO/traceability) is missing until this is retried.
+        // Returns null on failure — callers must treat that as "no stock was
+        // added" (green_coffee.stock_kg is derived from lots), never carry on
+        // as if the arrival landed. saveGreenIntake aborts and rolls back.
         console.error('Failed to create green_coffee_lots row (lot tracking degraded):', error);
         return null;
     }

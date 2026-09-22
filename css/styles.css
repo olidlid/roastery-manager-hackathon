@@ -206,14 +206,14 @@ button.is-saving::after {
     animation: savingSpin 0.7s linear infinite;
 }
 
-/* Stock count sheet (js/app.js saveStockTakeCounts): a typed Actual that is
-   not saved yet, and the full-screen lock while counts are being saved and
-   verified. The lock sits above #global-saving-indicator (z-index 100000). */
+/* Stock count sheet: a typed Actual that is not saved yet. Below it, the
+   full-screen processing lock (js/app.js lockProcessingScreen) used by
+   multi-step saves; it sits above #global-saving-indicator (z-index 100000). */
 .stockopname-actual-input.stockopname-unsaved {
     border-color: var(--warning);
     box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.18);
 }
-.stockopname-lock {
+.processing-lock {
     position: fixed;
     inset: 0;
     z-index: 100001;
@@ -225,7 +225,7 @@ button.is-saving::after {
     cursor: wait;
     animation: fadeIn 0.15s ease;
 }
-.stockopname-lock-card {
+.processing-lock-card {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -238,7 +238,7 @@ button.is-saving::after {
     border-radius: var(--border-radius);
     box-shadow: var(--shadow-premium);
 }
-.stockopname-lock-spinner {
+.processing-lock-spinner {
     width: 42px;
     height: 42px;
     border-radius: 50%;
@@ -246,18 +246,18 @@ button.is-saving::after {
     border-top-color: var(--primary);
     animation: savingSpin 0.8s linear infinite;
 }
-.stockopname-lock-text {
+.processing-lock-text {
     color: var(--text-primary);
     font-size: 1rem;
     font-weight: 700;
 }
-.stockopname-lock-hint {
+.processing-lock-hint {
     color: var(--text-secondary);
     font-size: 0.85rem;
     line-height: 1.5;
 }
 @media (prefers-reduced-motion: reduce) {
-    .stockopname-lock-spinner { animation-duration: 2.4s; }
+    .processing-lock-spinner { animation-duration: 2.4s; }
 }
 
 /* Pack-from-bulk processing lock (js/packing.js lockPackBulkModal): covers
