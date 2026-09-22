@@ -3969,6 +3969,14 @@ let currentStockTakeId = null;
 // take (rather than freshly started this session) — shown in the progress
 // note so a returning counter knows they're picking up someone else's work.
 let stockTakeResumeInfo = null;
+// Typed-but-unsaved Actual values, keyed by stock_take_items id -> raw input
+// string (user decision 2026-09-22: counts are saved with one explicit
+// "Save Counts" click, not per row on blur — the per-row save flashed the
+// Saving pill once per row and swallowed failures into the console). Kept
+// outside currentStockTakeGroups so a sheet re-render (lot detail, found
+// item) or an in-page resume never drops what was typed.
+let stockTakeDrafts = new Map();
+let stockTakeSaveInFlight = false;
 // Fase 4: packed_coffee_lots + production_lots, fetched once per open take
 // and reused by every lot-detail screen (print Tahap 2, the detail modal,
 // the bottom bar's lot count) instead of refetching per group. Safe to
@@ -4454,6 +4462,7 @@ async function startStockTake(category = null) {
     }
 
     currentStockTakeGroups = groups;
+    stockTakeDrafts = new Map();
 
     const sheet = document.getElementById('stockopname-sheet');
     const history = document.getElementById('stockopname-history');
@@ -4592,8 +4601,12 @@ function renderStockTakeSheet() {
     currentStockTakeGroups.forEach((g, i) => {
         const sysDisplay = g.unit === 'kg' ? g.systemQty.toFixed(1) : g.systemQty;
         const step = g.unit === 'kg' ? '0.1' : '1';
-        const hasValue = g.actualQty !== null && g.actualQty !== undefined;
-        const valueAttr = hasValue ? `value="${g.actualQty}"` : '';
+        const draft = g.itemId ? stockTakeDrafts.get(g.itemId) : undefined;
+        const hasDraft = draft !== undefined;
+        const hasValue = hasDraft ? draft !== '' : (g.actualQty !== null && g.actualQty !== undefined);
+        const shownValue = hasDraft ? draft : g.actualQty;
+        const valueAttr = hasValue ? `value="${shownValue}"` : '';
+        const shownQty = hasValue ? parseFloat(shownValue) : null;
         const staleTag = g.stale ? ` <span style="font-size:0.65rem; color:var(--warning);" title="${window.t ? (window.t('stockopname_stale_row') || 'not found — item changed since this take started') : 'not found — item changed since this take started'}">⚠</span>` : '';
         // Fase 5: a found item never had a real packed_coffee row at Tahap
         // 1 time (that's why it needed this button at all) — its lots don't
@@ -4612,8 +4625,8 @@ function renderStockTakeSheet() {
             <td class="text-center" style="font-family:monospace; font-weight:700;">${g.coffeeCode || '—'}</td>
             <td><strong>${g.label}</strong>${staleTag}${foundTag}</td>
             <td class="text-center">${sysDisplay} ${g.unit}</td>
-            <td class="text-center"><input type="number" class="form-control stockopname-actual-input" data-group-index="${i}" ${valueAttr} step="${step}" min="0" placeholder="—" style="width:110px; text-align:center; margin:0 auto;"></td>
-            <td class="stockopname-status-cell text-center" data-group-index="${i}">${stockOpnameStatusHtml(g, hasValue ? g.actualQty : null)}</td>
+            <td class="text-center"><input type="number" class="form-control stockopname-actual-input${hasDraft ? ' stockopname-unsaved' : ''}" data-group-index="${i}" ${valueAttr} step="${step}" min="0" placeholder="—" style="width:110px; text-align:center; margin:0 auto;"></td>
+            <td class="stockopname-status-cell text-center" data-group-index="${i}">${stockOpnameStatusHtml(g, (shownQty === null || isNaN(shownQty)) ? null : shownQty)}</td>
             ${arrowCell}
         `;
         tbody.appendChild(tr);
@@ -4626,8 +4639,7 @@ function renderStockTakeSheet() {
     // (STOCK_OPNAME_PLAN.md §4.2).
     const inputs = Array.from(tbody.querySelectorAll('.stockopname-actual-input'));
     inputs.forEach((input, pos) => {
-        input.addEventListener('input', () => updateVarianceCell(input));
-        input.addEventListener('change', () => saveCountedValue(input));
+        input.addEventListener('input', () => { updateVarianceCell(input); recordStockTakeDraft(input); });
         input.addEventListener('keydown', (e) => {
             if (e.key !== 'Enter') return;
             e.preventDefault();
@@ -4657,6 +4669,7 @@ function renderStockTakeSheet() {
     const printStage2BarBtn = document.getElementById('btn-stockopname-print-stage2-bar');
     if (printStage2BarBtn) printStage2BarBtn.onclick = printStockCountFormStage2;
     const detailAllHandler = async () => {
+        if (!(await ensureStockTakeCountsSaved())) return;
         const needing = stockOpnameGroupsNeedingDetail();
         if (needing.length === 0) {
             await showWarningModal(window.t ? (window.t('stockopname_detail_none') || 'No differences to detail yet — enter Stage 1 counts first.') : 'No differences to detail yet — enter Stage 1 counts first.', false);
@@ -4666,6 +4679,8 @@ function renderStockTakeSheet() {
     };
     const detailAllBtn = document.getElementById('btn-stockopname-detail-all');
     if (detailAllBtn) detailAllBtn.onclick = detailAllHandler;
+    const saveCountsBtn = document.getElementById('btn-stockopname-save-counts');
+    if (saveCountsBtn) saveCountsBtn.onclick = () => saveStockTakeCounts();
     const detailAllBarBtn = document.getElementById('btn-stockopname-detail-all-bar');
     if (detailAllBarBtn) detailAllBarBtn.onclick = detailAllHandler;
 
@@ -4733,7 +4748,7 @@ function stockOpnameStatusHtml(g, actualQty) {
 }
 
 // Live UI feedback as the user types — does NOT save. Persistence happens
-// on 'change' (blur/Enter), see saveCountedValue.
+// only when the user presses Save Counts, see saveStockTakeCounts.
 function updateVarianceCell(input) {
     const idx = parseInt(input.getAttribute('data-group-index'));
     const g = currentStockTakeGroups[idx];
@@ -4744,7 +4759,7 @@ function updateVarianceCell(input) {
     // Fase 4: typing a different number by hand overrides whatever lot
     // detail produced this group's current total — the "Detailed" status
     // stops being true the moment the number it was based on changes, so
-    // it must clear live, not just on save (saveCountedValue below does the
+    // it must clear live, not just on save (saveStockTakeCounts below does the
     // same for the persisted copy).
     if (g.detailed && parseFloat(raw) !== g.actualQty) g.detailed = false;
     if (raw === '') { cell.innerHTML = stockOpnameStatusHtml(g, null); return; }
@@ -4753,50 +4768,176 @@ function updateVarianceCell(input) {
     cell.innerHTML = stockOpnameStatusHtml(g, actual);
 }
 
-// Stock Opname Phase 1 (cacat #1 + #4): every filled-in count is saved to
-// its stock_take_items row immediately, not just held in the DOM — this is
-// the staged save that survives a refresh, and blank stays counted=false
-// rather than being coerced into "matches system" the way the old
-// finalize-time fallback did.
-async function saveCountedValue(input) {
+function soT(key, fallback) {
+    if (!window.t) return fallback;
+    const v = window.t(key);
+    return v && v !== key ? v : fallback;
+}
+
+// Records (or clears) the unsaved draft for one Actual input. A value typed
+// back to exactly what is already saved stops being a draft.
+function recordStockTakeDraft(input) {
     const idx = parseInt(input.getAttribute('data-group-index'));
     const g = currentStockTakeGroups ? currentStockTakeGroups[idx] : null;
     if (!g || !g.itemId) return;
-
     const raw = input.value;
-    const isEmpty = raw === '';
-    const actual = isEmpty ? null : parseFloat(raw);
-    if (!isEmpty && isNaN(actual)) return;
+    const saved = (g.actualQty === null || g.actualQty === undefined) ? '' : String(g.actualQty);
+    const same = raw === saved || (raw !== '' && saved !== '' && parseFloat(raw) === parseFloat(saved));
+    if (same) stockTakeDrafts.delete(g.itemId);
+    else stockTakeDrafts.set(g.itemId, raw);
+    input.classList.toggle('stockopname-unsaved', !same);
+    updateProgressNote();
+}
 
-    // Fase 4: updateVarianceCell already cleared g.detailed the instant this
-    // value stopped matching the lot-sum it was based on — if that just
-    // happened, the lot-level rows saved earlier are now stale (they'd
-    // silently resurrect g.detailed on the next resume/refresh otherwise,
-    // per resumeStockTake's parent_item_id reconstruction) and must be
-    // deleted, not just orphaned.
-    if (!g.detailed && g.lotBreakdown && g.lotBreakdown.length > 0) {
-        for (const l of g.lotBreakdown) {
-            if (l.itemId) await deleteData('stock_take_items', l.itemId);
+function updateStockTakeSaveButton() {
+    const btn = document.getElementById('btn-stockopname-save-counts');
+    if (!btn) return;
+    const n = stockTakeDrafts.size;
+    const label = soT('btn_stockopname_save_counts', 'Save Counts');
+    btn.textContent = n > 0 ? `${label} (${n})` : label;
+    btn.disabled = n === 0 || stockTakeSaveInFlight;
+}
+
+// Full-screen processing lock for the stock count sheet. Sits above the
+// global Saving pill (z-index 100000) so the per-write pill no longer
+// flashes on and off underneath while a batch of rows is being written.
+function lockStockTakeScreen(text) {
+    const overlay = document.createElement('div');
+    overlay.className = 'stockopname-lock';
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+    overlay.innerHTML = `
+        <div class="stockopname-lock-card">
+            <div class="stockopname-lock-spinner"></div>
+            <div class="stockopname-lock-text"></div>
+            <div class="stockopname-lock-hint"></div>
+        </div>
+    `;
+    const textEl = overlay.querySelector('.stockopname-lock-text');
+    const hintEl = overlay.querySelector('.stockopname-lock-hint');
+    textEl.textContent = text;
+    hintEl.textContent = soT('stockopname_lock_hint', 'Please wait, do not close or refresh this page.');
+    document.body.appendChild(overlay);
+    return {
+        setText(t) { textEl.textContent = t; },
+        release() { overlay.remove(); }
+    };
+}
+
+// Saves every drafted count in one go, then re-reads the rows from the
+// database and only treats a row as saved once the stored value matches
+// what was typed. Rows that fail stay drafts (still on screen, still
+// marked unsaved) so nothing typed is ever silently lost.
+// silentSuccess: used when another action (Finalize, lot detail, ...) saves
+// first — it only needs to hear about failures.
+// Returns true when every draft was saved and verified.
+async function saveStockTakeCounts({ silentSuccess = false } = {}) {
+    if (stockTakeSaveInFlight) return false;
+    if (!currentStockTakeGroups || stockTakeDrafts.size === 0) {
+        if (!silentSuccess) await showWarningModal(soT('stockopname_nothing_to_save', 'There are no unsaved counts.'), false);
+        return true;
+    }
+    stockTakeSaveInFlight = true;
+    updateStockTakeSaveButton();
+    const lock = lockStockTakeScreen(soT('stockopname_saving_counts', 'Saving counts…'));
+    const byItemId = new Map(currentStockTakeGroups.filter(g => g.itemId).map(g => [g.itemId, g]));
+    const expected = new Map();   // itemId -> number|null
+    const failed = [];            // group labels
+    let verifiedCount = 0;
+    try {
+        for (const [itemId, raw] of [...stockTakeDrafts.entries()]) {
+            const g = byItemId.get(itemId);
+            if (!g) { stockTakeDrafts.delete(itemId); continue; }
+            const isEmpty = raw === '';
+            const actual = isEmpty ? null : parseFloat(raw);
+            if (!isEmpty && isNaN(actual)) { failed.push(g.label); continue; }
+
+            // Fase 4: a typed total that no longer matches the lot-sum it was
+            // built from makes those lot rows stale — they'd resurrect
+            // g.detailed on the next resume otherwise, so they're deleted,
+            // not just orphaned (updateVarianceCell already cleared
+            // g.detailed live).
+            if (!g.detailed && g.lotBreakdown && g.lotBreakdown.length > 0) {
+                for (const l of g.lotBreakdown) {
+                    if (l.itemId) await deleteData('stock_take_items', l.itemId);
+                }
+                g.lotBreakdown = null;
+            }
+
+            const { error } = await saveData('stock_take_items', {
+                id: itemId,
+                actual_qty: actual,
+                variance: isEmpty ? null : (actual - g.systemQty),
+                counted: !isEmpty,
+                counted_at: isEmpty ? null : new Date().toISOString(),
+                counted_by: isEmpty ? null : ((currentUser && currentUser.name) || null)
+            });
+            if (error) { console.error('Failed to save counted value for', g.label, error); failed.push(g.label); continue; }
+            expected.set(itemId, actual);
         }
-        g.lotBreakdown = null;
+
+        if (expected.size > 0) {
+            lock.setText(soT('stockopname_verifying_counts', 'Checking the database…'));
+            const { data: rows, error: readErr } = await window.supabaseClient
+                .from('stock_take_items').select('id, actual_qty, counted').in('id', [...expected.keys()]);
+            const stored = new Map((rows || []).map(r => [r.id, r]));
+            for (const [itemId, actual] of expected.entries()) {
+                const g = byItemId.get(itemId);
+                const r = stored.get(itemId);
+                const storedQty = (r && r.actual_qty !== null && r.actual_qty !== undefined) ? parseFloat(r.actual_qty) : null;
+                const ok = !readErr && r && (actual === null
+                    ? (storedQty === null && !r.counted)
+                    : (storedQty !== null && Math.abs(storedQty - actual) < 1e-6 && !!r.counted));
+                if (!ok) { failed.push(g.label); continue; }
+                g.actualQty = actual;
+                g.counted = actual !== null;
+                stockTakeDrafts.delete(itemId);
+                verifiedCount++;
+            }
+        }
+    } catch (err) {
+        console.error('saveStockTakeCounts error:', err);
+        failed.push(err && err.message ? err.message : String(err));
+    } finally {
+        lock.release();
+        stockTakeSaveInFlight = false;
     }
 
-    g.actualQty = actual;
-    g.counted = !isEmpty;
-
-    const { error } = await saveData('stock_take_items', {
-        id: g.itemId,
-        actual_qty: actual,
-        variance: isEmpty ? null : (actual - g.systemQty),
-        counted: !isEmpty,
-        counted_at: isEmpty ? null : new Date().toISOString(),
-        counted_by: isEmpty ? null : ((currentUser && currentUser.name) || null)
+    // Refresh unsaved markers from the (now smaller) draft map.
+    document.querySelectorAll('#stockopname-count-body .stockopname-actual-input').forEach(input => {
+        const g = currentStockTakeGroups ? currentStockTakeGroups[parseInt(input.getAttribute('data-group-index'))] : null;
+        input.classList.toggle('stockopname-unsaved', !!(g && g.itemId && stockTakeDrafts.has(g.itemId)));
     });
-    if (error) console.error('Failed to save counted value for', g.label, error);
-
     updateProgressNote();
     updateStockTakeDetailBar();
+
+    if (failed.length > 0) {
+        await showWarningModal(
+            soT('stockopname_save_failed', 'These counts were NOT saved:\n{lines}\n\nThey are still on screen (marked unsaved). Press Save Counts to try again.')
+                .replace('{lines}', failed.map(l => `• ${l}`).join('\n')),
+            false, soT('stockopname_save_failed_title', 'Some counts not saved'), null, 'warning');
+        return false;
+    }
+    if (!silentSuccess) {
+        await showWarningModal(
+            soT('stockopname_saved_ok', '{n} counts saved and verified in the database.').replace('{n}', verifiedCount),
+            false, soT('stockopname_saved_ok_title', 'Counts saved'), null, 'success');
+    }
+    return true;
 }
+
+// Called at the top of every action that reads the saved counts (lot
+// detail, found item, detail sheet print, finalize) so it never works from
+// numbers that only exist on screen.
+async function ensureStockTakeCountsSaved() {
+    if (stockTakeDrafts.size === 0) return true;
+    return saveStockTakeCounts({ silentSuccess: true });
+}
+
+// Refresh / close-tab guard while anything typed is still unsaved.
+window.addEventListener('beforeunload', (e) => {
+    if (stockTakeDrafts.size > 0) { e.preventDefault(); e.returnValue = ''; }
+});
 
 function updateProgressNote() {
     const el = document.getElementById('stockopname-progress-note');
@@ -4810,7 +4951,11 @@ function updateProgressNote() {
         const resumeTemplate = window.t ? (window.t('stockopname_resuming') || 'Resuming stock take started {date} by {user}.') : 'Resuming stock take started {date} by {user}.';
         text = resumeTemplate.replace('{date}', stockTakeResumeInfo.date).replace('{user}', stockTakeResumeInfo.by) + ' ' + text;
     }
+    if (stockTakeDrafts.size > 0) {
+        text += ' · ' + soT('stockopname_unsaved_note', '{n} unsaved').replace('{n}', stockTakeDrafts.size);
+    }
     el.textContent = text;
+    updateStockTakeSaveButton();
 }
 
 // Cancelling marks the row 'cancelled' (STOCK_OPNAME_PLAN.md §5.1) — it is
@@ -4827,6 +4972,7 @@ async function cancelStockTake() {
     currentStockTakeId = null;
     stockTakeResumeInfo = null;
     _stockOpnamePackedLotsCache = null;
+    stockTakeDrafts = new Map();
     const sheet = document.getElementById('stockopname-sheet');
     const history = document.getElementById('stockopname-history');
     if (sheet) sheet.classList.add('hidden');
@@ -5060,6 +5206,7 @@ async function updateStockTakeDetailBar() {
 // Stage 2 print sheet (§4.3) — one block per group that currently needs
 // detailing, with a blank lot table for the team to fill in by hand.
 async function printStockCountFormStage2() {
+    if (!(await ensureStockTakeCountsSaved())) return;
     const needing = stockOpnameGroupsNeedingDetail();
     if (needing.length === 0) {
         await showWarningModal(window.t ? (window.t('stockopname_detail_none') || 'No differences to detail yet — enter Stage 1 counts first.') : 'No differences to detail yet — enter Stage 1 counts first.', false);
@@ -5187,6 +5334,7 @@ async function printStockCountFormStage2() {
 // so they only ever open groups that actually need it).
 async function openStockTakeDetailModal(groupIndices) {
     if (!currentStockTakeGroups || !groupIndices || groupIndices.length === 0) return;
+    if (!(await ensureStockTakeCountsSaved())) return;
     const targets = groupIndices
         .map(i => ({ i, g: currentStockTakeGroups[i] }))
         .filter(({ g }) => g && g.category === 'packed' && !g.stale);
@@ -5377,6 +5525,7 @@ async function saveStockTakeDetailForGroup(groupIndex, g, filledLots) {
 // registering a brand new coffee identity through a stock count.
 async function openAddFoundItemModal() {
     if (!currentStockTakeGroups || !currentStockTakeId) return;
+    if (!(await ensureStockTakeCountsSaved())) return;
     const [
         { data: greenbeans }, { data: recipes }, { data: machines }, { data: sizes }
     ] = await Promise.all([
@@ -5681,8 +5830,9 @@ function collectStockTakeFinalizeData() {
 // decision stands) — just makes sure whoever clicks Posting has seen the
 // impact, especially the items that will NOT be touched because they were
 // never counted.
-function openStockTakeReviewModal() {
+async function openStockTakeReviewModal() {
     if (!currentStockTakeGroups || !currentStockTakeId) return;
+    if (!(await ensureStockTakeCountsSaved())) return;
     const collected = collectStockTakeFinalizeData();
     const { lines, countedCount, skippedCount, varianceCount } = collected;
 
@@ -5856,6 +6006,7 @@ async function executeStockTakePosting() {
     currentStockTakeId = null;
     stockTakeResumeInfo = null;
     _stockOpnamePackedLotsCache = null;
+    stockTakeDrafts = new Map();
     await loadStockOpnameReport('', '');
     if (typeof scheduleDashboardRefresh === 'function') scheduleDashboardRefresh();
 }

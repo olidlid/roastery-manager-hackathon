@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=27">
+    <link rel="stylesheet" href="css/styles.css?v=28">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -2180,6 +2180,7 @@
                                         <button type="button" id="btn-stockopname-add-found" class="btn btn-secondary btn-sm" data-i18n="btn_stockopname_add_found">+ Add Found Item</button>
                                         <button type="button" id="btn-stockopname-print-stage2" class="btn btn-secondary btn-sm" data-i18n="btn_stockopname_print_stage2">Print Detail Sheet</button>
                                         <button type="button" id="btn-stockopname-detail-all" class="btn btn-secondary btn-sm" data-i18n="btn_stockopname_detail_all">Enter Lot Detail</button>
+                                        <button type="button" id="btn-stockopname-save-counts" class="btn btn-primary btn-sm" disabled>Save Counts</button>
                                         <button type="button" id="btn-stockopname-cancel" class="btn btn-secondary btn-sm" data-i18n="btn_cancel">Cancel</button>
                                         <button type="button" id="btn-stockopname-finalize" class="btn btn-primary btn-sm" data-i18n="btn_stockopname_finalize">Finalize &amp; Adjust</button>
                                     </div>
@@ -3024,12 +3025,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=77"></script>
+    <script src="js/translations.js?v=78"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=4"></script>
-    <script src="js/auth.js?v=18"></script>
+    <script src="js/auth.js?v=19"></script>
     <script src="js/greenbean.js?v=22"></script>
     <script src="js/roasting.js?v=44"></script>
     <script src="js/packing.js?v=140"></script>
@@ -3038,6 +3039,6 @@
     <script src="js/settings.js?v=27"></script>
     <script src="js/tracking.js?v=8"></script>
     <script src="js/purchasing.js?v=3"></script>
-    <script src="js/app.js?v=120"></script>
+    <script src="js/app.js?v=121"></script>
 </body>
 </html>

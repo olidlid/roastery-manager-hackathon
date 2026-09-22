@@ -518,8 +518,9 @@ function hasLoginDayExpired() {
 }
 
 // Signs out and shows the login overlay because the calendar day rolled
-// over — not a network/permission error, so it gets its own message rather
-// than reusing the generic sign-out path.
+// over. Deliberately silent (user decision 2026-09-22): the login screen
+// itself is the signal — the old "A new day has started" alert was just an
+// extra click every morning.
 async function enforceDailyReLogin() {
     clearDailyLoginDate();
     try { await window.supabaseClient.auth.signOut(); } catch (e) { /* UI reset below runs regardless */ }
@@ -527,7 +528,6 @@ async function enforceDailyReLogin() {
     authOverlay.classList.remove('hidden');
     document.getElementById('app-container').style.display = 'none';
     hideAppLoadingOverlay();
-    alert(window.t ? (window.t('alert_daily_relogin_required') || 'A new day has started — please sign in again.') : 'A new day has started — please sign in again.');
 }
 
 // Catches a tab left open across midnight — the load/sign-in-time check in
