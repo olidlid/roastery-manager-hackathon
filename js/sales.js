@@ -2798,9 +2798,18 @@ async function approveSalesOrder(orderId) {
 
             // Create Roast Plan (Pending - not auto-executed)
             if (pQty > 0) {
-                const weightKg = (pQty * parseInt(item.bag_size_g)) / 1000;
-                // Add a buffer for yield (roughly / 0.85)
-                const targetRoast = weightKg / 0.85;
+                // roasting_plans.target_roasted_kg is the ROASTED output the
+                // plan must produce — not the green bean it starts from. An
+                // order is already expressed in roasted weight (bags of
+                // roasted coffee), so it converts straight across: bags ×
+                // bag size. The ~15% roasting loss is applied where the
+                // green bean is actually worked out (the batch form prefills
+                // green = target / 0.85, and the plan's green claim uses the
+                // same), so dividing here too counted the loss twice and
+                // made every order-derived plan ~17.6% too big (found
+                // 2026-09-23: a 36 kg order asked for 42.35 kg roasted and
+                // prefilled 49.8 kg of green instead of ~42.4 kg).
+                const targetRoast = (pQty * parseInt(item.bag_size_g)) / 1000;
 
                 // Trade-name item: roasting always targets one concrete
                 // origin/recipe. Prefers the leader's explicit pick from the
@@ -4689,9 +4698,11 @@ async function openSalesRequestModal(orderId = null) {
                 // Update linked plan target if exists
                 const linkedPlan = (allPlans || []).find(p => p.request_order_item_id === originalItemId);
                 if (linkedPlan) {
+                    // Same rule as approval above: the target is the roasted
+                    // output the order needs, so bags × bag size, with no
+                    // yield division (see the comment there).
                     const pendingQty = oldItem.quantity_pending;
-                    const weightKg = (pendingQty * parseInt(oldItem.bag_size_g)) / 1000;
-                    const targetRoast = weightKg / 0.85;
+                    const targetRoast = (pendingQty * parseInt(oldItem.bag_size_g)) / 1000;
                     linkedPlan.target_roasted_kg = parseFloat(targetRoast.toFixed(2));
 
                     const fulfilled = parseFloat(linkedPlan.fulfilled_roasted_kg || 0);
