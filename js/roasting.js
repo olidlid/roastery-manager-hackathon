@@ -2236,26 +2236,111 @@ async function deletePlan(id) {
 // back out of bulk (if it was ever added), return the green bean, then
 // delete the row — each step undoing the earlier ones if it fails. The old
 // version logged every failure to the console and deleted the batch anyway.
+// Which plan rows a deleted batch has to give its progress back to.
+// roasting_plans.fulfilled_roasted_kg is an accumulation of the yield the
+// operator typed on each batch (user ruling 2026-09-23) — never recomputed —
+// so a delete subtracts exactly this batch's recorded output, nothing else.
+// A batch logged from a plan carries roasting_plan_id; one logged by scan
+// (Quick Roast) doesn't, so its output is unwound from the same coffee+
+// machine plans the save path would have filled, last-filled first.
+function planRollbackTargetsForBatch(batch, plans) {
+    const out = [];
+    let remaining = parseFloat(batch.output_weight_kg) || 0;
+    if (remaining <= 0.0001) return out;
+
+    if (batch.roasting_plan_id) {
+        const linked = (plans || []).find(x => x.id === batch.roasting_plan_id);
+        if (linked) {
+            const take = Math.min(remaining, parseFloat(linked.fulfilled_roasted_kg) || 0);
+            if (take > 0.0001) out.push({ plan: linked, kg: take });
+            return out;
+        }
+    }
+
+    const matching = (plans || []).filter(x =>
+        x.coffee_type === batch.coffee_type &&
+        (batch.coffee_type === 'Single' ? x.single_coffee_id === batch.single_coffee_id : x.blend_recipe_id === batch.blend_recipe_id) &&
+        x.machine_id === batch.machine_id &&
+        (parseFloat(x.fulfilled_roasted_kg) || 0) > 0
+    );
+    // Same order the save path fills in, then reversed: the plan filled last
+    // is the one that gives its kg back first.
+    matching.sort((x, y) => {
+        const xSub = x.is_post_blend_component ? 0 : 1;
+        const ySub = y.is_post_blend_component ? 0 : 1;
+        if (xSub !== ySub) return xSub - ySub;
+        return (new Date(x.plan_date) - new Date(y.plan_date)) || (x.id - y.id);
+    });
+    matching.reverse();
+
+    for (const pl of matching) {
+        if (remaining <= 0.0001) break;
+        const take = Math.min(remaining, parseFloat(pl.fulfilled_roasted_kg) || 0);
+        if (take <= 0.0001) continue;
+        out.push({ plan: pl, kg: take });
+        remaining -= take;
+    }
+    return out;
+}
+
+// Stock-path audit (2026-09-22): all-or-nothing. Order: take the output
+// back out of bulk (if it was ever added), return the green bean, then
+// delete the row — each step undoing the earlier ones if it fails. The old
+// version logged every failure to the console and deleted the batch anyway.
+// 2026-09-23: the confirmation now spells out every effect first, and plan
+// progress is given back too (it used to stay inflated after a delete).
 let _deletingBatch = false;
 async function deleteBatch(id) {
     if (_deletingBatch) return;
-    if (!(await showDeleteConfirmModal('this roasting batch log'))) return;
-    if (!(await ensureNoStockOpname())) return;
-    _deletingBatch = true;
     const sb = window.supabaseClient;
     const userName = (currentUser && currentUser.name) || null;
+
+    // --- Read-only preflight, so the confirmation can state real numbers ---
+    const { data: batch, error: preErr } = await sb.from('roast_batches').select('*').eq('id', id).maybeSingle();
+    if (preErr) { await showStockFailed(preErr.message); return; }
+    if (!batch) { await showStockFailed(stT('roast_delete_gone', 'This batch no longer exists (already deleted?).')); return; }
+
+    const [{ data: preDraws }, { data: allPlans }, { data: machines }] = await Promise.all([
+        sb.from('roast_batch_green_lots').select('kg_consumed').eq('roast_batch_id', id),
+        fetchData('roasting_plans'),
+        fetchData('machines')
+    ]);
+    const greenKg = (preDraws || []).reduce((sum, d) => sum + (parseFloat(d.kg_consumed) || 0), 0);
+    const outputKg = parseFloat(batch.output_weight_kg) || 0;
+    const planTargets = planRollbackTargetsForBatch(batch, allPlans);
+    const machineName = (machines || []).find(m => m.id === batch.machine_id);
+
+    const lines = [];
+    if (greenKg > 0.0001) lines.push(stT('roast_delete_line_green', '• Green bean returned to stock: {kg} kg').replace('{kg}', greenKg.toFixed(2)));
+    if (batch.qc_status === 'Success' && outputKg > 0) lines.push(stT('roast_delete_line_bulk', '• Bulk stock reduced: {kg} kg').replace('{kg}', outputKg.toFixed(2)));
+    for (const t of planTargets) {
+        lines.push(stT('roast_delete_line_plan', '• Roasting plan {date} progress reduced: {kg} kg').replace('{date}', t.plan.plan_date || '').replace('{kg}', t.kg.toFixed(2)));
+    }
+    if (lines.length === 0) lines.push(stT('roast_delete_line_none', '• No stock or plan progress is affected.'));
+
+    const confirmed = await showWarningModal(
+        stT('roast_delete_confirm', 'Delete batch {code} ({kg} kg roasted, {machine})?\n\n{lines}\n\nThis cannot be undone.')
+            .replace('{code}', batch.batch_code || `#${batch.id}`)
+            .replace('{kg}', outputKg.toFixed(2))
+            .replace('{machine}', machineName ? machineName.name : '-')
+            .replace('{lines}', lines.join('\n')),
+        true, stT('roast_delete_title', 'Delete batch?'), stT('roast_delete_confirm_btn', 'Yes, delete'));
+    if (!confirmed) return;
+    if (!(await ensureNoStockOpname())) return;
+
+    _deletingBatch = true;
     const lock = lockProcessingScreen(stT('roast_deleting', 'Deleting batch…'));
     let outcome;
     try {
         outcome = await (async () => {
             const problems = [];
-            const { data: batch, error: readErr } = await sb.from('roast_batches').select('*').eq('id', id).maybeSingle();
+            const { data: fresh, error: readErr } = await sb.from('roast_batches').select('*').eq('id', id).maybeSingle();
             if (readErr) return { failure: readErr.message };
-            if (!batch) return { failure: stT('roast_delete_gone', 'This batch no longer exists (already deleted?).') };
+            if (!fresh) return { failure: stT('roast_delete_gone', 'This batch no longer exists (already deleted?).') };
 
             // 1. Output back out of bulk, if it was ever added.
             let bulkTaken = null; // { bulkId, kg } for undo
-            if (batch.qc_status === 'Success') {
+            if (fresh.qc_status === 'Success') {
                 // TEST_BATCH_CARD_PLAN.md follow-up: "Approve & Combine" can land this
                 // batch's output in a bulk row with a DIFFERENT machine/date than the
                 // batch itself — bulk_stock_movements always has the real answer:
@@ -2272,27 +2357,27 @@ async function deleteBatch(id) {
                     // Fallback for a row predating the ledger — the old guess.
                     const { data: bulkList } = await fetchData('bulk_roasted_coffee');
                     const bulkRec = (bulkList || []).find(b =>
-                        b.coffee_type === batch.coffee_type &&
-                        (batch.coffee_type === 'Single' ? b.single_coffee_id === batch.single_coffee_id : b.blend_recipe_id === batch.blend_recipe_id) &&
-                        b.machine_id === batch.machine_id &&
-                        b.production_date === batch.roast_date
+                        b.coffee_type === fresh.coffee_type &&
+                        (fresh.coffee_type === 'Single' ? b.single_coffee_id === fresh.single_coffee_id : b.blend_recipe_id === fresh.blend_recipe_id) &&
+                        b.machine_id === fresh.machine_id &&
+                        b.production_date === fresh.roast_date
                     );
                     bulkId = bulkRec ? bulkRec.id : null;
                 }
-                const outputKg = parseFloat(batch.output_weight_kg) || 0;
-                if (bulkId && outputKg > 0) {
+                const outKg = parseFloat(fresh.output_weight_kg) || 0;
+                if (bulkId && outKg > 0) {
                     const { data: taken, error: consumeErr } = await sb.rpc('consume_bulk_lot', {
-                        p_bulk_id: bulkId, p_kg: outputKg,
+                        p_bulk_id: bulkId, p_kg: outKg,
                         p_operation: 'undo', p_ref_table: 'roast_batches', p_ref_id: id,
                         p_reason: 'Roast batch log deleted', p_user: userName
                     });
                     if (consumeErr) return { failure: consumeErr.message };
                     const takenKg = parseFloat(taken) || 0;
                     bulkTaken = { bulkId, kg: takenKg };
-                    if (takenKg + 0.001 < outputKg) {
-                        problems.push(`Only ${takenKg.toFixed(2)} of ${outputKg.toFixed(2)} kg could be removed from bulk — the rest was already packed or used.`);
+                    if (takenKg + 0.001 < outKg) {
+                        problems.push(`Only ${takenKg.toFixed(2)} of ${outKg.toFixed(2)} kg could be removed from bulk — the rest was already packed or used.`);
                     }
-                } else if (outputKg > 0) {
+                } else if (outKg > 0) {
                     problems.push('No bulk row found for this batch — its roasted output was not removed from bulk stock.');
                 }
             }
@@ -2321,6 +2406,29 @@ async function deleteBatch(id) {
                 const reason = window.t("alert_delete_failed").replace("{msg}", delErr.message);
                 return leftovers.length ? { partial: [reason, ...leftovers] } : { failure: reason };
             }
+
+            // 4. Give the plan(s) their progress back — the batch's own
+            // recorded yield, the same figure that was added when it was
+            // saved. Runs last: it is bookkeeping, not stock, so a failure
+            // here is reported rather than undoing the delete.
+            const { data: freshPlans } = await fetchData('roasting_plans');
+            for (const t of planRollbackTargetsForBatch(fresh, freshPlans)) {
+                const pl = t.plan;
+                const newFulfilled = Math.max(0, (parseFloat(pl.fulfilled_roasted_kg) || 0) - t.kg);
+                const target = parseFloat(pl.target_roasted_kg) || 0;
+                pl.fulfilled_roasted_kg = parseFloat(newFulfilled.toFixed(2));
+                // A plan stopped on purpose stays stopped; otherwise the
+                // status follows the new number.
+                if (pl.status !== 'Stopped') {
+                    pl.status = (target > 0 && pl.fulfilled_roasted_kg >= target)
+                        ? 'Completed'
+                        : (pl.fulfilled_roasted_kg > 0 ? 'On Process' : 'Pending');
+                }
+                const { error: planErr } = await saveData('roasting_plans', pl);
+                if (planErr) problems.push(`Roasting plan ${pl.plan_date || '#' + pl.id}: progress not reduced by ${t.kg.toFixed(2)} kg (${planErr.message})`);
+                else await syncPlanStatusToOrderItem(pl);
+            }
+
             return { partial: problems.length ? problems : null };
         })();
     } catch (err) {
@@ -2333,6 +2441,7 @@ async function deleteBatch(id) {
 
     loadRoastingBatches();
     loadGreenbeanInventory();
+    if (typeof loadRoastingPlans === 'function') loadRoastingPlans();
     scheduleDashboardRefresh();
     if (outcome.failure) await showStockFailed(outcome.failure);
     else if (outcome.partial) await showStockPartial(outcome.partial.join('\n'));
