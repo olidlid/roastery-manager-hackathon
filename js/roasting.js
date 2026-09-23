@@ -3593,7 +3593,15 @@ async function openRoastBatchModal(plan = null, editId = null) {
         machineSelect.value = getCookie('last_machine_id') || machines[0]?.id || '';
         coffeeSelect.value = `${plan.coffee_type}-${plan.single_coffee_id || plan.blend_recipe_id}`;
         testCheckbox.checked = false;
+        // The plan dictates the amount: its target is the ROASTED output, so
+        // the green bean to charge is target / 0.85 (the ~15% roasting loss).
+        // Marked as deliberately set, because updateGeneratedBatchCodeAndWeight()
+        // runs right below to generate the batch code and would otherwise
+        // overwrite this with the machine's ideal batch size — a plan for
+        // 10 kg roasted opened with 7 kg of green bean and a nonsense
+        // -42.9% depreciation (found 2026-09-23).
         greenbeanWeightInput.value = ((plan.target_roasted_kg / 0.85) * 1000).toFixed(0);
+        greenbeanWeightInput.dataset.userEdited = '1';
         roastedWeightInput.value = (plan.target_roasted_kg * 1000).toFixed(0);
         notesTextarea.value = '';
         prefillRoastDegree(coffeeSelect.value, machineSelect.value);
