@@ -719,6 +719,15 @@ async function openEditBlendNameModal(bulkId) {
 // drops the card from Ready to Pack, since renderReadyToPackCards filters
 // > 0.005) and the leftover is written to waste_inventory, keeping the
 // discrepancy visible rather than silently absorbed.
+// Closing a lot writes its whole remaining stock off as waste, so the two
+// numbers below decide how much friction that gets (user decision
+// 2026-09-23, after 82.64 kg of BRAZIL ROSA was closed by mistake ten
+// minutes after it was roasted):
+//   > BIG: the reason note becomes mandatory — "Other" alone says nothing.
+//   > PERMISSION: only a role holding packing_waste_control may do it at all.
+const CLOSE_LOT_BIG_KG = 1;
+const CLOSE_LOT_PERMISSION_KG = 5;
+
 async function openCloseLotModal(bulkId) {
     const [{ data: bulkList }, { data: machines }, { data: greenbeans }, { data: recipes }, { data: roastBatches }] = await Promise.all([
         fetchData('bulk_roasted_coffee'),
@@ -731,12 +740,18 @@ async function openCloseLotModal(bulkId) {
     if (!bulk) return;
 
     const leftoverKg = parseFloat(bulk.bulk_available) || 0;
+    if (leftoverKg > CLOSE_LOT_PERMISSION_KG && !hasPermission('packing_waste_control')) {
+        await showWarningModal(
+            stT('close_lot_denied', 'Closing a lot with more than {limit} kg left writes {kg} kg off as waste — only an Admin or Production Leader can do that. Ask them to close it, or pack the coffee first.')
+                .replace('{limit}', CLOSE_LOT_PERMISSION_KG).replace('{kg}', leftoverKg.toFixed(2)),
+            false, stT('close_lot_denied_title', 'Not allowed'), null, 'warning');
+        return;
+    }
     const machine = (machines || []).find(m => m.id === bulk.machine_id);
     const lotCode = bulk.custom_blend_code || buildPreviewLotCode(bulk, machines, greenbeans, recipes, roastBatches, bulk.production_date);
     // Anything sizeable is far more likely a mis-click or a real stock
     // discrepancy than end-of-lot residue — say so and point at Stock Take.
-    const BIG_LEFTOVER_KG = 1;
-    const isBig = leftoverKg > BIG_LEFTOVER_KG;
+    const isBig = leftoverKg > CLOSE_LOT_BIG_KG;
 
     const html = `
         <form id="modal-close-lot-form">
@@ -782,7 +797,23 @@ async function openCloseLotModal(bulkId) {
         const reason = document.getElementById('m-closelot-reason').value;
         const notes = document.getElementById('m-closelot-notes').value.trim();
 
-        if (!await showWarningModal(window.t ? window.t('close_lot_confirm') : 'Close this lot?')) return;
+        // A sizeable write-off has to say WHY in the operator's own words.
+        if (isBig && !notes) {
+            await showWarningModal(
+                stT('close_lot_note_required', 'Writing off {kg} kg needs a short note explaining what happened to the coffee.').replace('{kg}', leftoverKg.toFixed(2)),
+                false, stT('close_lot_note_required_title', 'Note required'), null, 'warning');
+            const notesEl = document.getElementById('m-closelot-notes');
+            if (notesEl) notesEl.focus();
+            return;
+        }
+
+        // The final question names the amount — it used to be a bare
+        // "Close this lot?", identical for 0.01 kg and for 82 kg.
+        const confirmed = await showWarningModal(
+            stT('close_lot_confirm_kg', 'Write off {kg} kg of {coffee} as waste?\n\nThe lot will be emptied and disappear from Ready to Pack. It can be returned from the Waste tab if this was a mistake.')
+                .replace('{kg}', leftoverKg.toFixed(2)).replace('{coffee}', bulk.coffee_name || ''),
+            true, stT('close_lot_confirm_title', 'Close lot?'), stT('close_lot_confirm_btn', 'Yes, write off'));
+        if (!confirmed) return;
         if (!(await ensureNoStockOpname())) return;
 
         const { data: wasteRow, error: wasteErr } = await saveData('waste_inventory', {
@@ -834,9 +865,15 @@ async function loadWasteInventorySection() {
     const rows = (waste || []).slice().sort((a, b) => new Date(b.discard_date) - new Date(a.discard_date) || b.id - a.id);
 
     if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-center-muted">${window.t ? window.t('waste_inventory_empty') : 'No waste recorded.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center-muted">${window.t ? window.t('waste_inventory_empty') : 'No waste recorded.'}</td></tr>`;
         return;
     }
+
+    // Return = undo a Close Lot: the kg goes back to the bulk card it came
+    // from and this row disappears. Only for rows that still know their bulk
+    // (a failed-QC batch has no lot to return to), and only for the role
+    // that is allowed to write stock off in the first place.
+    const canReturn = hasPermission('packing_waste_control');
 
     const sourceLabel = (r) => {
         if (r.source_type === 'Bulk') return window.t ? window.t('waste_source_bulk') : 'Bulk';
@@ -853,9 +890,94 @@ async function loadWasteInventorySection() {
             <td class="text-right">${(parseFloat(r.waste_kg) || 0).toFixed(2)}</td>
             <td>${r.reason || '-'}</td>
             <td>${r.recorded_by || '-'}</td>
+            <td class="text-center">${(canReturn && r.source_type === 'Bulk' && r.bulk_roasted_coffee_id)
+                ? `<button type="button" class="btn btn-secondary btn-sm btn-waste-return" data-id="${r.id}" title="${stT('waste_return_title', 'Return to bulk stock')}" style="padding:4px 8px; line-height:0;">${WASTE_RETURN_ICON_SVG}</button>`
+                : ''}</td>
         `;
         tbody.appendChild(tr);
     });
+
+    tbody.querySelectorAll('.btn-waste-return').forEach(btn => {
+        btn.addEventListener('click', () => returnWasteToBulk(parseInt(btn.getAttribute('data-id'))));
+    });
+}
+
+const WASTE_RETURN_ICON_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/></svg>';
+
+// Undo of a Close Lot: puts the written-off kg back on its bulk card and
+// removes the waste row. Same all-or-nothing shape as every other stock path
+// (see the stock-path audit): refuse while a stock opname runs, do the stock
+// move first, and undo it again if the waste row can't be removed — leaving
+// both would double the coffee.
+let _returningWaste = false;
+async function returnWasteToBulk(wasteId) {
+    if (_returningWaste) return;
+    if (!hasPermission('packing_waste_control')) {
+        await showWarningModal(stT('waste_return_denied', 'Only an Admin or Production Leader can return waste to stock.'), false, stT('close_lot_denied_title', 'Not allowed'), null, 'warning');
+        return;
+    }
+    const sb = window.supabaseClient;
+    const { data: row, error: readErr } = await sb.from('waste_inventory').select('*').eq('id', wasteId).maybeSingle();
+    if (readErr) { await showStockFailed(readErr.message); return; }
+    if (!row) { await showStockFailed(stT('waste_return_gone', 'This waste record no longer exists.')); return; }
+    if (row.source_type !== 'Bulk' || !row.bulk_roasted_coffee_id) {
+        await showWarningModal(stT('waste_return_no_bulk', 'This row came from a failed roast batch, not a closed lot, so there is no bulk card to return it to.'), false, stT('close_lot_denied_title', 'Not allowed'), null, 'warning');
+        return;
+    }
+    const kg = parseFloat(row.waste_kg) || 0;
+    if (kg <= 0) { await showStockFailed(stT('waste_return_zero', 'This row has no quantity to return.')); return; }
+
+    const confirmed = await showWarningModal(
+        stT('waste_return_confirm', 'Return {kg} kg of {coffee} to bulk stock?\n\nThe lot reappears in Ready to Pack and this waste record is removed. The movement stays in the stock ledger.')
+            .replace('{kg}', kg.toFixed(2)).replace('{coffee}', row.source_name || ''),
+        true, stT('waste_return_confirm_title', 'Return to stock?'), stT('waste_return_confirm_btn', 'Yes, return'));
+    if (!confirmed) return;
+    if (!(await ensureNoStockOpname())) return;
+
+    _returningWaste = true;
+    const lock = lockProcessingScreen(stT('waste_returning', 'Returning to stock…'));
+    let outcome;
+    try {
+        outcome = await (async () => {
+            const { data: newBalance, error } = await sb.rpc('refund_bulk_lot', {
+                p_bulk_id: row.bulk_roasted_coffee_id, p_kg: kg,
+                p_operation: 'undo', p_ref_table: 'waste_inventory', p_ref_id: row.id,
+                p_reason: `Close Lot returned from Waste (${row.source_name || ''})`,
+                p_user: (currentUser && currentUser.name) || null
+            });
+            if (error || newBalance === null) return { failure: error ? error.message : 'the bulk card for this row no longer exists' };
+
+            const { error: delErr } = await deleteData('waste_inventory', row.id);
+            if (delErr) {
+                // Take it back out again, or the same kg would sit in both places.
+                const { data: undoData, error: undoErr } = await sb.rpc('consume_bulk_lot', {
+                    p_bulk_id: row.bulk_roasted_coffee_id, p_kg: kg,
+                    p_operation: 'undo', p_ref_table: 'waste_inventory', p_ref_id: row.id,
+                    p_reason: 'Waste return failed — rolled back', p_user: (currentUser && currentUser.name) || null
+                });
+                if (undoErr || undoData === null) return { partial: [`${delErr.message} | ${kg} kg is now on the bulk card AND still recorded as waste — fix one of them manually`] };
+                return { failure: delErr.message };
+            }
+            return { balance: parseFloat(newBalance) || 0 };
+        })();
+    } catch (err) {
+        console.error('returnWasteToBulk error:', err);
+        outcome = { partial: [err && err.message ? err.message : String(err)] };
+    } finally {
+        lock.release();
+        _returningWaste = false;
+    }
+
+    await loadWasteInventorySection();
+    await loadPackingSection();
+    scheduleDashboardRefresh();
+
+    if (outcome.failure) await showStockFailed(outcome.failure);
+    else if (outcome.partial) await showStockPartial(outcome.partial.join('\n'));
+    else await showWarningModal(
+        stT('waste_return_done', '{kg} kg returned. The lot now holds {balance} kg and is back in Ready to Pack.')
+            .replace('{kg}', kg.toFixed(2)).replace('{balance}', outcome.balance.toFixed(2)),
+        false, stT('waste_return_done_title', 'Returned to stock'), null, 'success');
 }
 
 document.getElementById('btn-export-waste-inventory').addEventListener('click', async () => {
