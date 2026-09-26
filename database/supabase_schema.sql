@@ -399,7 +399,32 @@ CREATE TABLE IF NOT EXISTS public.customers (
     city TEXT,
     notes TEXT,
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- CRM_PAGE_PLAN.md §4 (2026-09-26): kepemilikan sales + jejak pembuatan.
+    -- Kepemilikan TIDAK membatasi akses — pagarnya tetap kategori customer
+    -- (CUSTOMER_CATEGORY_ROLE_PLAN.md); ini murni pengelompokan & manajemen.
+    owner_sales_id UUID,                        -- profiles.id
+    owner_sales_name TEXT,                      -- snapshot nama, pola decided_by_name
+    owner_since TIMESTAMPTZ,
+    created_by_id UUID,                         -- siapa yang membuka customer ini
+    created_by_name TEXT,
+    deactivated_at TIMESTAMPTZ                  -- is_active tidak punya tanggal; ini yang mencatatnya
+);
+
+-- 16b. Sejarah kepemilikan customer (CRM_JOURNEY_DATA.md §3.2) — HANYA DITAMBAH.
+-- Tanpa tabel ini, memindah kepemilikan ikut mengubah atribusi bulan-bulan
+-- sebelumnya dan sales lama kehilangan pencapaiannya, tanpa cara memulihkan.
+CREATE TABLE IF NOT EXISTS public.customer_owner_history (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER NOT NULL,
+    from_sales_id UUID,
+    from_sales_name TEXT,
+    to_sales_id UUID,
+    to_sales_name TEXT,
+    changed_by_id UUID,
+    changed_by_name TEXT,
+    changed_at TIMESTAMPTZ DEFAULT NOW(),
+    note TEXT
 );
 
 -- 17. Sales agents
