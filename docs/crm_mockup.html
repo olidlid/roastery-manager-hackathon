@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CRM Management — Mockup</title>
+<style>
+  :root{
+    --bg:#16160f; --card:#20201a; --card2:#26261f; --line:#34342c;
+    --text:#f3f2ec; --muted:#9c9a90; --dim:#6f6d64;
+    --green:#3f9d6d; --green-soft:rgba(63,157,109,.16);
+    --amber:#d99a26; --amber-soft:rgba(217,154,38,.16);
+    --red:#d2604f; --red-soft:rgba(210,96,79,.16);
+    --blue:#4d8fb8; --blue-soft:rgba(77,143,184,.16);
+    --purple:#8a72c4; --purple-soft:rgba(138,114,196,.16);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 16px 80px}
+  .note{background:#1d2a22;border:1px solid #2f5f45;border-left-width:4px;border-radius:10px;
+    padding:12px 16px;margin-bottom:26px;font-size:13px;color:#cfe6da}
+  .note b{color:#fff}
+  h1{font-size:24px;margin:0 0 4px}
+  h2{font-size:16px;margin:36px 0 12px;padding-top:22px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0;padding-top:0}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .grid{display:grid;gap:12px}
+  .lbl{font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+  /* tiles */
+  .tiles{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+  .tile{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:8px 13px;cursor:pointer;min-width:104px}
+  .tile.on{border-color:var(--green);background:var(--green-soft)}
+  .tile .n{font-size:19px;font-weight:800;line-height:1.1}
+  .tile .t{font-size:11px;color:var(--muted);margin-top:2px}
+  /* kpi */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:10px;margin-bottom:16px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:12px 14px}
+  .kpi .v{font-size:22px;font-weight:800}
+  .kpi .k{font-size:11px;color:var(--muted)}
+  .kpi .d{font-size:11px;margin-top:3px}
+  /* table */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim);text-align:left;
+    padding:0 10px 9px;font-weight:800;border-bottom:1px solid var(--line)}
+  td{padding:11px 10px;border-bottom:1px solid #2a2a23;vertical-align:middle}
+  tr:hover td{background:#25251e}
+  .rt{text-align:right}.ct{text-align:center}
+  .name{font-weight:700}
+  .muted{color:var(--muted)}
+  .chip{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap}
+  .c-green{background:var(--green-soft);color:#79c79c}
+  .c-amber{background:var(--amber-soft);color:#e8b75c}
+  .c-red{background:var(--red-soft);color:#e08a7a}
+  .c-blue{background:var(--blue-soft);color:#87bcda}
+  .c-purple{background:var(--purple-soft);color:#b3a0e0}
+  .c-grey{background:#2d2d26;color:var(--muted)}
+  .fbtn{background:#2a2a22;border:1px solid var(--line);color:var(--dim);border-radius:5px;
+    padding:1px 5px;font-size:9px;line-height:1.4;cursor:pointer;margin-left:5px;vertical-align:middle;font-family:inherit}
+  .fbtn:hover{color:var(--text);border-color:#4a4a40}
+  .fbtn.on{background:var(--green-soft);border-color:var(--green);color:#79c79c}
+  .sales{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+  .sales.unassigned{color:#e8b75c}
+  .ebtn{background:transparent;border:1px solid var(--line);color:var(--dim);border-radius:6px;
+    padding:1px 6px;font-size:11px;cursor:pointer;font-family:inherit;opacity:0;transition:opacity .12s}
+  tr:hover .ebtn{opacity:1}
+  .ebtn:hover{color:var(--text);border-color:var(--green)}
+  .sales.unassigned .ebtn{opacity:1;border-color:#6a5a2e;color:#e8b75c}
+  .spark{display:inline-flex;align-items:flex-end;gap:2px;height:22px}
+  .spark i{width:5px;background:#3c6e55;border-radius:1px;display:block}
+  .spark i.hi{background:var(--green)}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .d-ok{background:var(--green)}.d-warn{background:var(--amber)}.d-bad{background:var(--red)}
+  /* two col */
+  .two{display:grid;grid-template-columns:1.25fr 1fr;gap:12px}
+  @media(max-width:880px){.two{grid-template-columns:1fr}}
+  .row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #2a2a23}
+  .row:last-child{border-bottom:0}
+  .bar{flex:1;height:7px;background:#2c2c24;border-radius:4px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--green);border-radius:4px}
+  .bar i.b2{background:var(--blue)}
+  .attn{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #2a2a23}
+  .attn:last-child{border-bottom:0}
+  .attn .ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:13px;flex-shrink:0}
+  .btn{background:#2d2d25;border:1px solid var(--line);color:var(--text);border-radius:8px;
+    padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+  .btn.p{background:var(--green);border-color:var(--green);color:#08140d}
+  /* modal */
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .mhead{padding:18px 20px;border-bottom:1px solid var(--line);
+    background:linear-gradient(135deg,#23291f 0%,#20201a 60%)}
+  .tabs{display:flex;gap:6px;padding:0 20px;border-bottom:1px solid var(--line);background:#1e1e18}
+  .tab{padding:11px 14px;font-size:13px;font-weight:700;color:var(--muted);border-bottom:2px solid transparent;cursor:pointer}
+  .tab.on{color:var(--text);border-bottom-color:var(--green)}
+  .mbody{padding:20px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-bottom:18px}
+  .stat{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .stat .v{font-size:20px;font-weight:800}
+  .stat .k{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  /* charts */
+  .bars{display:flex;align-items:flex-end;gap:7px;height:130px;padding-top:6px}
+  .bars .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:5px;height:100%}
+  .bars .v{width:100%;background:linear-gradient(180deg,#4bb37d,#2f7a55);border-radius:4px 4px 0 0;min-height:2px}
+  .bars .v.now{background:linear-gradient(180deg,#78d3a3,#3f9d6d)}
+  .bars .m{font-size:9.5px;color:var(--dim)}
+  .bars .kg{font-size:9.5px;color:var(--muted)}
+  .donut{width:118px;height:118px;border-radius:50%;flex-shrink:0}
+  .legend{display:flex;flex-direction:column;gap:7px;font-size:12px;flex:1}
+  .legend .li{display:flex;align-items:center;gap:8px}
+  .legend .sw{width:10px;height:10px;border-radius:3px}
+  .cad{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+  .cad .g{height:26px;border-radius:4px;background:#2c2c24;position:relative;flex:1;min-width:26px}
+  .cad .g b{position:absolute;inset:0;display:grid;place-items:center;font-size:10px;color:var(--muted);font-weight:600}
+  .cad .o{width:12px;height:12px;border-radius:50%;background:var(--green);flex-shrink:0}
+  /* journey */
+  .hero{display:flex;gap:16px;align-items:center;margin-bottom:6px}
+  .ava{width:58px;height:58px;border-radius:16px;background:linear-gradient(135deg,#3f9d6d,#2a6f4c);
+    display:grid;place-items:center;font-size:22px;font-weight:800;color:#07140d}
+  .tl{position:relative;padding-left:26px;margin-top:6px}
+  .tl:before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:2px;background:#30302a}
+  .ev{position:relative;padding:0 0 18px 6px}
+  .ev:before{content:"";position:absolute;left:-22px;top:4px;width:11px;height:11px;border-radius:50%;
+    background:var(--green);box-shadow:0 0 0 3px #16160f}
+  .ev.mile:before{background:var(--amber)}
+  .ev.warn:before{background:var(--red)}
+  .ev .d{font-size:11px;color:var(--dim)}
+  .ev .h{font-weight:700;margin:1px 0 2px}
+  .ev .p{font-size:12.5px;color:var(--muted)}
+  .wrapped{background:linear-gradient(135deg,#25402f,#1d2a22);border:1px solid #33684a;
+    border-radius:14px;padding:18px 20px;margin-top:4px}
+  .wrapped .t{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#7fc7a2;font-weight:800}
+  .wrapped .big{font-size:27px;font-weight:800;margin:6px 0 2px}
+  .wgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-top:14px}
+  .wgrid div span{display:block}
+  .wgrid .k{font-size:10.5px;color:#8fb8a1;text-transform:uppercase;letter-spacing:.05em}
+  .wgrid .v{font-size:16px;font-weight:700;margin-top:2px}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="note">
+    <b>Mockup — not the real app.</b> Layout proposal for the CRM management page and the customer modal.
+    Numbers and names are real data from the live database (25 Sep 2026), so the screens show what the team
+    will actually see. Everything is measured in <b>kg and bags</b> — no currency anywhere.
+  </div>
+
+  <h1>CRM — Customer Management</h1>
+  <p class="sub">Management page. The Customers menu stays as it is for the sales team.
+     One permission, <code>crm_manage</code>, controls this whole page.</p>
+  <div style="display:flex;gap:6px;border-bottom:1px solid var(--line);margin-bottom:18px">
+    <div class="tab on">Customers</div>
+    <div class="tab" onclick="document.getElementById('salesperf').scrollIntoView({behavior:'smooth'})">Sales Performance</div>
+  </div>
+
+  <!-- ============ FILTERS ============ -->
+  <div class="lbl">Sales</div>
+  <div class="tiles">
+    <div class="tile on"><div class="n">47</div><div class="t">All customers</div></div>
+    <div class="tile"><div class="n">21</div><div class="t">Abdullah Al Modaifer</div></div>
+    <div class="tile"><div class="n">12</div><div class="t">محمد الجبري</div></div>
+    <div class="tile"><div class="n">6</div><div class="t">Ahmad</div></div>
+    <div class="tile"><div class="n">2</div><div class="t">khaleed</div></div>
+    <div class="tile" style="border-color:#6a5a2e;background:rgba(217,154,38,.10)"><div class="n">6</div><div class="t">Unassigned</div></div>
+  </div>
+
+  <div class="lbl">Category</div>
+  <div class="tiles">
+    <div class="tile on"><div class="n">47</div><div class="t">All</div></div>
+    <div class="tile"><div class="n">35</div><div class="t">Wholesale</div></div>
+    <div class="tile"><div class="n">10</div><div class="t">Supermarket</div></div>
+    <div class="tile"><div class="n">2</div><div class="t">Retail</div></div>
+  </div>
+
+  <!-- ============ KPIs ============ -->
+  <p class="sub" style="margin:-6px 0 10px">Every card below is a filter — click one to jump to the customer list showing exactly those customers.</p>
+  <div class="kpis">
+    <div class="kpi" onclick="pick('ordered','Ordered at least once')"><div class="v">41</div><div class="k">Ordered at least once</div><div class="d muted">6 never ordered</div></div>
+    <div class="kpi" onclick="pick('active','Active · 90 days')"><div class="v" style="color:#79c79c">23</div><div class="k">Active · 90 days</div><div class="d" style="color:#79c79c">+3 vs previous 90 d</div></div>
+    <div class="kpi" onclick="pick('slipping','Slipping')"><div class="v" style="color:#e8b75c">7</div><div class="k">Slipping</div><div class="d muted">past their usual gap</div></div>
+    <div class="kpi" onclick="pick('dormant','Dormant · 90 d+')"><div class="v" style="color:#e08a7a">11</div><div class="k">Dormant · 90 d+</div><div class="d muted">no order in 90 days</div></div>
+    <div class="kpi" onclick="pick('kg','Top by kg · 90 d')"><div class="v">4,812</div><div class="k">kg dispatched · 90 d</div><div class="d" style="color:#79c79c">+612 kg vs previous</div></div>
+    <div class="kpi" onclick="pick('gaps','Data gaps')"><div class="v" style="color:#e8b75c">9</div><div class="k">Data gaps</div><div class="d muted">missing phone / city / sales</div></div>
+  </div>
+
+  <!-- ============ ATTENTION + SALES ============ -->
+  <h2>Today</h2>
+  <div class="two">
+    <div class="card">
+      <div class="lbl">Needs attention</div>
+      <div class="attn">
+        <div class="ic" style="background:var(--amber-soft);color:#e8b75c">◷</div>
+        <div><div style="font-weight:700">3 customers are due to reorder this week</div>
+          <div class="muted" style="font-size:12.5px">masla (every ~8 d, due 27 Sep) · canol (~14 d, due 26 Sep) · sum cafe (~19 d, due 28 Sep)</div></div>
+      </div>
+      <div class="attn">
+        <div class="ic" style="background:var(--red-soft);color:#e08a7a">↓</div>
+        <div><div style="font-weight:700">2 regulars slowed down</div>
+          <div class="muted" style="font-size:12.5px">kanaf كناف ordered 1,200 kg in Aug–Sep, nothing for 5 days past its usual gap</div></div>
+      </div>
+      <div class="attn">
+        <div class="ic" style="background:var(--purple-soft);color:#b3a0e0">★</div>
+        <div><div style="font-weight:700">1 anniversary this month</div>
+          <div class="muted" style="font-size:12.5px">masla — 1 month as a customer on 19 Sep, 605 kg together</div></div>
+      </div>
+      <div class="attn">
+        <div class="ic" style="background:var(--blue-soft);color:#87bcda">⚑</div>
+        <div><div style="font-weight:700">6 customers have no sales</div>
+          <div class="muted" style="font-size:12.5px">Assign them to a sales so they appear on someone's list</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">Sales comparison · 90 days</div>
+      <div class="row"><div style="width:132px" class="name">Abdullah Al Modaifer</div>
+        <div class="bar"><i style="width:82%"></i></div><div style="width:74px" class="rt"><b>3,940</b> <span class="muted">kg</span></div></div>
+      <div class="row"><div style="width:132px" class="name">محمد الجبري</div>
+        <div class="bar"><i style="width:31%"></i></div><div style="width:74px" class="rt"><b>1,480</b> <span class="muted">kg</span></div></div>
+      <div class="row"><div style="width:132px" class="name">Ahmad</div>
+        <div class="bar"><i style="width:12%"></i></div><div style="width:74px" class="rt"><b>560</b> <span class="muted">kg</span></div></div>
+      <div class="row"><div style="width:132px" class="name">khaleed</div>
+        <div class="bar"><i style="width:5%"></i></div><div style="width:74px" class="rt"><b>230</b> <span class="muted">kg</span></div></div>
+      <div style="margin-top:12px" class="lbl">Customers per sales</div>
+      <div class="row"><div style="width:132px" class="name">Abdullah Al Modaifer</div>
+        <div class="bar"><i class="b2" style="width:100%"></i></div><div style="width:74px" class="rt">21 <span class="muted">· 14 active</span></div></div>
+      <div class="row"><div style="width:132px" class="name">محمد الجبري</div>
+        <div class="bar"><i class="b2" style="width:57%"></i></div><div style="width:74px" class="rt">12 <span class="muted">· 6 active</span></div></div>
+      <div class="row"><div style="width:132px" class="name">Ahmad</div>
+        <div class="bar"><i class="b2" style="width:29%"></i></div><div style="width:74px" class="rt">6 <span class="muted">· 2 active</span></div></div>
+    </div>
+  </div>
+
+  <!-- ============ TABLE ============ -->
+  <h2>Customers</h2>
+  <p class="sub">Click any row to open the customer. Each column header filters, and the sales can be changed per row or for several rows at once.</p>
+  <div class="card" style="padding:14px 10px" id="tablecard">
+    <div style="display:flex;gap:8px;align-items:center;padding:0 6px 12px">
+      <input placeholder="Search name, city, phone…" style="flex:1;background:#2a2a22;border:1px solid var(--line);
+        color:var(--text);border-radius:8px;padding:7px 11px;font-family:inherit;font-size:13px">
+      <button class="btn" id="resetbtn" onclick="resetAll()">↺ Reset filters</button>
+      <button class="btn">Assign sales…</button>
+      <button class="btn">Export</button>
+    </div>
+    <div id="chips" style="display:none;gap:7px;align-items:center;padding:0 6px 12px;flex-wrap:wrap">
+      <span class="muted" style="font-size:11.5px">Showing:</span>
+      <span class="chip c-green" id="chiptext" style="font-size:11px">—</span>
+      <button class="fbtn" onclick="resetAll()" title="Clear">✕</button>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:24px"></th>
+        <th>Customer</th>
+        <th>Category <button class="fbtn" title="Filter category">▼</button></th>
+        <th>Sales <button class="fbtn" title="Filter sales">▼</button></th>
+        <th>Status <button class="fbtn on" title="Filter status — 2 selected">▼</button></th>
+        <th>Rhythm</th><th>Last order</th><th>Next order</th>
+        <th class="rt">kg · 90 d</th><th class="ct">Trend</th><th class="ct">Data</th>
+      </tr></thead>
+      <tbody>
+        <tr data-tags="ordered active slipping kg" onclick="document.getElementById('modal').scrollIntoView({behavior:'smooth'})" style="cursor:pointer">
+          <td><input type="checkbox"></td>
+          <td><div class="name">kanaf كناف</div><div class="muted" style="font-size:11.5px">جده والرياض</div></td>
+          <td><span class="chip c-blue">Wholesale</span></td>
+          <td><span class="sales">Abdullah Al Modaifer <button class="ebtn" title="Change sales">✎</button></span></td>
+          <td><span class="chip c-amber">Slipping</span></td>
+          <td>every ~11 d</td><td>20 Sep</td>
+          <td><b style="color:#e8b75c">1 Oct</b> <span class="muted" style="font-size:11px">± 7 d</span><div class="muted" style="font-size:11px">~350–700 kg · low confidence</div></td>
+          <td class="rt"><b>1,200</b></td>
+          <td class="ct"><span class="spark"><i style="height:30%"></i><i style="height:100%"></i><i style="height:20%"></i><i class="hi" style="height:60%"></i></span></td>
+          <td class="ct"><span class="dot d-ok"></span></td>
+        </tr>
+        <tr data-tags="ordered active kg" onclick="document.getElementById('modal').scrollIntoView({behavior:'smooth'})" style="cursor:pointer">
+          <td><input type="checkbox"></td>
+          <td><div class="name">masla</div><div class="muted" style="font-size:11.5px">buraydah</div></td>
+          <td><span class="chip c-blue">Wholesale</span></td>
+          <td><span class="sales">Abdullah Al Modaifer <button class="ebtn" title="Change sales">✎</button></span></td>
+          <td><span class="chip c-green">Loyal</span></td>
+          <td>every ~8 d</td><td>19 Sep</td>
+          <td><b>27 Sep</b> <span class="muted" style="font-size:11px">± 2 d</span><div class="muted" style="font-size:11px">~120–175 kg · in 2 days</div></td>
+          <td class="rt"><b>605</b></td>
+          <td class="ct"><span class="spark"><i style="height:45%"></i><i style="height:25%"></i><i style="height:25%"></i><i style="height:40%"></i><i class="hi" style="height:100%"></i></span></td>
+          <td class="ct"><span class="dot d-ok"></span></td>
+        </tr>
+        <tr data-tags="ordered active slipping gaps kg">
+          <td><input type="checkbox"></td>
+          <td><div class="name">canol</div><div class="muted" style="font-size:11.5px">buraydah - riyadh</div></td>
+          <td><span class="chip c-blue">Wholesale</span></td>
+          <td><span class="sales">Abdullah Al Modaifer <button class="ebtn" title="Change sales">✎</button></span></td>
+          <td><span class="chip c-green">Steady</span></td>
+          <td>every ~14 d</td><td>3 Sep</td>
+          <td><b style="color:#e08a7a">17 Sep</b> <span class="muted" style="font-size:11px">± 4 d</span><div class="muted" style="font-size:11px">~200 kg · 8 days overdue</div></td>
+          <td class="rt"><b>400</b></td>
+          <td class="ct"><span class="spark"><i style="height:100%"></i><i class="hi" style="height:100%"></i></span></td>
+          <td class="ct"><span class="dot d-warn"></span></td>
+        </tr>
+        <tr data-tags="ordered dormant">
+          <td><input type="checkbox"></td>
+          <td><div class="name">Qahwa Plus</div><div class="muted" style="font-size:11.5px">riyadh</div></td>
+          <td><span class="chip c-purple">Supermarket</span></td>
+          <td><span class="sales">محمد الجبري <button class="ebtn" title="Change sales">✎</button></span></td>
+          <td><span class="chip c-red">Dormant</span></td>
+          <td>every ~26 d</td><td>12 Jun</td>
+          <td class="muted">no estimate<div class="muted" style="font-size:11px">dormant since 12 Jun</div></td>
+          <td class="rt"><b>0</b></td>
+          <td class="ct"><span class="spark"><i style="height:70%"></i><i style="height:40%"></i><i style="height:5%"></i><i style="height:2%"></i></span></td>
+          <td class="ct"><span class="dot d-ok"></span></td>
+        </tr>
+        <tr data-tags="gaps">
+          <td><input type="checkbox"></td>
+          <td><div class="name">Dallah Roasters</div><div class="muted" style="font-size:11.5px">— no city —</div></td>
+          <td><span class="chip c-blue">Wholesale</span></td>
+          <td><span class="sales unassigned">— unassigned — <button class="ebtn" title="Assign sales">✎</button></span></td>
+          <td><span class="chip c-grey">Never ordered</span></td>
+          <td class="muted">—</td><td class="muted">—</td>
+          <td class="muted">—<div class="muted" style="font-size:11px">no history yet</div></td>
+          <td class="rt muted">0</td>
+          <td class="ct muted">—</td>
+          <td class="ct"><span class="dot d-bad" title="No phone, no city, no sales"></span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 6px 2px;
+                border-top:1px solid #2a2a23;margin-top:4px;font-size:11.5px" class="muted">
+      <span>5 of 47 customers</span>
+      <span>Next-order estimates have been off by <b style="color:#79c79c">± 4 days on average</b> over the last 30 orders ·
+            <a href="#how" style="color:#87bcda">how this is calculated</a></span>
+    </div>
+  </div>
+
+  <!-- ============ SALES PERFORMANCE TAB ============ -->
+  <h2 id="salesperf">CRM · second tab — Sales Performance</h2>
+  <p class="sub">Same page, same permission. The tabs sit under the page title:
+     <span class="chip c-grey" style="font-size:11px">Customers</span>
+     <span class="chip c-green" style="font-size:11px">Sales Performance</span>
+     — so a leader never leaves the CRM page to see how the team is doing.</p>
+
+  <div class="tiles" style="margin-bottom:14px">
+    <div class="tile on" style="min-width:auto"><div class="t" style="margin:0;font-size:12px">Last 45 days · 12 Aug – 26 Sep</div></div>
+    <div class="tile" style="min-width:auto"><div class="t" style="margin:0;font-size:12px">Last 90 days</div></div>
+    <div class="tile" style="min-width:auto"><div class="t" style="margin:0;font-size:12px">This month</div></div>
+    <div class="tile" style="min-width:auto"><div class="t" style="margin:0;font-size:12px">☑ Hide admin accounts</div></div>
+  </div>
+
+  <!-- scorecards -->
+  <div class="two" style="align-items:start">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div>
+          <div style="font-size:17px;font-weight:800">Abdullah Al Modaifer</div>
+          <div class="muted" style="font-size:12px">30 customers · Wholesale mostly</div>
+        </div>
+        <span class="chip c-green">Sales</span>
+      </div>
+      <div class="stats" style="margin:14px 0 0">
+        <div class="stat"><div class="v">5,001</div><div class="k">kg dispatched</div></div>
+        <div class="stat"><div class="v">60</div><div class="k">orders</div></div>
+        <div class="stat"><div class="v">30<span class="muted" style="font-size:13px">/30</span></div><div class="k">active customers</div></div>
+        <div class="stat"><div class="v">47%</div><div class="k">ordered again</div></div>
+        <div class="stat"><div class="v" style="color:#e8b75c">5</div><div class="k">gone quiet</div></div>
+        <div class="stat"><div class="v">167</div><div class="k">kg per customer</div></div>
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid #2a2a23;font-size:12.5px" class="muted">
+        <b style="color:var(--text)">Worth doing this week:</b> 5 customers have gone past twice their usual gap —
+        Qahwa Plus (79 d), Dallah Co (61 d), and 3 more. 3 others are due to reorder in the next 7 days.
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div>
+          <div style="font-size:17px;font-weight:800">محمد الجبري</div>
+          <div class="muted" style="font-size:12px">9 customers · Supermarket mostly</div>
+        </div>
+        <span class="chip c-green">Sales</span>
+      </div>
+      <div class="stats" style="margin:14px 0 0">
+        <div class="stat"><div class="v">527</div><div class="k">kg dispatched</div></div>
+        <div class="stat"><div class="v">10</div><div class="k">orders</div></div>
+        <div class="stat"><div class="v">9<span class="muted" style="font-size:13px">/9</span></div><div class="k">active customers</div></div>
+        <div class="stat"><div class="v" style="color:#e08a7a">0%</div><div class="k">ordered again</div></div>
+        <div class="stat"><div class="v">0</div><div class="k">gone quiet</div></div>
+        <div class="stat"><div class="v">59</div><div class="k">kg per customer</div></div>
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid #2a2a23;font-size:12.5px" class="muted">
+        <b style="color:#e8b75c">The number that matters here:</b> all 9 customers have ordered exactly once.
+        Nobody has come back yet. Good at opening doors, the second order is where the work is.
+      </div>
+    </div>
+  </div>
+
+  <!-- comparison table -->
+  <div class="card" style="margin-top:12px;padding:14px 10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:0 6px 10px;gap:10px;flex-wrap:wrap">
+      <div class="lbl" style="margin:0">Side by side</div>
+      <div class="muted" style="font-size:11.5px">Sorted by kg · click a sales to open their detail. Admin accounts are shown but never ranked.</div>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Sales</th><th class="rt">kg</th><th class="rt">Orders</th><th class="rt">Customers</th>
+        <th class="rt">Active</th><th class="rt">Ordered again</th><th class="rt">Gone quiet</th>
+        <th class="rt">kg / customer</th><th class="rt">Cancelled</th><th>vs previous 45 d</th>
+      </tr></thead>
+      <tbody>
+        <tr style="cursor:pointer" onclick="document.getElementById('salesmodal').scrollIntoView({behavior:'smooth'})">
+          <td><span class="name">Abdullah Al Modaifer</span> <span class="chip c-green" style="margin-left:4px">Sales</span></td>
+          <td class="rt"><b>5,001</b></td><td class="rt">60</td><td class="rt">30</td><td class="rt">30</td>
+          <td class="rt">47%</td><td class="rt" style="color:#e8b75c">5</td><td class="rt">167</td><td class="rt">0</td>
+          <td class="muted" style="font-size:11.5px">first full period</td>
+        </tr>
+        <tr style="cursor:pointer" onclick="document.getElementById('salesmodal').scrollIntoView({behavior:'smooth'})">
+          <td><span class="name">محمد الجبري</span> <span class="chip c-green" style="margin-left:4px">Sales</span></td>
+          <td class="rt"><b>527</b></td><td class="rt">10</td><td class="rt">9</td><td class="rt">9</td>
+          <td class="rt" style="color:#e08a7a">0%</td><td class="rt">0</td><td class="rt">59</td><td class="rt">0</td>
+          <td class="muted" style="font-size:11.5px">first full period</td>
+        </tr>
+        <tr style="opacity:.62">
+          <td><span class="name">khaleed</span> <span class="chip c-grey" style="margin-left:4px">Admin</span></td>
+          <td class="rt">0</td><td class="rt">0</td><td class="rt">—</td><td class="rt">—</td>
+          <td class="rt">—</td><td class="rt">—</td><td class="rt">—</td><td class="rt" style="color:#e08a7a">4</td>
+          <td class="muted" style="font-size:11.5px">170 kg previously</td>
+        </tr>
+        <tr style="opacity:.62">
+          <td><span class="name">Ahmad</span> <span class="chip c-grey" style="margin-left:4px">Admin</span></td>
+          <td class="rt">10</td><td class="rt">1</td><td class="rt">—</td><td class="rt">—</td>
+          <td class="rt">—</td><td class="rt">—</td><td class="rt">—</td><td class="rt">0</td>
+          <td class="muted" style="font-size:11.5px">20 kg previously</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="padding:12px 6px 2px;border-top:1px solid #2a2a23;margin-top:4px;font-size:11.5px" class="muted">
+      khaleed and Ahmad hold no customers of their own — they place orders on behalf of the team, so ranking
+      them against a sales would be meaningless. The app treats "holds no customers" as the test, not the job title.
+    </div>
+  </div>
+
+  <!-- how this is measured -->
+  <div class="two" style="margin-top:12px;align-items:start">
+    <div class="card">
+      <div class="lbl">Why these six numbers</div>
+      <div style="font-size:13px;line-height:1.7" class="muted">
+        Sales dashboards normally mix <b style="color:var(--text)">activity</b> (calls, visits, meetings) with
+        <b style="color:var(--text)">outcome</b> (deals, volume). This app records no activity at all — there is no
+        visit or call log — so every activity metric would have to be invented. It is left out on purpose.<br><br>
+        What is left is what a roastery actually lives on: <b style="color:var(--text)">repeat business</b>. For
+        wholesale, retention metrics — reorder rate, order frequency, customers gone quiet — say more about a
+        sales than raw volume does, because volume mostly reflects who was handed the bigger accounts.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">Three fairness rules built into this tab</div>
+      <ul style="margin:0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.75">
+        <li><b style="color:var(--text)">Each sales is compared with their own previous period</b>, not with each other.
+          Here both columns read "first full period" — ordering only really started in August, and 5,001 kg against
+          10 kg would be a meaningless number to show.</li>
+        <li><b style="color:var(--text)">Per-customer numbers sit next to totals.</b> 30 customers versus 9 is not a
+          fair fight; 167 kg versus 59 kg per customer is a real comparison.</li>
+        <li><b style="color:var(--text)">Failures that belong to production are not counted against sales.</b>
+          Unable to Fulfill happens when stock falls short — it appears under service quality, never in this scorecard.</li>
+      </ul>
+      <div class="muted" style="font-size:11.5px;margin-top:12px;line-height:1.6">
+        If you later want activity measured too, the follow-up notes you mentioned for the CRM page are exactly the
+        missing piece — once a note or a visit is logged, "customers touched this week" becomes real instead of guessed.
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ============ MODAL ============ -->
+  <h2 id="modal">Customer modal</h2>
+  <p class="sub">Opens on row click. Two tabs: the numbers, and the story.</p>
+
+  <div class="modal">
+    <div class="mhead">
+      <div class="hero">
+        <div class="ava">M</div>
+        <div style="flex:1">
+          <div style="font-size:19px;font-weight:800">masla</div>
+          <div class="muted" style="font-size:12.5px">Wholesale · buraydah · sales Abdullah Al Modaifer · customer since 19 Aug 2026</div>
+        </div>
+        <span class="chip c-green" style="font-size:11.5px;padding:5px 12px">Loyal · orders every ~8 days</span>
+      </div>
+    </div>
+
+    <div class="tabs" id="ctabs">
+      <div class="tab on" onclick="sw(0)">Performance</div>
+      <div class="tab" onclick="sw(1)">Journey</div>
+    </div>
+
+    <!-- TAB 1 -->
+    <div class="mbody" id="t0">
+      <div class="stats">
+        <div class="stat"><div class="v">605 kg</div><div class="k">Lifetime</div></div>
+        <div class="stat"><div class="v">5</div><div class="k">Orders</div></div>
+        <div class="stat"><div class="v">121 kg</div><div class="k">Average order</div></div>
+        <div class="stat"><div class="v">175 kg</div><div class="k">Biggest order</div></div>
+        <div class="stat"><div class="v">2,420</div><div class="k">Bags packed</div></div>
+        <div class="stat"><div class="v" style="color:#79c79c">98%</div><div class="k">Fulfilled in full</div></div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <div class="lbl">Kg per month</div>
+          <div class="bars">
+            <div class="col"><div class="kg">0</div><div class="v" style="height:2%"></div><div class="m">Apr</div></div>
+            <div class="col"><div class="kg">0</div><div class="v" style="height:2%"></div><div class="m">May</div></div>
+            <div class="col"><div class="kg">0</div><div class="v" style="height:2%"></div><div class="m">Jun</div></div>
+            <div class="col"><div class="kg">0</div><div class="v" style="height:2%"></div><div class="m">Jul</div></div>
+            <div class="col"><div class="kg">230</div><div class="v" style="height:60%"></div><div class="m">Aug</div></div>
+            <div class="col"><div class="kg">375</div><div class="v now" style="height:100%"></div><div class="m">Sep</div></div>
+          </div>
+          <div class="muted" style="font-size:12px;margin-top:8px">Second month is 63% bigger than the first.</div>
+        </div>
+
+        <!-- ===== NEXT ORDER FORECAST — beside the chart ===== -->
+        <div class="card" style="border-color:#3a6a4f">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+            <div>
+              <div class="lbl" style="margin-bottom:4px">Next order — estimate</div>
+              <div style="font-size:23px;font-weight:800;line-height:1.15">Sun 27 Sep 2026</div>
+              <div class="muted" style="font-size:12.5px">in 2 days · could land 25–29 Sep · <span style="color:#79c79c">good confidence</span></div>
+            </div>
+            <div style="text-align:right">
+              <div class="lbl" style="margin-bottom:4px">Expected size</div>
+              <div style="font-size:23px;font-weight:800;line-height:1.15">≈ 145 kg</div>
+              <div class="muted" style="font-size:12.5px">120–175 kg · 145 bags</div>
+            </div>
+          </div>
+
+          <div style="height:1px;background:var(--line);margin:14px 0"></div>
+
+          <div class="lbl">What they will most likely order</div>
+          <table style="font-size:12.5px">
+            <thead><tr><th style="padding-bottom:6px">Coffee</th><th class="rt" style="padding-bottom:6px">Bags</th>
+              <th class="rt" style="padding-bottom:6px">kg</th><th class="rt" style="padding-bottom:6px">Share</th></tr></thead>
+            <tbody>
+              <tr><td style="padding:6px 0;border:0">BRAZIL ROSA <span class="muted">· 1000 g</span></td>
+                  <td class="rt" style="padding:6px 0;border:0">77</td><td class="rt" style="padding:6px 0;border:0"><b>77</b></td>
+                  <td class="rt muted" style="padding:6px 0;border:0">53%</td></tr>
+              <tr><td style="padding:6px 0;border:0">GUJI HAMBELA FANOOS <span class="muted">· 1000 g</span></td>
+                  <td class="rt" style="padding:6px 0;border:0">39</td><td class="rt" style="padding:6px 0;border:0"><b>39</b></td>
+                  <td class="rt muted" style="padding:6px 0;border:0">27%</td></tr>
+              <tr><td style="padding:6px 0;border:0">GUJI URAGA <span class="muted">· 1000 g</span></td>
+                  <td class="rt" style="padding:6px 0;border:0">19</td><td class="rt" style="padding:6px 0;border:0"><b>19</b></td>
+                  <td class="rt muted" style="padding:6px 0;border:0">13%</td></tr>
+              <tr><td style="padding:6px 0;border:0">YAMAN <span class="muted">· 1000 g</span></td>
+                  <td class="rt" style="padding:6px 0;border:0">7</td><td class="rt" style="padding:6px 0;border:0"><b>7</b></td>
+                  <td class="rt muted" style="padding:6px 0;border:0">5%</td></tr>
+              <tr><td style="padding:6px 0;border:0">SALVADOR <span class="muted">· 1000 g</span></td>
+                  <td class="rt" style="padding:6px 0;border:0">3</td><td class="rt" style="padding:6px 0;border:0"><b>3</b></td>
+                  <td class="rt muted" style="padding:6px 0;border:0">2%</td></tr>
+              <tr><td style="padding:8px 0 0;border:0;border-top:1px solid #2a2a23"><b>Total</b></td>
+                  <td class="rt" style="padding:8px 0 0;border:0;border-top:1px solid #2a2a23"><b>145</b></td>
+                  <td class="rt" style="padding:8px 0 0;border:0;border-top:1px solid #2a2a23"><b>145</b></td>
+                  <td style="border:0;border-top:1px solid #2a2a23"></td></tr>
+            </tbody>
+          </table>
+          <div class="muted" style="font-size:11.5px;margin-top:10px;line-height:1.6">
+            Mix taken from their last 3 orders (375 kg). BRAZIL ROSA has been in all 5 orders; SALVADOR only in 2.
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+            <button class="btn p">Pre-check stock for this</button>
+            <button class="btn">Remind the sales</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="two" style="margin-top:12px">
+        <div class="card">
+          <div class="lbl">What they buy · by kg</div>
+          <div style="display:flex;gap:16px;align-items:center">
+            <div class="donut" style="background:conic-gradient(#3f9d6d 0 53%,#4d8fb8 53% 78%,#8a72c4 78% 92%,#d99a26 92% 100%)"></div>
+            <div class="legend">
+              <div class="li"><span class="sw" style="background:#3f9d6d"></span> BRAZIL ROSA <b style="margin-left:auto">320 kg</b></div>
+              <div class="li"><span class="sw" style="background:#4d8fb8"></span> GUJI HAMBELA FANOOS <b style="margin-left:auto">160 kg</b></div>
+              <div class="li"><span class="sw" style="background:#8a72c4"></span> GUJI URAGA <b style="margin-left:auto">70 kg</b></div>
+              <div class="li"><span class="sw" style="background:#d99a26"></span> YAMAN + SALVADOR <b style="margin-left:auto">55 kg</b></div>
+            </div>
+          </div>
+          <div class="muted" style="font-size:12px;margin-top:10px">All orders so far have been 1000 g bags.</div>
+        </div>
+
+        <div class="card">
+          <div class="lbl">Order rhythm — gaps between orders</div>
+          <div class="cad">
+            <span class="o" title="19 Aug · 150 kg"></span>
+            <span class="g"><b>7 d</b></span>
+            <span class="o" title="26 Aug · 80 kg"></span>
+            <span class="g"><b>8 d</b></span>
+            <span class="o" title="3 Sep · 80 kg"></span>
+            <span class="g"><b>6 d</b></span>
+            <span class="o" title="9 Sep · 120 kg"></span>
+            <span class="g"><b>10 d</b></span>
+            <span class="o" title="19 Sep · 175 kg"></span>
+            <span class="g" style="background:var(--amber-soft)"><b style="color:#e8b75c">6 d so far</b></span>
+            <span class="o" style="background:#5a5a4c" title="expected ~27 Sep"></span>
+          </div>
+          <div class="muted" style="font-size:12px;margin-top:10px">
+            Typical gap 8 days · every order so far delivered in full.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2 -->
+    <div class="mbody hidden" id="t1">
+      <div class="wrapped">
+        <div class="t">Our journey together</div>
+        <div class="big">605 kg in 37 days</div>
+        <div class="muted" style="font-size:13px">5 orders · never a single short delivery · favourite is BRAZIL ROSA</div>
+        <div class="wgrid">
+          <div><span class="k">First order</span><span class="v">19 Aug 2026</span></div>
+          <div><span class="k">Biggest order</span><span class="v">175 kg · 19 Sep</span></div>
+          <div><span class="k">Loyalty</span><span class="v">53% BRAZIL ROSA</span></div>
+          <div><span class="k">Rank by kg</span><span class="v">#2 of 47</span></div>
+        </div>
+        <button class="btn p" style="margin-top:15px">Print this recap for the customer</button>
+        <button class="btn" style="margin-top:15px">Send as image</button>
+      </div>
+
+      <div class="tl">
+        <div class="ev mile">
+          <div class="d">19 Aug 2026 · day 1</div>
+          <div class="h">🌱 First order — 150 kg</div>
+          <div class="p">600 bags of BRAZIL ROSA, 1000 g. Handled by Abdullah Al Modaifer.</div>
+        </div>
+        <div class="ev">
+          <div class="d">26 Aug 2026 · day 8</div>
+          <div class="h">Came back after 7 days — 80 kg</div>
+          <div class="p">First repeat order. The rhythm starts here.</div>
+        </div>
+        <div class="ev">
+          <div class="d">3 Sep 2026 · day 16</div>
+          <div class="h">Tried something new — HUILA ENGABONTE</div>
+          <div class="p">First order beyond BRAZIL ROSA. Now 25% of everything they buy.</div>
+        </div>
+        <div class="ev mile">
+          <div class="d">9 Sep 2026 · day 22</div>
+          <div class="h">🏆 Crossed 400 kg together</div>
+          <div class="p">In three weeks. Faster than any other customer this year.</div>
+        </div>
+        <div class="ev mile">
+          <div class="d">19 Sep 2026 · day 32</div>
+          <div class="h">📈 Biggest order so far — 175 kg</div>
+          <div class="p">17% bigger than their previous record, and the first order to mix three coffees.</div>
+        </div>
+        <div class="ev">
+          <div class="d">19 Sep 2026</div>
+          <div class="h">⭐ One month as a customer</div>
+          <div class="p">605 kg, 5 orders, every one delivered in full.</div>
+        </div>
+        <div class="ev warn">
+          <div class="d">Today · 25 Sep 2026</div>
+          <div class="h">Expected to order again around 27 Sep</div>
+          <div class="p">Based on their usual 8-day rhythm. Nothing unusual yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="how">How the next order is estimated</h2>
+  <p class="sub">Two methods run side by side, and each customer keeps the mix that has actually worked for them.</p>
+  <div class="two">
+    <div class="card">
+      <div class="lbl">The two methods</div>
+      <div style="font-size:13px;line-height:1.7">
+        <b>1 · Rhythm</b> — the median gap between this customer's own orders.
+        masla orders every 7, 8, 6, 10 days → next one ≈ 8 days after the last.<br><br>
+        <b>2 · Consumption</b> — how fast they burn coffee: kg per day from past orders, then
+        "how long will the last order last?". A 100 kg order for a customer who burns 5 kg/day → ≈ 20 days.
+      </div>
+      <div class="lbl" style="margin-top:16px">Weighing them</div>
+      <div style="font-size:13px;line-height:1.7" class="muted">
+        Each time the page loads, both methods are replayed against that customer's own history, and the one
+        that would have been closer gets the bigger share. Nothing is trained once and frozen, so as the
+        history grows past a year, the mix moves on its own.
+      </div>
+    </div>
+    <div class="card">
+      <div class="lbl">Measured on your real orders · 18 test predictions</div>
+      <div class="row"><div style="width:150px"><b>Weighted mix + guardrails</b></div>
+        <div class="bar"><i style="width:32%"></i></div><div style="width:64px" class="rt"><b style="color:#79c79c">± 5.28 d</b></div></div>
+      <div class="row"><div style="width:150px">Rhythm — median gap</div>
+        <div class="bar"><i style="width:32%"></i></div><div style="width:64px" class="rt"><b>± 5.33 d</b></div></div>
+      <div class="row"><div style="width:150px">Rhythm — last 3 gaps</div>
+        <div class="bar"><i style="width:32%"></i></div><div style="width:64px" class="rt"><b>± 5.31 d</b></div></div>
+      <div class="row"><div style="width:150px">Naive 70/30 blend</div>
+        <div class="bar"><i class="b2" style="width:38%"></i></div><div style="width:64px" class="rt"><b>± 6.31 d</b></div></div>
+      <div class="row"><div style="width:150px">Consumption, raw</div>
+        <div class="bar"><i style="width:100%;background:var(--red)"></i></div><div style="width:64px" class="rt"><b>± 16.5 d</b></div></div>
+      <div class="muted" style="font-size:12px;margin-top:12px;line-height:1.6">
+        Today your customers do not order "when the coffee runs out" — jomo ordered 150 kg and came back
+        the next day — so consumption on its own is three times worse. But the weighted mix, which gives each
+        method the share it has earned per customer, edges out rhythm alone. A fixed 70/30 blend does not:
+        the weighting has to be learned, not chosen.
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="lbl">Guardrails</div>
+    <ul style="margin:0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.75">
+      <li><b style="color:var(--text)">Under 3 orders → no date.</b> One gap is a coincidence, not a pattern.</li>
+      <li><b style="color:var(--text)">3–5 orders → rhythm only</b>, with a wide ± range. From 6 orders the weighted mix switches on.</li>
+      <li><b style="color:var(--text)">Clamped</b> between half and 2.5× the customer's usual gap, so a 165-day estimate can never reach the screen.</li>
+      <li><b style="color:var(--text)">Dormant customers get no estimate</b> — "should have ordered 8 Jul" is noise, so the column shows how long they have been away instead.</li>
+      <li><b style="color:var(--text)">The ± range comes from real error</b>, not a guess: how far off this customer's own past estimates were.</li>
+      <li><b style="color:var(--text)">Accuracy is published</b> under the table, so if the method stops working you find out from the screen, not from a complaint.</li>
+    </ul>
+  </div>
+
+  <!-- ============ SALES DETAIL MODAL ============ -->
+  <h2 id="salesmodal">Sales modal</h2>
+  <p class="sub">Opens when a sales row is clicked. Two tabs: how they are doing, and every customer they hold.</p>
+
+  <div class="modal">
+    <div class="mhead">
+      <div class="hero">
+        <div class="ava">A</div>
+        <div style="flex:1">
+          <div style="font-size:19px;font-weight:800">Abdullah Al Modaifer</div>
+          <div class="muted" style="font-size:12.5px">30 customers · 5,011 kg all time · first order 11 Jul 2026</div>
+        </div>
+        <span class="chip c-green" style="font-size:11.5px;padding:5px 12px">Sales</span>
+      </div>
+    </div>
+
+    <div class="tabs" id="stabs">
+      <div class="tab on" onclick="sws(0)">Performance</div>
+      <div class="tab" onclick="sws(1)">Customers · 30</div>
+      <div class="tab" onclick="sws(2)">Journey</div>
+    </div>
+
+    <!-- TAB 1 — PERFORMANCE -->
+    <div class="mbody" id="s0">
+      <div class="stats">
+        <div class="stat"><div class="v">5,011</div><div class="k">kg all time</div></div>
+        <div class="stat"><div class="v">61</div><div class="k">orders</div></div>
+        <div class="stat"><div class="v">30</div><div class="k">customers</div></div>
+        <div class="stat"><div class="v">47%</div><div class="k">ordered again</div></div>
+        <div class="stat"><div class="v" style="color:#e8b75c">5</div><div class="k">gone quiet</div></div>
+        <div class="stat"><div class="v">82</div><div class="k">kg per order</div></div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <div class="lbl">Kg dispatched per month</div>
+          <div class="bars">
+            <div class="col"><div class="kg">160</div><div class="v" style="height:6%"></div><div class="m">Jul</div></div>
+            <div class="col"><div class="kg">2,828</div><div class="v" style="height:100%"></div><div class="m">Aug</div></div>
+            <div class="col"><div class="kg">2,183</div><div class="v now" style="height:77%"></div><div class="m">Sep</div></div>
+          </div>
+          <div class="muted" style="font-size:12px;margin-top:8px">
+            September still has 4 days to run, so the drop is not yet a drop.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="lbl">Where the volume comes from</div>
+          <div style="display:flex;gap:16px;align-items:center">
+            <div class="donut" style="background:conic-gradient(#3f9d6d 0 67%,#4d8fb8 67% 78%,#8a72c4 78% 85%,#d99a26 85% 100%)"></div>
+            <div class="legend">
+              <div class="li"><span class="sw" style="background:#3f9d6d"></span> BRAZIL ROSA <b style="margin-left:auto">3,341 kg</b></div>
+              <div class="li"><span class="sw" style="background:#4d8fb8"></span> GUJI HAMBELA FANOOS <b style="margin-left:auto">584 kg</b></div>
+              <div class="li"><span class="sw" style="background:#8a72c4"></span> GUJI URAGA <b style="margin-left:auto">343 kg</b></div>
+              <div class="li"><span class="sw" style="background:#d99a26"></span> Others <b style="margin-left:auto">743 kg</b></div>
+            </div>
+          </div>
+          <div class="muted" style="font-size:12px;margin-top:10px">
+            Two thirds of everything he sells is one coffee — worth knowing when BRAZIL ROSA runs short.
+          </div>
+        </div>
+      </div>
+
+      <div class="two" style="margin-top:12px">
+        <div class="card">
+          <div class="lbl">Customer base — where the 30 stand</div>
+          <div class="row"><div style="width:130px">Ordered more than once</div>
+            <div class="bar"><i style="width:47%"></i></div><div style="width:46px" class="rt"><b>14</b></div></div>
+          <div class="row"><div style="width:130px">Ordered once only</div>
+            <div class="bar"><i style="width:53%;background:var(--amber)"></i></div><div style="width:46px" class="rt"><b>16</b></div></div>
+          <div class="row"><div style="width:130px">Gone quiet</div>
+            <div class="bar"><i style="width:17%;background:var(--red)"></i></div><div style="width:46px" class="rt"><b>5</b></div></div>
+          <div class="row"><div style="width:130px">Due within 7 days</div>
+            <div class="bar"><i style="width:10%;background:var(--blue)"></i></div><div style="width:46px" class="rt"><b>3</b></div></div>
+          <div class="muted" style="font-size:12px;margin-top:10px">
+            16 of 30 have never placed a second order. That single number is the biggest opportunity on this screen.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="lbl">Needs him this week</div>
+          <div class="attn">
+            <div class="ic" style="background:var(--red-soft);color:#e08a7a">↓</div>
+            <div><div style="font-weight:700">jomo — quiet 17 days</div>
+              <div class="muted" style="font-size:12.5px">Used to order every 7 days · 370 kg lifetime · 7 orders</div></div>
+          </div>
+          <div class="attn">
+            <div class="ic" style="background:var(--red-soft);color:#e08a7a">↓</div>
+            <div><div style="font-weight:700">nasaj — quiet 28 days</div>
+              <div class="muted" style="font-size:12.5px">Used to order every 7 days · 175 kg lifetime</div></div>
+          </div>
+          <div class="attn">
+            <div class="ic" style="background:var(--amber-soft);color:#e8b75c">◷</div>
+            <div><div style="font-weight:700">masla — due today</div>
+              <div class="muted" style="font-size:12.5px">Expected ≈ 145 kg · rhythm every 8 days</div></div>
+          </div>
+          <div class="attn">
+            <div class="ic" style="background:var(--blue-soft);color:#87bcda">★</div>
+            <div><div style="font-weight:700">ndr cofe — 200 kg, then silence</div>
+              <div class="muted" style="font-size:12.5px">One order 44 days ago and never returned</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2 — CUSTOMERS -->
+    <div class="mbody hidden" id="s1">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <input placeholder="Search his customers…" style="flex:1;min-width:180px;background:#2a2a22;border:1px solid var(--line);
+          color:var(--text);border-radius:8px;padding:7px 11px;font-family:inherit;font-size:13px">
+        <button class="btn">All 30</button>
+        <button class="btn">Due soon 3</button>
+        <button class="btn">Gone quiet 5</button>
+        <button class="btn">Once only 16</button>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Customer</th><th>Category</th><th class="rt">Orders</th><th class="rt">kg</th>
+          <th>Rhythm</th><th>Last order</th><th>Next order</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+          <tr style="cursor:pointer" onclick="document.getElementById('modal').scrollIntoView({behavior:'smooth'})">
+            <td><div class="name">kanaf كناف</div><div class="muted" style="font-size:11.5px">جده والرياض</div></td>
+            <td><span class="chip c-blue">Wholesale</span></td><td class="rt">3</td><td class="rt"><b>1,200</b></td>
+            <td>every ~11 d</td><td>20 Sep</td>
+            <td><b>30 Sep</b> <span class="muted" style="font-size:11px">± 7 d</span><div class="muted" style="font-size:11px">in 4 days · ~400 kg</div></td>
+            <td><span class="chip c-green">Steady</span></td>
+          </tr>
+          <tr style="cursor:pointer" onclick="document.getElementById('modal').scrollIntoView({behavior:'smooth'})">
+            <td><div class="name">masla</div><div class="muted" style="font-size:11.5px">buraydah</div></td>
+            <td><span class="chip c-blue">Wholesale</span></td><td class="rt">5</td><td class="rt"><b>605</b></td>
+            <td>every ~8 d</td><td>19 Sep</td>
+            <td><b style="color:#e8b75c">26 Sep</b> <span class="muted" style="font-size:11px">± 2 d</span><div class="muted" style="font-size:11px">due today · ~145 kg</div></td>
+            <td><span class="chip c-green">Loyal</span></td>
+          </tr>
+          <tr>
+            <td><div class="name">canol</div><div class="muted" style="font-size:11.5px">buraydah - riyadh</div></td>
+            <td><span class="chip c-blue">Wholesale</span></td><td class="rt">2</td><td class="rt"><b>400</b></td>
+            <td>every ~14 d</td><td>3 Sep</td>
+            <td><b style="color:#e08a7a">17 Sep</b> <span class="muted" style="font-size:11px">± 4 d</span><div class="muted" style="font-size:11px">9 days overdue</div></td>
+            <td><span class="chip c-amber">Slipping</span></td>
+          </tr>
+          <tr>
+            <td><div class="name">sum cafe</div><div class="muted" style="font-size:11.5px">—</div></td>
+            <td><span class="chip c-blue">Wholesale</span></td><td class="rt">4</td><td class="rt"><b>390</b></td>
+            <td>every ~11 d</td><td>19 Sep</td>
+            <td><b>30 Sep</b> <span class="muted" style="font-size:11px">± 3 d</span><div class="muted" style="font-size:11px">in 4 days · ~100 kg</div></td>
+            <td><span class="chip c-green">Steady</span></td>
+          </tr>
+          <tr>
+            <td><div class="name">jomo</div><div class="muted" style="font-size:11.5px">—</div></td>
+            <td><span class="chip c-blue">Wholesale</span></td><td class="rt">7</td><td class="rt"><b>370</b></td>
+            <td>every ~7 d</td><td>9 Sep</td>
+            <td><b style="color:#e08a7a">16 Sep</b> <span class="muted" style="font-size:11px">± 5 d</span><div class="muted" style="font-size:11px">10 days overdue</div></td>
+            <td><span class="chip c-red">Gone quiet</span></td>
+          </tr>
+          <tr>
+            <td><div class="name">glow</div><div class="muted" style="font-size:11.5px">—</div></td>
+            <td><span class="chip c-blue">Wholesale</span></td><td class="rt">4</td><td class="rt"><b>320</b></td>
+            <td>every ~9 d</td><td>8 Sep</td>
+            <td><b style="color:#e08a7a">17 Sep</b> <span class="muted" style="font-size:11px">± 4 d</span><div class="muted" style="font-size:11px">9 days overdue</div></td>
+            <td><span class="chip c-amber">Slipping</span></td>
+          </tr>
+          <tr>
+            <td><div class="name">ndr cofe</div><div class="muted" style="font-size:11.5px">—</div></td>
+            <td><span class="chip c-blue">Wholesale</span></td><td class="rt">1</td><td class="rt"><b>200</b></td>
+            <td class="muted">—</td><td>13 Aug</td>
+            <td class="muted">no estimate<div class="muted" style="font-size:11px">only one order</div></td>
+            <td><span class="chip c-amber">Once only</span></td>
+          </tr>
+          <tr>
+            <td><div class="name">nasaj</div><div class="muted" style="font-size:11.5px">—</div></td>
+            <td><span class="chip c-blue">Wholesale</span></td><td class="rt">3</td><td class="rt"><b>175</b></td>
+            <td>every ~7 d</td><td>29 Aug</td>
+            <td class="muted">no estimate<div class="muted" style="font-size:11px">quiet 28 days</div></td>
+            <td><span class="chip c-red">Gone quiet</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 2px 0;
+                  border-top:1px solid #2a2a23;margin-top:4px;font-size:11.5px" class="muted">
+        <span>8 of 30 shown · click a customer to open their own modal</span>
+        <span>Total 5,011 kg · 61 orders</span>
+      </div>
+    </div>
+
+    <!-- TAB 3 — JOURNEY (placeholder, to be designed) -->
+    <div class="mbody hidden" id="s2">
+      <div style="border:1px dashed #3a3a2f;border-radius:12px;padding:44px 28px;text-align:center">
+        <div style="font-size:15px;font-weight:700;margin-bottom:6px">Journey</div>
+        <div class="muted" style="font-size:13px;line-height:1.7;max-width:460px;margin:0 auto">
+          Left empty on purpose — this one gets designed after the CRM page itself is built.<br>
+          The data it will need is already being recorded, so nothing is lost in the meantime.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Notes on the design</h2>
+  <div class="card">
+    <ul style="margin:0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.75">
+      <li><b style="color:var(--text)">Two ways to filter, one table.</b> The tiles on top are the quick view; the funnel on Category, Sales and Status is the precise one. The table stays the single place where work happens.</li>
+      <li><b style="color:var(--text)">Sales ownership is management-only.</b> Changing the sales here never changes what a sales may select on an order — category still decides that.</li>
+      <li><b style="color:var(--text)">Every number is honest.</b> Each figure comes from real orders: kg, bags, dates, coffee mix. Nothing is invented, and nothing is in currency.</li>
+      <li><b style="color:var(--text)">The Journey tab is the gift.</b> It reads like a profile, not a report — and the recap card can be printed and handed to the customer, which is what makes the roastery look like a partner who pays attention.</li>
+      <li><b style="color:var(--text)">A sales row opens the same kind of modal a customer does.</b> Same two-tab shape, same numbers, one level up — so a leader learns one screen and reads both. Its Customers tab is the handover list: every account that sales holds, who is due, who has gone quiet.</li>
+      <li><b style="color:var(--text)">Milestones are computed, not typed.</b> First order, records broken, coffee switches, anniversaries, comebacks after a long gap — all derived, so they keep appearing without anyone maintaining them.</li>
+    </ul>
+  </div>
+
+</div>
+<script>
+  // Tab switcher, reused by both modals. Each one owns its tab strip, so the
+  // customer modal and the sales modal never fight over the .on class.
+  function tabs(strip,prefix,i){
+    document.querySelectorAll('#'+strip+' .tab').forEach((t,n)=>t.classList.toggle('on',n===i));
+    for(let n=0;;n++){ const pane=document.getElementById(prefix+n); if(!pane) break;
+      pane.classList.toggle('hidden',n!==i); }
+  }
+  function sw(i){ tabs('ctabs','t',i); }    // customer modal
+  function sws(i){ tabs('stabs','s',i); }   // sales modal
+  // Clicking a KPI card filters the table to exactly those customers and scrolls to it.
+  function pick(tag,label){
+    document.querySelectorAll('#tablecard tbody tr').forEach(tr=>{
+      const tags=(tr.dataset.tags||'').split(' ');
+      tr.style.display = tags.includes(tag) ? '' : 'none';
+    });
+    document.getElementById('chips').style.display='flex';
+    document.getElementById('chiptext').textContent=label;
+    document.getElementById('tablecard').scrollIntoView({behavior:'smooth',block:'start'});
+  }
+  function resetAll(){
+    document.querySelectorAll('#tablecard tbody tr').forEach(tr=>tr.style.display='');
+    document.getElementById('chips').style.display='none';
+    document.querySelectorAll('.fbtn.on').forEach(b=>b.classList.remove('on'));
+  }
+</script>
+</body>
+</html>
