@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=30">
+    <link rel="stylesheet" href="css/styles.css?v=31">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -1616,15 +1616,19 @@
 
                         <div class="card" id="crm-table-card">
                             <div class="crm-table-head">
-                                <h3 class="card-title" style="margin-bottom:0;" data-i18n="crm_customer_list">Customer list</h3>
+                                <div class="crm-title-row">
+                                    <h3 class="card-title" style="margin-bottom:0;" data-i18n="crm_customer_list">Customer list</h3>
+                                    <!-- Hanya muncul saat ada filter aktif: tombol reset yang selalu
+                                         terlihat membuat layar berbohong soal apakah daftarnya utuh. -->
+                                    <button id="crm-reset-filters" class="btn btn-secondary btn-sm hidden"
+                                            onclick="crmpgResetFilters()" data-i18n="crm_reset_filters">Reset filters</button>
+                                </div>
                                 <div class="crm-table-controls">
                                     <input type="text" id="crm-search" class="form-control crm-search"
                                            oninput="crmpgSearch(this.value)"
                                            data-i18n-placeholder="crm_search_placeholder" placeholder="Search customer, city, sales…">
                                     <select id="crm-status-filter" class="form-control crm-status-select"
                                             onchange="crmpgSetFilter('status', this.value)"></select>
-                                    <button class="btn btn-secondary btn-sm" onclick="crmpgResetFilters()"
-                                            data-i18n="crm_reset_filters">Reset filters</button>
                                 </div>
                             </div>
                             <div class="table-container">
@@ -3151,7 +3155,7 @@
     <script src="js/roasting.js?v=47"></script>
     <script src="js/packing.js?v=142"></script>
     <script src="js/sales.js?v=61"></script>
-    <script src="js/crm.js?v=1"></script>
+    <script src="js/crm.js?v=2"></script>
     <script src="js/otheritems.js?v=1"></script>
     <script src="js/settings.js?v=29"></script>
     <script src="js/tracking.js?v=8"></script>

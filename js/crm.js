@@ -606,6 +606,11 @@ function crmpgResetFilters() {
     _crmpgFilter = { sales: 'all', category: 'all', status: 'all', kpi: null, search: '' };
     const search = document.getElementById('crm-search');
     if (search) search.value = '';
+    // Dropdown status tidak ikut tergambar ulang (dibangun sekali), jadi
+    // nilainya harus dikembalikan sendiri — kalau tidak, layar berkata
+    // "Dormant" padahal tabelnya sudah menampilkan semua.
+    const statusSel = document.getElementById('crm-status-filter');
+    if (statusSel) statusSel.value = 'all';
     crmpgRenderTiles();
     crmpgRenderKpis();
     crmpgRenderTable();
@@ -614,6 +619,16 @@ function crmpgResetFilters() {
 function crmpgSearch(value) {
     _crmpgFilter.search = (value || '').toLowerCase();
     crmpgRenderTable();
+}
+
+// Satu-satunya definisi "ada filter aktif" — dipakai tombol reset maupun
+// baris hitungan, supaya keduanya tidak pernah berbeda pendapat.
+function crmpgHasActiveFilter() {
+    return _crmpgFilter.sales !== 'all'
+        || _crmpgFilter.category !== 'all'
+        || _crmpgFilter.status !== 'all'
+        || !!_crmpgFilter.kpi
+        || !!_crmpgFilter.search;
 }
 
 function crmpgVisibleRows() {
@@ -721,6 +736,9 @@ function crmpgRenderTable() {
                 </td>
             </tr>`).join('');
     }
+
+    const resetBtn = document.getElementById('crm-reset-filters');
+    if (resetBtn) resetBtn.classList.toggle('hidden', !crmpgHasActiveFilter());
 
     const count = document.getElementById('crm-row-count');
     if (count) {

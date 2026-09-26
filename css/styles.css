@@ -2195,3 +2195,6 @@ tbody tr:hover {
 }
 .crm-empty-title { font-weight: 700; margin-bottom: 6px; color: var(--text-primary); }
 .crm-notes { margin: 0; padding-inline-start: 18px; color: var(--text-secondary); font-size: 0.82rem; line-height: 1.7; }
+
+/* Judul tabel CRM + tombol reset yang hanya muncul saat ada filter aktif */
+.crm-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
