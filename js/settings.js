@@ -412,6 +412,12 @@ const PERMISSION_GROUPS = [
         { key: 'customer_cat_wholesale', label: 'Wholesale Category Access' },
         { key: 'customer_cat_supermarket', label: 'Supermarket Category Access' }
     ]},
+    // CRM_PAGE_PLAN.md §2.2 — satu izin untuk satu halaman utuh, justru itu
+    // alasan halaman CRM dipisah dari Customers. Pagar KATEGORI di atas tetap
+    // berlaku di dalamnya: crm_manage membuka halamannya, bukan customernya.
+    { label: '📊 CRM Management', keys: [
+        { key: 'crm_manage', label: 'CRM page (customers by sales + sales performance)' }
+    ]},
     // PURCHASE_REQUEST_PLAN.md §5.1 — six active keys. A seventh key,
     // purchase_request_view_own, exists in the data (seeded false for every
     // role, §5.2) but is DELIBERATELY absent from this list: a checkbox that

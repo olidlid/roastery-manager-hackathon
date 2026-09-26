@@ -151,6 +151,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
+                crm_manage: true,   // CRM_PAGE_PLAN.md §5.3 — halaman CRM management
                 purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: true, purchase_approval_decide: true,
                 other_items_view: true, other_items_add: true, other_items_edit: true, other_items_delete: true, other_items_stock_in: true, other_items_release: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
@@ -175,6 +176,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: true, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
+                crm_manage: true,   // CRM_PAGE_PLAN.md §5.3 — halaman CRM management
                 purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: true, purchase_approval_decide: true,
                 other_items_view: true, other_items_add: true, other_items_edit: true, other_items_delete: true, other_items_stock_in: true, other_items_release: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
@@ -199,6 +201,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: true,
                 dispatch_approval_view: true, dispatch_approval_approve: true, dispatch_approval_dispatch: true, dispatch_approval_print: true,
                 customer_view: true, customer_add: false, customer_edit: false, customer_delete: false, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
+                crm_manage: true,   // CRM_PAGE_PLAN.md §5.3 — halaman CRM management
                 purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: true, purchase_approval_decide: true,
                 other_items_view: true, other_items_add: true, other_items_edit: true, other_items_delete: true, other_items_stock_in: true, other_items_release: true,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: true,
@@ -231,6 +234,7 @@ const MOCK_DB = {
                 sales_request_view: false, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false, customer_cat_retail: false, customer_cat_wholesale: false, customer_cat_supermarket: false,
+                crm_manage: false,   // CRM_PAGE_PLAN.md §5.3 — halaman CRM management
                 purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: false, purchase_approval_decide: false,
                 other_items_view: false, other_items_add: false, other_items_edit: false, other_items_delete: false, other_items_stock_in: false, other_items_release: false,
                 reports_view: false, reports_stockopname_view: false, reports_stockopname_perform: false,
@@ -255,6 +259,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: false, sales_request_edit: false, sales_request_delete: false, sales_request_print: false,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: false, customer_add: false, customer_edit: false, customer_delete: false, customer_cat_retail: false, customer_cat_wholesale: false, customer_cat_supermarket: false,
+                crm_manage: false,   // CRM_PAGE_PLAN.md §5.3 — halaman CRM management
                 purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: false, purchase_approval_decide: false,
                 other_items_view: true, other_items_add: false, other_items_edit: false, other_items_delete: false, other_items_stock_in: false, other_items_release: false,
                 reports_view: false, reports_stockopname_view: false, reports_stockopname_perform: false,
@@ -279,6 +284,7 @@ const MOCK_DB = {
                 sales_request_view: true, sales_request_view_own: false, sales_request_create: true, sales_request_edit: true, sales_request_delete: true, sales_request_print: true,
                 dispatch_approval_view: false, dispatch_approval_approve: false, dispatch_approval_dispatch: false, dispatch_approval_print: false,
                 customer_view: true, customer_add: true, customer_edit: true, customer_delete: false, customer_cat_retail: true, customer_cat_wholesale: true, customer_cat_supermarket: true,
+                crm_manage: false,   // CRM_PAGE_PLAN.md §5.3 — halaman CRM management
                 purchase_request_view: true, purchase_request_create: true, purchase_request_edit: true, purchase_request_delete: true, purchase_request_view_own: false, purchase_approval_view: false, purchase_approval_decide: false,
                 other_items_view: true, other_items_add: false, other_items_edit: false, other_items_delete: false, other_items_stock_in: false, other_items_release: false,
                 reports_view: true, reports_stockopname_view: true, reports_stockopname_perform: false,
@@ -516,6 +522,7 @@ const PAGE_METADATA = {
     'sec-reports': { title: 'Reports', subtitle: '' },
     'sec-handover': { title: 'Handover', subtitle: '' },
     'sec-customers': { title: 'Customer Management', subtitle: 'Manage wholesale and retail customers' },
+    'sec-crm': { title: 'CRM', subtitle: 'Customers grouped by sales, when each is likely to reorder, and how the team is doing' },
     'sec-tracking': { title: 'Tracking', subtitle: 'Look up a lot barcode to trace a pack back to its coffee, process, supplier and dates' }
 };
 
@@ -1179,6 +1186,26 @@ purchasingTabBtns.forEach(btn => {
     });
 });
 
+// --- SUB-TABS MANAGEMENT FOR CRM (CRM_PAGE_PLAN.md §7) ---
+const crmTabBtns = document.querySelectorAll('#sec-crm .tab-btn');
+const crmTabContents = document.querySelectorAll('#sec-crm .tab-content');
+
+crmTabBtns.forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const targetTab = btn.getAttribute('data-tab');
+
+        crmTabBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        crmTabContents.forEach(content => {
+            content.classList.toggle('hidden', content.id !== targetTab);
+        });
+
+        saveLastTab('sec-crm', targetTab);
+        await loadCrmTabSpecificData(targetTab);
+    });
+});
+
 // --- SUB-TABS MANAGEMENT FOR REPORTS ---
 const reportsTabBtns = document.querySelectorAll('#sec-reports .tab-btn');
 const reportsTabContents = document.querySelectorAll('#sec-reports .tab-content');
@@ -1322,6 +1349,14 @@ async function loadSectionData(sectionId) {
             // js/sales.js per user request 2026-08-31, so it triggers on
             // that specific action instead of every visit to this section.
             break;
+        case 'sec-crm': {
+            const activeCrmTabBtn = document.querySelector('#sec-crm .tab-btn.active');
+            await loadCrmTabSpecificData(
+                activeCrmTabBtn ? activeCrmTabBtn.getAttribute('data-tab') : 'tab-crm-customers',
+                true   // masuk lewat menu = ambil data segar
+            );
+            break;
+        }
         case 'sec-purchasing':
             const activePurchasingTabBtn = document.querySelector('#sec-purchasing .tab-btn.active');
             if (activePurchasingTabBtn) {

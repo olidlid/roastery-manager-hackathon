@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=29">
+    <link rel="stylesheet" href="css/styles.css?v=30">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -291,6 +291,10 @@
                 <li class="menu-item" data-target="sec-customers">
                     <i class="icon-users"></i>
                     <span data-i18n="nav_customers">Customers</span>
+                </li>
+                <li class="menu-item" data-target="sec-crm">
+                    <i class="icon-user-check"></i>
+                    <span data-i18n="nav_crm">CRM</span>
                 </li>
                 <li class="menu-item" data-target="sec-handover">
                     <i class="icon-truck"></i>
@@ -1582,6 +1586,117 @@
             <!-- ========================================== -->
             <!-- SECTION 5: ITEM REQUESTS (SALES REQUESTS) -->
             <!-- ========================================== -->
+            <!-- ========================================== -->
+            <!-- SECTION: CRM MANAGEMENT (CRM_PAGE_PLAN.md) -->
+            <!-- Halaman KEDUA untuk customer, terpisah dari #sec-customers:
+                 yang di atas untuk sales, yang ini untuk management.
+                 Satu izin: crm_manage. -->
+            <!-- ========================================== -->
+            <section id="sec-crm" class="page-section hidden">
+                <div class="tab-container">
+                    <div class="tab-headers">
+                        <button class="tab-btn active" data-tab="tab-crm-customers" data-i18n="tab_crm_customers">Customers</button>
+                        <button class="tab-btn" data-tab="tab-crm-sales" data-i18n="tab_crm_sales">Sales Performance</button>
+                    </div>
+
+                    <!-- TAB 1: Customers -->
+                    <div id="tab-crm-customers" class="tab-content">
+                        <div class="card">
+                            <div class="crm-tile-group">
+                                <span class="crm-tile-label" data-i18n="crm_by_sales">By sales</span>
+                                <div id="crm-sales-tiles" class="crm-tiles"></div>
+                            </div>
+                            <div class="crm-tile-group">
+                                <span class="crm-tile-label" data-i18n="crm_by_category">By category</span>
+                                <div id="crm-category-tiles" class="crm-tiles"></div>
+                            </div>
+                        </div>
+
+                        <div id="crm-kpi-cards" class="crm-kpis"></div>
+
+                        <div class="card" id="crm-table-card">
+                            <div class="crm-table-head">
+                                <h3 class="card-title" style="margin-bottom:0;" data-i18n="crm_customer_list">Customer list</h3>
+                                <div class="crm-table-controls">
+                                    <input type="text" id="crm-search" class="form-control crm-search"
+                                           oninput="crmpgSearch(this.value)"
+                                           data-i18n-placeholder="crm_search_placeholder" placeholder="Search customer, city, sales…">
+                                    <select id="crm-status-filter" class="form-control crm-status-select"
+                                            onchange="crmpgSetFilter('status', this.value)"></select>
+                                    <button class="btn btn-secondary btn-sm" onclick="crmpgResetFilters()"
+                                            data-i18n="crm_reset_filters">Reset filters</button>
+                                </div>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="crm_col_customer">Customer</th>
+                                            <th data-i18n="crm_col_category">Category</th>
+                                            <th data-i18n="crm_col_sales">Sales</th>
+                                            <th data-i18n="crm_col_status">Status</th>
+                                            <th data-i18n="crm_col_rhythm">Rhythm</th>
+                                            <th data-i18n="crm_col_last_order">Last order</th>
+                                            <th data-i18n="crm_col_next_order">Next order</th>
+                                            <th class="crm-right" data-i18n="crm_col_kg90">kg · 90 d</th>
+                                            <th class="crm-center" data-i18n="crm_col_trend">Trend</th>
+                                            <th class="crm-center" data-i18n="crm_col_data">Data</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="crm-table-body"></tbody>
+                                </table>
+                            </div>
+                            <div class="crm-table-foot">
+                                <span id="crm-row-count" class="crm-muted"></span>
+                                <span id="crm-accuracy" class="crm-muted"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 2: Sales Performance -->
+                    <div id="tab-crm-sales" class="tab-content hidden">
+                        <div id="crm-sales-cards" class="crm-two"></div>
+
+                        <div class="card">
+                            <div class="crm-table-head">
+                                <h3 class="card-title" style="margin-bottom:0;" data-i18n="crm_side_by_side">Side by side</h3>
+                                <span class="crm-muted" data-i18n="crm_side_by_side_hint">Sorted by kg · click a sales to open their detail</span>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="crm_col_sales">Sales</th>
+                                            <th class="crm-right" data-i18n="crm_col_kg">kg</th>
+                                            <th class="crm-right" data-i18n="crm_col_orders">Orders</th>
+                                            <th class="crm-right" data-i18n="crm_col_customers">Customers</th>
+                                            <th class="crm-right" data-i18n="crm_col_active">Active</th>
+                                            <th class="crm-right" data-i18n="crm_col_ordered_again">Ordered again</th>
+                                            <th class="crm-right" data-i18n="crm_col_needs_attention">Needs attention</th>
+                                            <th class="crm-right" data-i18n="crm_col_kg_per_customer">kg / customer</th>
+                                            <th class="crm-right" data-i18n="crm_col_cancelled">Cancelled</th>
+                                            <th data-i18n="crm_col_vs_prev">vs previous 90 d</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="crm-sales-table-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <h3 class="card-title" data-i18n="crm_fairness_title">How this is measured</h3>
+                            <ul class="crm-notes">
+                                <li data-i18n="crm_fairness_1">Each sales is compared with their own previous period, never ranked against each other — one of them was handed the bigger accounts.</li>
+                                <li data-i18n="crm_fairness_2">Per-customer figures sit next to totals, because 30 customers against 9 is not a fair fight.</li>
+                                <li data-i18n="crm_fairness_3">"Unable to Fulfill" is never counted against a sales — that is stock falling short, which belongs to production.</li>
+                                <li data-i18n="crm_fairness_4">An account that holds no customers is shown but never ranked. The test is "holds no customers", not the job title.</li>
+                                <li data-i18n="crm_fairness_5">No activity metrics (visits, calls) appear here: this app records none, so any such number would be invented.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <section id="sec-handover" class="page-section hidden">
                 <div class="tab-container">
                     <div class="tab-headers">
@@ -3026,20 +3141,21 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=82"></script>
+    <script src="js/translations.js?v=83"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=5"></script>
-    <script src="js/auth.js?v=19"></script>
+    <script src="js/auth.js?v=20"></script>
     <script src="js/greenbean.js?v=24"></script>
     <script src="js/roasting.js?v=47"></script>
     <script src="js/packing.js?v=142"></script>
     <script src="js/sales.js?v=61"></script>
+    <script src="js/crm.js?v=1"></script>
     <script src="js/otheritems.js?v=1"></script>
-    <script src="js/settings.js?v=28"></script>
+    <script src="js/settings.js?v=29"></script>
     <script src="js/tracking.js?v=8"></script>
     <script src="js/purchasing.js?v=3"></script>
-    <script src="js/app.js?v=123"></script>
+    <script src="js/app.js?v=124"></script>
 </body>
 </html>
