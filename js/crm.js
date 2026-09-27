@@ -934,6 +934,7 @@ let _crmpgModalPeriod = 'all';
 // Disimpan sebagai key, bukan disisipkan ke onclick, supaya nama sales yang
 // mengandung kutip tidak pernah bisa merusak HTML-nya.
 let _crmpgSalesModalKey = null;
+let _crmpgSalesPeriod = 'all';
 let _crmpgCustomerBackKey = null;
 
 const CRMPG_PERIOD_META = [
@@ -970,8 +971,14 @@ function crmpgMixOfOrders(orders) {
     return mix;
 }
 
-// Semua yang berubah mengikuti filter periode, dihitung di satu tempat.
+// Semua yang berubah mengikuti filter periode, dihitung di satu tempat —
+// dipakai modal customer maupun modal sales, supaya "Month to date" tidak
+// pernah punya dua arti berbeda di dua layar.
 function crmpgPeriodData(r, period) {
+    return crmpgPeriodDataFromOrders(r.shipped, period);
+}
+
+function crmpgPeriodDataFromOrders(shipped, period) {
     const today = todayDateStr();
     const thisMonth = today.slice(0, 7);
     let orders, buckets, label, range;
@@ -979,7 +986,7 @@ function crmpgPeriodData(r, period) {
     if (period === 'mtd') {
         // "Setiap hari yang ada ordernya" — hari kosong tidak diberi batang,
         // jadi tiga order menghasilkan tiga batang, bukan tiga puluh.
-        orders = r.shipped.filter(o => o.date.slice(0, 7) === thisMonth);
+        orders = shipped.filter(o => o.date.slice(0, 7) === thisMonth);
         buckets = orders.map(o => ({ label: crmpgShortDate(o.date), kg: o.kg }));
         label = crmT('crm_kg_per_day', 'kg per day · days with an order');
         range = crmpgShortDate(thisMonth + '-01') + ' – ' + crmpgShortDate(today);
@@ -994,20 +1001,20 @@ function crmpgPeriodData(r, period) {
             firstKey = d.toISOString().slice(0, 7);
             range = crmT('crm_last_12_months', 'last 12 months');
         } else {
-            firstKey = (r.shipped[0] ? r.shipped[0].date : today).slice(0, 7);
-            range = r.shipped.length
-                ? crmT('crm_since', 'since {d}').replace('{d}', crmpgShortDate(r.shipped[0].date))
+            firstKey = (shipped[0] ? shipped[0].date : today).slice(0, 7);
+            range = shipped.length
+                ? crmT('crm_since', 'since {d}').replace('{d}', crmpgShortDate(shipped[0].date))
                 : '';
         }
         const keys = crmpgMonthKeysBetween(firstKey, thisMonth);
         const keySet = new Set(keys);
-        orders = r.shipped.filter(o => keySet.has(o.date.slice(0, 7)));
+        orders = shipped.filter(o => keySet.has(o.date.slice(0, 7)));
         // Bulan kosong tetap diberi batang: kalau dihapus, masa sepi terbaca
         // seolah tidak pernah ada.
         buckets = keys.map(k => ({
             label: CRMPG_MONTHS[parseInt(k.slice(5, 7), 10) - 1] +
                    (k.slice(0, 4) !== today.slice(0, 4) ? " '" + k.slice(2, 4) : ''),
-            kg: r.shipped.filter(o => o.date.slice(0, 7) === k).reduce((s, o) => s + o.kg, 0)
+            kg: shipped.filter(o => o.date.slice(0, 7) === k).reduce((s, o) => s + o.kg, 0)
         }));
         label = crmT('crm_kg_per_month', 'kg per month');
     }
@@ -1034,15 +1041,19 @@ function crmpgBarsFromBuckets(buckets) {
         <div class="crm-bar-label" title="${crmpgEsc(b.label)}: ${crmpgNum(b.kg)} kg">${crmpgEsc(b.label)}</div>`).join('') + `</div>`;
 }
 
+function crmpgPeriodBarHtml(period, range, handlerTemplate) {
+    return `<div class="crm-periods">
+        ${CRMPG_PERIOD_META.map(p => `
+            <button class="btn btn-secondary btn-sm crm-period${p.id === period ? ' active' : ''}"
+                    onclick="${handlerTemplate.replace('{p}', p.id)}">${crmpgEsc(crmT(p.key, p.fallback))}</button>`).join('')}
+        <span class="crm-range crm-muted">${crmpgEsc(range)}</span>
+    </div>`;
+}
+
 function crmpgLeftColumnHtml(r, period) {
     const d = crmpgPeriodData(r, period);
     return `
-        <div class="crm-periods">
-            ${CRMPG_PERIOD_META.map(p => `
-                <button class="btn btn-secondary btn-sm crm-period${p.id === period ? ' active' : ''}"
-                        onclick="crmpgSetPeriod(${r.id}, '${p.id}')">${crmpgEsc(crmT(p.key, p.fallback))}</button>`).join('')}
-            <span class="crm-range crm-muted">${crmpgEsc(d.range)}</span>
-        </div>
+        ${crmpgPeriodBarHtml(period, d.range, `crmpgSetPeriod(${r.id}, '{p}')`)}
 
         <div class="crm-card crm-hug">
             <div class="crm-label">${crmpgEsc(d.label)}</div>
@@ -1366,19 +1377,51 @@ function crmpgAttentionReason(c) {
     return (c.predict && c.predict.ok) ? crmpgDueText(c.predict.daysUntil) : '';
 }
 
+// Blok atas modal sales: grafik + asal volume, keduanya ikut filter periode.
+// "Needs attention this week" di bawahnya TIDAK ikut — daftar itu menjawab
+// "siapa yang perlu dihubungi sekarang", dan menyaringnya dengan year-to-date
+// akan menyembunyikan justru customer yang paling perlu ditelepon hari ini.
+function crmpgSalesTopHtml(s, period) {
+    const shipped = [];
+    s.customers.forEach(c => shipped.push(...c.shipped));
+    shipped.sort((a, b) => a.date.localeCompare(b.date));
+
+    const d = crmpgPeriodDataFromOrders(shipped, period);
+    const handler = `crmpgSetSalesPeriod('{p}')`;
+
+    return `
+        ${crmpgPeriodBarHtml(period, d.range, handler)}
+        <div class="crm-two" style="margin-top:12px">
+            <div class="crm-card">
+                <div class="crm-label">${crmpgEsc(d.label)}</div>
+                ${crmpgBarsFromBuckets(d.buckets)}
+            </div>
+            <div class="crm-card">
+                <div class="crm-label">${crmpgEsc(crmT('crm_volume_from', 'Where the volume comes from'))}</div>
+                ${crmpgCoffeeListHtml(d.mix)}
+                <div class="crm-period-total crm-muted">${crmpgEsc(crmpgPeriodSummary(d))}</div>
+            </div>
+        </div>`;
+}
+
+function crmpgSetSalesPeriod(period) {
+    const s = _crmpgSalesRows.find(x => x.key === _crmpgSalesModalKey);
+    const box = document.getElementById('crm-sales-top');
+    if (!s || !box) return;
+    _crmpgSalesPeriod = period;
+    box.innerHTML = crmpgSalesTopHtml(s, period);
+}
+
 function crmpgOpenSales(key, activePaneId) {
     const s = _crmpgSalesRows.find(x => x.key === key);
     if (!s) return;
     _crmpgSalesModalKey = key;
     _crmpgCustomerBackKey = null;
+    if (!activePaneId) _crmpgSalesPeriod = 'all';   // Back mempertahankan periode yang dipilih
 
-    const months = _crmpgRows.length ? _crmpgRows[0].months : [];
-    const monthly = months.map(m => s.customers.reduce((sum, c) =>
-        sum + c.shipped.filter(o => crmpgMonthKey(o.date) === m).reduce((x, o) => x + o.kg, 0), 0));
-
-    const coffee = {};
-    s.customers.forEach(c => Object.entries(c.coffee).forEach(([k, v]) => { coffee[k] = (coffee[k] || 0) + v; }));
-
+    // Grafik dan asal volume kini dibangun crmpgSalesTopHtml() mengikuti
+    // periode terpilih, jadi hitungan bulan/kopi yang dulu di sini sudah tidak
+    // dipakai lagi.
     const attention = s.customers
         .filter(c => c.status === 'dormant' || c.status === 'slipping' ||
             (c.predict.ok && c.predict.daysUntil <= 3))
@@ -1406,16 +1449,7 @@ function crmpgOpenSales(key, activePaneId) {
                     <div class="crm-stat"><b>${s.goneQuiet}</b><span>${crmpgEsc(crmT('crm_needs_attention', 'needs attention'))}</span></div>
                     <div class="crm-stat"><b>${s.onceOnly}</b><span>${crmpgEsc(crmT('crm_once_only', 'ordered once only'))}</span></div>
                 </div>
-                <div class="crm-two">
-                    <div class="crm-card">
-                        <div class="crm-label">${crmpgEsc(crmT('crm_kg_per_month', 'kg per month'))}</div>
-                        ${crmpgBarsHtml(crmpgMonthLabels(months), monthly)}
-                    </div>
-                    <div class="crm-card">
-                        <div class="crm-label">${crmpgEsc(crmT('crm_volume_from', 'Where the volume comes from'))}</div>
-                        ${crmpgCoffeeListHtml(coffee)}
-                    </div>
-                </div>
+                <div id="crm-sales-top">${crmpgSalesTopHtml(s, _crmpgSalesPeriod)}</div>
                 <div class="crm-card">
                     <div class="crm-label">${crmpgEsc(crmT('crm_needs_this_week', 'Needs attention this week'))}</div>
                     ${attention.length ? attention.map(c => `
