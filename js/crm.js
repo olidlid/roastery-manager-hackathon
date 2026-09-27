@@ -504,31 +504,40 @@ function crmpgActivateMainTab(tabId) {
         c.classList.toggle('hidden', c.id !== tabId));
 }
 
-// Tab utama: Customer (direktori pindahan dari menu lama) atau Performance.
+// Tab utama: Customer (direktori + segmen) atau Performance.
 async function loadCrmMainTab(tabId, forceRefresh) {
-    if (tabId === 'tab-crm-customer') {
-        await loadCustomersSection(undefined, { refreshStats: !!forceRefresh });
-        return;
-    }
-    const activeSub = document.querySelector('#sec-crm .crm-subtab.active');
-    await loadCrmTabSpecificData(
-        activeSub ? crmpgSubPaneOf(activeSub) : 'tab-crm-customers', forceRefresh);
+    const pane = document.getElementById(tabId);
+    const activeSub = pane ? pane.querySelector('.crm-subtab.active') : null;
+    const subId = activeSub ? crmpgSubPaneOf(activeSub)
+                            : (tabId === 'tab-crm-customer' ? 'sub-cust-directory' : 'tab-crm-customers');
+    await crmpgLoadSubPane(subId, forceRefresh);
 }
 
 function crmpgSubPaneOf(btn) {
-    const m = (btn.getAttribute('onclick') || '').match(/crmpgSubTab\('([^']+)'\)/);
-    return m ? m[1] : 'tab-crm-customers';
+    const m = (btn.getAttribute('onclick') || '').match(/crmpgSubTab\(this,\s*'([^']+)'\)/);
+    return m ? m[1] : null;
 }
 
-// Sub-tab di dalam Performance. Sengaja tidak memakai .tab-btn/.tab-content:
-// restoreLastTab() menyapu seluruh .tab-btn dalam satu section, sehingga tab
-// bersarang akan saling mematikan.
-async function crmpgSubTab(paneId) {
-    document.querySelectorAll('#sec-crm .crm-subtab').forEach(b =>
-        b.classList.toggle('active', crmpgSubPaneOf(b) === paneId));
-    document.querySelectorAll('#sec-crm .crm-subpane').forEach(c =>
-        c.classList.toggle('hidden', c.id !== paneId));
-    await loadCrmTabSpecificData(paneId);
+async function crmpgLoadSubPane(paneId, forceRefresh) {
+    if (paneId === 'sub-cust-directory') {
+        await loadCustomersSection(undefined, { refreshStats: !!forceRefresh });
+    } else if (paneId === 'sub-cust-segments') {
+        await loadCrmInsightsTab(!!forceRefresh);
+    } else {
+        await loadCrmTabSpecificData(paneId, forceRefresh);
+    }
+}
+
+// Sub-tab. Sengaja tidak memakai .tab-btn/.tab-content: restoreLastTab()
+// menyapu seluruh .tab-btn dalam satu section, sehingga tab bersarang akan
+// saling mematikan. Lingkupnya dibatasi ke panel tempat tombolnya berada —
+// ada DUA bar sub-tab dalam section ini (Customer dan Performance), dan tanpa
+// pembatasan itu mengklik salah satunya akan mematikan yang lain.
+async function crmpgSubTab(btn, paneId) {
+    const scope = btn.closest('.tab-content') || document;
+    scope.querySelectorAll('.crm-subtab').forEach(b => b.classList.toggle('active', b === btn));
+    scope.querySelectorAll('.crm-subpane').forEach(c => c.classList.toggle('hidden', c.id !== paneId));
+    await crmpgLoadSubPane(paneId);
 }
 
 // Nama lama dipertahankan supaya pemanggil lama tidak putus.

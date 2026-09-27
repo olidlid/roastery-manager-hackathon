@@ -1485,6 +1485,14 @@
                          Izinnya tetap customer_view, jadi sales tidak kehilangan apa pun
                          saat menunya dihapus dari sidebar. -->
                     <div id="tab-crm-customer" class="tab-content">
+                        <div class="crm-subtabs">
+                            <button class="btn btn-secondary btn-sm crm-subtab active"
+                                    onclick="crmpgSubTab(this, 'sub-cust-directory')" data-i18n="crm_sub_directory">Directory</button>
+                            <button class="btn btn-secondary btn-sm crm-subtab"
+                                    onclick="crmpgSubTab(this, 'sub-cust-segments')" data-i18n="crm_sub_segments">Segments</button>
+                        </div>
+
+                        <div id="sub-cust-directory" class="crm-subpane">
                         <div class="card">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
                                 <h3 class="card-title" style="margin-bottom: 0;">Customer Directory</h3>
@@ -1559,6 +1567,39 @@
                                 </table>
                             </div>
                         </div>
+                        </div>
+
+                        <!-- Segmen RFM, dikembalikan 2026-09-27: menjawab "siapa yang di atas
+                             rata-rata kelompoknya", pertanyaan yang tidak dijawab tabel
+                             Performance (yang soal ritme order). -->
+                        <div id="sub-cust-segments" class="crm-subpane hidden">
+                        <div style="font-size:0.7rem; font-weight:700; letter-spacing:0.03em; color:var(--text-muted); margin-bottom:8px;" data-i18n="lbl_crm_segment_group">SEGMENT</div>
+                        <div id="cust-crm-seg-tiles" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:16px;"></div>
+
+                        <div style="font-size:0.7rem; font-weight:700; letter-spacing:0.03em; color:var(--text-muted); margin-bottom:8px;" data-i18n="lbl_crm_type_group">TYPE</div>
+                        <div id="cust-crm-type-tiles" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:20px;"></div>
+
+                        <div class="card">
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_customer_name">Customer Name</th>
+                                            <th data-i18n="col_customer_type">Type</th>
+                                            <th data-i18n="col_crm_segment">Segment</th>
+                                            <th data-i18n="col_crm_reorder">Reorder</th>
+                                            <th data-i18n="col_crm_last_order">Last order</th>
+                                            <th style="text-align:right;" data-i18n="col_crm_kg_90d">Kg (90d)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="cust-crm-table-body">
+                                        <!-- Dynamic CRM Insights rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="cust-crm-table-caption" style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding-top:10px;"></div>
+                        </div>
+                        </div>
                     </div>
 
                     <!-- TAB 2: Performance — halaman CRM, digerbangi crm_manage.
@@ -1568,9 +1609,9 @@
                     <div id="tab-crm-performance" class="tab-content hidden">
                         <div class="crm-subtabs">
                             <button class="btn btn-secondary btn-sm crm-subtab active"
-                                    onclick="crmpgSubTab('tab-crm-customers')" data-i18n="crm_sub_by_customer">By customer</button>
+                                    onclick="crmpgSubTab(this, 'tab-crm-customers')" data-i18n="crm_sub_by_customer">By customer</button>
                             <button class="btn btn-secondary btn-sm crm-subtab"
-                                    onclick="crmpgSubTab('tab-crm-sales')" data-i18n="crm_sub_by_sales">By sales</button>
+                                    onclick="crmpgSubTab(this, 'tab-crm-sales')" data-i18n="crm_sub_by_sales">By sales</button>
                         </div>
 
                     <div id="tab-crm-customers" class="crm-subpane">
@@ -3106,7 +3147,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=89"></script>
+    <script src="js/translations.js?v=91"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
@@ -3115,8 +3156,8 @@
     <script src="js/greenbean.js?v=24"></script>
     <script src="js/roasting.js?v=47"></script>
     <script src="js/packing.js?v=142"></script>
-    <script src="js/sales.js?v=62"></script>
-    <script src="js/crm.js?v=9"></script>
+    <script src="js/sales.js?v=64"></script>
+    <script src="js/crm.js?v=10"></script>
     <script src="js/otheritems.js?v=1"></script>
     <script src="js/settings.js?v=29"></script>
     <script src="js/tracking.js?v=8"></script>
