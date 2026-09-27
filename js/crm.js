@@ -928,6 +928,14 @@ function crmpgCoffeeListHtml(coffee, limit = 5) {
 // tapi salah.
 let _crmpgModalPeriod = 'all';
 
+// Jejak "datang dari mana". Modal customer yang dibuka DARI modal sales harus
+// bisa kembali ke daftar itu — menutup dengan silang membuang dua langkah
+// navigasi sekaligus dan memaksa leader mengulang dari tabel sales.
+// Disimpan sebagai key, bukan disisipkan ke onclick, supaya nama sales yang
+// mengandung kutip tidak pernah bisa merusak HTML-nya.
+let _crmpgSalesModalKey = null;
+let _crmpgCustomerBackKey = null;
+
 const CRMPG_PERIOD_META = [
     { id: 'all',     key: 'crm_period_all',     fallback: 'All time' },
     { id: 'ytd',     key: 'crm_period_ytd',     fallback: 'Year to date' },
@@ -1166,13 +1174,32 @@ function crmpgForecastHtml(r) {
                 .replace('{n}', last3.length).replace('{kg}', crmpgNum(mixTotal))) : ''}</div>`;
 }
 
-function crmpgOpenCustomer(customerId) {
+function crmpgBackBarHtml() {
+    if (!_crmpgCustomerBackKey) return '';
+    const s = _crmpgSalesRows.find(x => x.key === _crmpgCustomerBackKey);
+    if (!s) return '';
+    return `<div class="crm-back">
+        <button class="btn btn-secondary btn-sm" onclick="crmpgBackToSales()">
+            &larr; ${crmpgEsc(crmT('crm_back_to', 'Back to {name}').replace('{name}', s.name))}
+        </button>
+    </div>`;
+}
+
+function crmpgBackToSales() {
+    const key = _crmpgCustomerBackKey;
+    if (!key) return;
+    crmpgOpenSales(key, 'crm-sales-customers');
+}
+
+function crmpgOpenCustomer(customerId, fromSalesModal) {
     const r = _crmpgRows.find(x => x.id === customerId);
     if (!r) return;
     _crmpgModalPeriod = 'all';
+    _crmpgCustomerBackKey = fromSalesModal ? _crmpgSalesModalKey : null;
 
     openModal(r.name, `
         <div class="crm-modal">
+            ${crmpgBackBarHtml()}
             <div class="crm-modal-head">
                 <div>
                     <div class="crm-muted">${crmpgEsc(r.category)} · ${crmpgEsc(r.city || '—')}
@@ -1335,9 +1362,11 @@ function crmpgAttentionReason(c) {
     return (c.predict && c.predict.ok) ? crmpgDueText(c.predict.daysUntil) : '';
 }
 
-function crmpgOpenSales(key) {
+function crmpgOpenSales(key, activePaneId) {
     const s = _crmpgSalesRows.find(x => x.key === key);
     if (!s) return;
+    _crmpgSalesModalKey = key;
+    _crmpgCustomerBackKey = null;
 
     const months = _crmpgRows.length ? _crmpgRows[0].months : [];
     const monthly = months.map(m => s.customers.reduce((sum, c) =>
@@ -1410,7 +1439,7 @@ function crmpgOpenSales(key) {
                         </tr></thead>
                         <tbody>
                             ${s.customers.slice().sort((a, b) => b.kgAll - a.kgAll).map(c => `
-                                <tr class="crm-row" onclick="crmpgOpenCustomer(${c.id})">
+                                <tr class="crm-row" onclick="crmpgOpenCustomer(${c.id}, true)">
                                     <td><strong>${crmpgEsc(c.name)}</strong><div class="crm-sub">${crmpgEsc(c.city || '—')}</div></td>
                                     <td>${crmpgEsc(c.category)}</td>
                                     <td class="crm-right">${c.orderCount}</td>
@@ -1433,6 +1462,15 @@ function crmpgOpenSales(key) {
                 </div>
             </div>
         </div>`, '1080px');
+
+    // Dibuka lewat tombol Back: kembalikan ke tab yang tadi ditinggalkan,
+    // bukan ke Performance — kalau tidak, leader harus mengklik ulang tab
+    // Customers setiap kali menutup satu customer.
+    if (activePaneId) {
+        const btns = document.querySelectorAll('#modal-container .crm-mtab');
+        const target = [...btns].find(b => (b.getAttribute('onclick') || '').includes(activePaneId));
+        if (target) target.click();
+    }
 }
 
 // Dipanggil dari app.js saat section dibuka lewat menu.

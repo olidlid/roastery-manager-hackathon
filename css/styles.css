@@ -2248,3 +2248,7 @@ tbody tr:hover {
 .crm-forecast-table td { padding: 5px 0; border: 0; font-variant-numeric: tabular-nums; }
 .crm-forecast-table tfoot td { border-top: 1px solid var(--border); padding-top: 8px; font-weight: 700; }
 .crm-forecast-note { margin-top: auto; padding-top: 12px; font-size: 0.72rem; line-height: 1.6; }
+
+/* Tombol kembali di modal customer — hanya muncul kalau modal itu dibuka
+   dari daftar customer milik seorang sales. */
+.crm-back { margin-bottom: 10px; }
