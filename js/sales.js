@@ -341,6 +341,9 @@ async function loadCustomerLeaderboard(ordersRaw, accessibleCustomers) {
 
 let _crmActiveSeg = 'all';
 let _crmActiveType = 'all';
+// Hitungan tile terakhir, supaya Reset bisa menggambar ulang tile tanpa
+// mengambil data lagi dari jaringan.
+let _crmLastCounts = null;
 let _crmRows = []; // populated by loadCrmInsightsTab; read by renderCrmTable/openCrmCustomerModal
 
 const CRM_SEGMENT_ORDER = ['all', 'vip', 'regular', 'at_risk', 'dormant', 'new', 'none'];
@@ -416,7 +419,21 @@ function renderCrmTiles(segCounts, typeCounts) {
     }
 }
 
+function crmInsightsHasFilter() {
+    return _crmActiveSeg !== 'all' || _crmActiveType !== 'all';
+}
+
+function resetCrmInsightsFilters() {
+    _crmActiveSeg = 'all';
+    _crmActiveType = 'all';
+    if (_crmLastCounts) renderCrmTiles(_crmLastCounts.segCounts, _crmLastCounts.typeCounts);
+    renderCrmTable();
+}
+
 function renderCrmTable() {
+    const resetBtn = document.getElementById('cust-crm-reset');
+    if (resetBtn) resetBtn.classList.toggle('hidden', !crmInsightsHasFilter());
+
     const tbody = document.getElementById('cust-crm-table-body');
     if (!tbody) return;
     const visible = _crmRows.filter(r =>
@@ -498,6 +515,7 @@ async function loadCrmInsightsTab(forceRefresh) {
         typeCounts[r.customer.type] = (typeCounts[r.customer.type] || 0) + 1;
     });
 
+    _crmLastCounts = { segCounts, typeCounts };
     renderCrmTiles(segCounts, typeCounts);
     renderCrmTable();
 }

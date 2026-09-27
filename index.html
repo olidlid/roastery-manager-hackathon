@@ -1580,6 +1580,13 @@
                         <div id="cust-crm-type-tiles" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:20px;"></div>
 
                         <div class="card">
+                            <!-- Tombol reset hanya muncul saat ada tile yang dipilih;
+                                 tombol yang selalu terlihat membuat layar berbohong soal
+                                 apakah daftarnya utuh. -->
+                            <div class="crm-title-row" id="cust-crm-head">
+                                <button id="cust-crm-reset" class="btn btn-danger btn-sm hidden"
+                                        onclick="resetCrmInsightsFilters()" data-i18n="crm_reset_filters">Reset filters</button>
+                            </div>
                             <div class="table-container">
                                 <table>
                                     <thead>
@@ -3156,7 +3163,7 @@
     <script src="js/greenbean.js?v=24"></script>
     <script src="js/roasting.js?v=47"></script>
     <script src="js/packing.js?v=142"></script>
-    <script src="js/sales.js?v=64"></script>
+    <script src="js/sales.js?v=65"></script>
     <script src="js/crm.js?v=10"></script>
     <script src="js/otheritems.js?v=1"></script>
     <script src="js/settings.js?v=29"></script>
