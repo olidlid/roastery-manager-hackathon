@@ -2165,11 +2165,19 @@ tbody tr:hover {
 .crm-forecast { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
 .crm-right-block { text-align: end; }
 
-.crm-bars { display: flex; align-items: flex-end; gap: 10px; height: 120px; }
-.crm-bar-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; text-align: center; }
+/* Grid dua baris, BUKAN flex: label bulan seperti "Oct '25" melipat jadi dua
+   baris dan, di layout flex, ikut mendorong batangnya naik sehingga batang
+   nol tidak lagi sejajar dengan tetangganya. Dengan grid, seluruh label
+   berbagi satu baris yang tingginya ditentukan label tertinggi, jadi semua
+   batang berdiri di garis dasar yang sama. */
+.crm-bars {
+    display: grid; grid-template-rows: 120px auto;
+    grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); column-gap: 10px;
+}
+.crm-bar-col { display: flex; flex-direction: column; justify-content: flex-end; height: 100%; text-align: center; min-width: 0; }
 .crm-bar { background: var(--primary); border-radius: 4px 4px 0 0; min-height: 3px; }
 .crm-bar-val { font-size: 0.68rem; color: var(--text-muted); margin-bottom: 4px; font-variant-numeric: tabular-nums; }
-.crm-bar-label { font-size: 0.68rem; color: var(--text-muted); margin-top: 6px; }
+.crm-bar-label { font-size: 0.68rem; color: var(--text-muted); margin-top: 6px; text-align: center; align-self: stretch; }
 
 .crm-legend-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 0.8rem; }
 .crm-legend-row > :last-child { margin-inline-start: auto; white-space: nowrap; }

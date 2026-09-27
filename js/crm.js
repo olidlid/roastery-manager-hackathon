@@ -901,8 +901,8 @@ function crmpgBarsHtml(labels, values) {
         <div class="crm-bar-col">
             <div class="crm-bar-val">${crmpgNum(v)}</div>
             <div class="crm-bar" style="height:${Math.max(3, Math.round((v / max) * 100))}%"></div>
-            <div class="crm-bar-label">${crmpgEsc(labels[i])}</div>
-        </div>`).join('') + `</div>`;
+        </div>
+        <div class="crm-bar-label">${crmpgEsc(labels[i])}</div>`).join('') + `</div>`;
 }
 
 function crmpgMonthLabels(months) {
@@ -1022,8 +1022,8 @@ function crmpgBarsFromBuckets(buckets) {
         <div class="crm-bar-col" title="${crmpgEsc(b.label)}: ${crmpgNum(b.kg)} kg">
             <div class="crm-bar-val">${crmpgNum(b.kg)}</div>
             <div class="crm-bar" style="height:${Math.max(2, Math.round((b.kg / max) * 100))}%"></div>
-            <div class="crm-bar-label">${crmpgEsc(b.label)}</div>
-        </div>`).join('') + `</div>`;
+        </div>
+        <div class="crm-bar-label" title="${crmpgEsc(b.label)}: ${crmpgNum(b.kg)} kg">${crmpgEsc(b.label)}</div>`).join('') + `</div>`;
 }
 
 function crmpgLeftColumnHtml(r, period) {
