@@ -1292,6 +1292,24 @@ window.translations = {
         crm_gap_city: "city",
         crm_gap_sales: "sales",
 
+        // --- CRM: filter periode + tata ulang modal (2026-09-27) ---
+        crm_period_all: "All time",
+        crm_period_ytd: "Year to date",
+        crm_period_monthly: "Monthly",
+        crm_period_mtd: "Month to date",
+        crm_kg_per_day: "kg per day · days with an order",
+        crm_last_12_months: "last 12 months",
+        crm_since: "since {d}",
+        crm_no_order_period: "No order in this period.",
+        crm_period_summary: "{n} orders · {kg} kg in this period",
+        crm_period_summary_one: "1 order · {kg} kg in this period",
+        crm_order_rhythm_kg: "Order rhythm — kg per order",
+        crm_likely_order: "What they will most likely order",
+        crm_coffee: "Coffee",
+        crm_share: "Share",
+        crm_total: "Total",
+        crm_mix_source: "Size and coffee split taken from the last {n} orders ({kg} kg).",
+
     },
     ar: {
         // Navigation & Sidebar
@@ -2583,6 +2601,24 @@ window.translations = {
         crm_gap_phone: "الهاتف",
         crm_gap_city: "المدينة",
         crm_gap_sales: "المندوب",
+
+        // --- CRM: filter periode + tata ulang modal (2026-09-27) ---
+        crm_period_all: "كل الفترات",
+        crm_period_ytd: "منذ بداية السنة",
+        crm_period_monthly: "شهرياً",
+        crm_period_mtd: "منذ بداية الشهر",
+        crm_kg_per_day: "كجم يومياً · الأيام التي فيها طلب",
+        crm_last_12_months: "آخر 12 شهراً",
+        crm_since: "منذ {d}",
+        crm_no_order_period: "لا يوجد طلب في هذه الفترة.",
+        crm_period_summary: "{n} طلباً · {kg} كجم في هذه الفترة",
+        crm_period_summary_one: "طلب واحد · {kg} كجم في هذه الفترة",
+        crm_order_rhythm_kg: "إيقاع الطلب — كجم لكل طلب",
+        crm_likely_order: "ما سيطلبونه على الأرجح",
+        crm_coffee: "القهوة",
+        crm_share: "النسبة",
+        crm_total: "الإجمالي",
+        crm_mix_source: "الحجم وتوزيع القهوة مأخوذان من آخر {n} طلبات ({kg} كجم).",
 
     }
 };

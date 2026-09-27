@@ -2198,3 +2198,45 @@ tbody tr:hover {
 
 /* Judul tabel CRM + tombol reset yang hanya muncul saat ada filter aktif */
 .crm-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* --- Modal customer: dua kolom yang tingginya saling mengunci --------------
+   Kolom kanan adalah satu tumpukan: kartu ritme sekecil isinya (.crm-hug),
+   kartu perkiraan mengambil semua sisanya (.crm-fill). Sebelumnya keduanya
+   dipaksa sama tinggi, sehingga ritme punya ruang kosong 130 px sementara
+   perkiraan berdesakan. */
+.crm-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: stretch; }
+.crm-stack { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.crm-stack > .crm-card { margin-bottom: 0; }
+.crm-hug { flex: 0 0 auto; }
+.crm-fill { flex: 1 1 auto; display: flex; flex-direction: column; }
+
+/* baris filter periode — selebar kolom yang dikendalikannya, bukan selebar modal */
+.crm-periods { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.crm-period.active { background: var(--primary); border-color: var(--primary); color: var(--primary-contrast); }
+.crm-range { font-size: 0.72rem; margin-inline-start: auto; white-space: nowrap; }
+.crm-period-total {
+    margin-top: auto; padding-top: 12px; font-size: 0.72rem;
+    border-top: 1px solid var(--border);
+}
+
+/* titik ritme membawa kg ordernya */
+.crm-cadence { align-items: flex-end; }
+.crm-point { display: inline-flex; flex-direction: column; align-items: center; gap: 5px; min-width: 42px; }
+.crm-point-kg { font-size: 0.78rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.crm-point-date { font-size: 0.68rem; color: var(--text-muted); white-space: nowrap; }
+.crm-gap { margin-bottom: 22px; }
+/* order yang DIPERKIRAKAN — berongga, supaya tidak pernah terbaca sebagai
+   order yang sudah terjadi */
+.crm-point-next .crm-dot-order { background: transparent; border: 1px dashed var(--text-muted); }
+.crm-point-next .crm-point-kg { color: var(--text-muted); font-weight: 600; }
+.crm-gap-next { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+
+.crm-rule { height: 1px; background: var(--border); margin: 14px 0; }
+.crm-forecast-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.crm-forecast-table th {
+    text-align: start; color: var(--text-muted); font-weight: 500;
+    font-size: 0.68rem; padding-bottom: 6px; border: 0;
+}
+.crm-forecast-table td { padding: 5px 0; border: 0; font-variant-numeric: tabular-nums; }
+.crm-forecast-table tfoot td { border-top: 1px solid var(--border); padding-top: 8px; font-weight: 700; }
+.crm-forecast-note { margin-top: auto; padding-top: 12px; font-size: 0.72rem; line-height: 1.6; }

@@ -921,12 +921,227 @@ function crmpgCoffeeListHtml(coffee, limit = 5) {
         </div>`).join('');
 }
 
-function crmpgOpenCustomer(customerId) {
+// Filter periode hanya menyaring KOLOM KIRI (kg dari waktu ke waktu + apa yang
+// mereka beli). Kolom kanan sengaja tidak ikut: ritme dan perkiraan selalu
+// menjawab "apa yang terjadi berikutnya", dan menyaringnya dengan "year to
+// date" akan menghasilkan ramalan dari order basi — angka yang terlihat presisi
+// tapi salah.
+let _crmpgModalPeriod = 'all';
+
+const CRMPG_PERIOD_META = [
+    { id: 'all',     key: 'crm_period_all',     fallback: 'All time' },
+    { id: 'ytd',     key: 'crm_period_ytd',     fallback: 'Year to date' },
+    { id: 'monthly', key: 'crm_period_monthly', fallback: 'Monthly' },
+    { id: 'mtd',     key: 'crm_period_mtd',     fallback: 'Month to date' }
+];
+
+function crmpgMonthKeysBetween(fromKey, toKey) {
+    const out = [];
+    let [y, m] = fromKey.split('-').map(Number);
+    const [ty, tm] = toKey.split('-').map(Number);
+    // Jaga-jaga terhadap data bertanggal aneh: setahun penuh grafik sudah
+    // banyak, 240 batang berarti ada yang salah di datanya.
+    while ((y < ty || (y === ty && m <= tm)) && out.length < 240) {
+        out.push(y + '-' + String(m).padStart(2, '0'));
+        m++; if (m > 12) { m = 1; y++; }
+    }
+    return out;
+}
+
+function crmpgMixOfOrders(orders) {
+    const data = _crmpgData || { items: [] };
+    const ids = new Set(orders.map(o => o.id));
+    const mix = {};
+    (data.items || []).forEach(i => {
+        if (!ids.has(i.request_order_id)) return;
+        const kg = (parseInt(i.quantity_requested) || 0) * (parseInt(i.bag_size_g) || 0) / 1000;
+        if (!kg) return;
+        const name = crmpgCoffeeLabel(i, data);
+        mix[name] = (mix[name] || 0) + kg;
+    });
+    return mix;
+}
+
+// Semua yang berubah mengikuti filter periode, dihitung di satu tempat.
+function crmpgPeriodData(r, period) {
+    const today = todayDateStr();
+    const thisMonth = today.slice(0, 7);
+    let orders, buckets, label, range;
+
+    if (period === 'mtd') {
+        // "Setiap hari yang ada ordernya" — hari kosong tidak diberi batang,
+        // jadi tiga order menghasilkan tiga batang, bukan tiga puluh.
+        orders = r.shipped.filter(o => o.date.slice(0, 7) === thisMonth);
+        buckets = orders.map(o => ({ label: crmpgShortDate(o.date), kg: o.kg }));
+        label = crmT('crm_kg_per_day', 'kg per day · days with an order');
+        range = crmpgShortDate(thisMonth + '-01') + ' – ' + crmpgShortDate(today);
+    } else {
+        let firstKey;
+        if (period === 'ytd') {
+            firstKey = today.slice(0, 4) + '-01';
+            range = crmpgShortDate(firstKey + '-01') + ' – ' + crmpgShortDate(today);
+        } else if (period === 'monthly') {
+            const d = new Date(today + 'T00:00:00');
+            d.setMonth(d.getMonth() - 11);
+            firstKey = d.toISOString().slice(0, 7);
+            range = crmT('crm_last_12_months', 'last 12 months');
+        } else {
+            firstKey = (r.shipped[0] ? r.shipped[0].date : today).slice(0, 7);
+            range = r.shipped.length
+                ? crmT('crm_since', 'since {d}').replace('{d}', crmpgShortDate(r.shipped[0].date))
+                : '';
+        }
+        const keys = crmpgMonthKeysBetween(firstKey, thisMonth);
+        const keySet = new Set(keys);
+        orders = r.shipped.filter(o => keySet.has(o.date.slice(0, 7)));
+        // Bulan kosong tetap diberi batang: kalau dihapus, masa sepi terbaca
+        // seolah tidak pernah ada.
+        buckets = keys.map(k => ({
+            label: CRMPG_MONTHS[parseInt(k.slice(5, 7), 10) - 1] +
+                   (k.slice(0, 4) !== today.slice(0, 4) ? " '" + k.slice(2, 4) : ''),
+            kg: r.shipped.filter(o => o.date.slice(0, 7) === k).reduce((s, o) => s + o.kg, 0)
+        }));
+        label = crmT('crm_kg_per_month', 'kg per month');
+    }
+
+    return {
+        buckets, label, range,
+        mix: crmpgMixOfOrders(orders),
+        count: orders.length,
+        total: orders.reduce((s, o) => s + o.kg, 0)
+    };
+}
+
+function crmpgBarsFromBuckets(buckets) {
+    if (!buckets.length) {
+        return `<div class="crm-muted" style="text-align:center;padding:24px 0">
+            ${crmpgEsc(crmT('crm_no_order_period', 'No order in this period.'))}</div>`;
+    }
+    const max = Math.max(...buckets.map(b => b.kg), 1);
+    return `<div class="crm-bars">` + buckets.map(b => `
+        <div class="crm-bar-col" title="${crmpgEsc(b.label)}: ${crmpgNum(b.kg)} kg">
+            <div class="crm-bar-val">${crmpgNum(b.kg)}</div>
+            <div class="crm-bar" style="height:${Math.max(2, Math.round((b.kg / max) * 100))}%"></div>
+            <div class="crm-bar-label">${crmpgEsc(b.label)}</div>
+        </div>`).join('') + `</div>`;
+}
+
+function crmpgLeftColumnHtml(r, period) {
+    const d = crmpgPeriodData(r, period);
+    return `
+        <div class="crm-periods">
+            ${CRMPG_PERIOD_META.map(p => `
+                <button class="btn btn-secondary btn-sm crm-period${p.id === period ? ' active' : ''}"
+                        onclick="crmpgSetPeriod(${r.id}, '${p.id}')">${crmpgEsc(crmT(p.key, p.fallback))}</button>`).join('')}
+            <span class="crm-range crm-muted">${crmpgEsc(d.range)}</span>
+        </div>
+
+        <div class="crm-card crm-hug">
+            <div class="crm-label">${crmpgEsc(d.label)}</div>
+            ${crmpgBarsFromBuckets(d.buckets)}
+        </div>
+
+        <div class="crm-card crm-fill">
+            <div class="crm-label">${crmpgEsc(crmT('crm_what_they_buy', 'What they buy · by kg'))}</div>
+            ${crmpgCoffeeListHtml(d.mix)}
+            <div class="crm-period-total crm-muted">${crmpgEsc(crmpgPeriodSummary(d))}</div>
+        </div>`;
+}
+
+function crmpgPeriodSummary(d) {
+    if (!d.count) return crmT('crm_no_order_period', 'No order in this period.');
+    const key = d.count === 1 ? 'crm_period_summary_one' : 'crm_period_summary';
+    const fallback = d.count === 1
+        ? '1 order · {kg} kg in this period'
+        : '{n} orders · {kg} kg in this period';
+    return crmT(key, fallback).replace('{n}', d.count).replace('{kg}', crmpgNum(d.total));
+}
+
+function crmpgSetPeriod(customerId, period) {
     const r = _crmpgRows.find(x => x.id === customerId);
-    if (!r) return;
+    const box = document.getElementById('crm-cust-left');
+    if (!r || !box) return;
+    _crmpgModalPeriod = period;
+    box.innerHTML = crmpgLeftColumnHtml(r, period);
+}
+
+// Ritme: tiap titik membawa kg ordernya. Titik terakhir adalah order yang
+// DIPERKIRAKAN — digambar berongga supaya tidak pernah terbaca sebagai order
+// yang sudah terjadi.
+function crmpgRhythmHtml(r) {
+    if (!r.orders.length) {
+        return `<div class="crm-muted">${crmpgEsc(crmT('crm_no_history', 'no history yet'))}</div>`;
+    }
+    const recent = r.orders.slice(-6);
+    let html = recent.map((o, i) => {
+        const gap = i > 0
+            ? Math.round((new Date(o.date) - new Date(recent[i - 1].date)) / CRMPG_DAY_MS)
+            : null;
+        return (gap != null ? `<span class="crm-gap">${gap} d</span>` : '') + `
+            <span class="crm-point">
+                <span class="crm-point-kg">${crmpgNum(o.kg)}</span>
+                <span class="crm-dot-order"></span>
+                <span class="crm-point-date">${crmpgShortDate(o.date)}</span>
+            </span>`;
+    }).join('');
 
     const p = r.predict;
-    const forecast = p.ok ? `
+    if (p.ok) {
+        const gap = daysBetween(r.lastOrder, p.nextDate);
+        html += `<span class="crm-gap crm-gap-next">${gap} d</span>
+            <span class="crm-point crm-point-next">
+                <span class="crm-point-kg">${p.expectedKg ? '~' + crmpgNum(p.expectedKg) : '?'}</span>
+                <span class="crm-dot-order"></span>
+                <span class="crm-point-date">${crmpgShortDate(p.nextDate)}</span>
+            </span>`;
+    }
+    return `<div class="crm-cadence">${html}</div>`;
+}
+
+// Perkiraan order berikutnya. Kartu ini sekarang setinggi sisa kolom, jadi
+// muat memuat rincian kopinya — bukan lagi tanggal dan berat di ruang kosong.
+function crmpgForecastHtml(r) {
+    const p = r.predict;
+    if (!p.ok) {
+        return `<div class="crm-label">${crmpgEsc(crmT('crm_next_order', 'Next order — estimate'))}</div>
+            <div class="crm-muted">${crmpgEsc(
+                p.reason === 'dormant'
+                    ? crmT('crm_dormant_note', 'No estimate: this customer has been quiet for {n} days, well past their usual rhythm.').replace('{n}', p.quietDays)
+                    : crmT('crm_few_note', 'No estimate yet: a reliable date needs at least 3 orders.'))}</div>`;
+    }
+
+    const last3 = r.shipped.slice(-3);
+    const mix = crmpgMixOfOrders(last3);
+    const mixTotal = Object.values(mix).reduce((s, v) => s + v, 0);
+    const expected = p.expectedKg || 0;
+
+    let table = '';
+    if (mixTotal > 0 && expected > 0) {
+        const rows = Object.entries(mix).sort((a, b) => b[1] - a[1]).map(([name, kg]) => {
+            const share = kg / mixTotal;
+            return `<tr>
+                <td>${crmpgEsc(name)}</td>
+                <td class="crm-right"><b>${crmpgNum(expected * share)}</b></td>
+                <td class="crm-right crm-muted">${Math.round(share * 100)}%</td>
+            </tr>`;
+        }).join('');
+        table = `
+            <div class="crm-label">${crmpgEsc(crmT('crm_likely_order', 'What they will most likely order'))}</div>
+            <table class="crm-forecast-table">
+                <thead><tr>
+                    <th>${crmpgEsc(crmT('crm_coffee', 'Coffee'))}</th>
+                    <th class="crm-right">kg</th>
+                    <th class="crm-right">${crmpgEsc(crmT('crm_share', 'Share'))}</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+                <tfoot><tr>
+                    <td><b>${crmpgEsc(crmT('crm_total', 'Total'))}</b></td>
+                    <td class="crm-right"><b>${crmpgNum(expected)}</b></td><td></td>
+                </tr></tfoot>
+            </table>`;
+    }
+
+    return `
         <div class="crm-forecast">
             <div>
                 <div class="crm-label">${crmpgEsc(crmT('crm_next_order', 'Next order — estimate'))}</div>
@@ -936,27 +1151,25 @@ function crmpgOpenCustomer(customerId) {
             </div>
             <div class="crm-right-block">
                 <div class="crm-label">${crmpgEsc(crmT('crm_expected_size', 'Expected size'))}</div>
-                <div class="crm-big">${p.expectedKg ? '≈ ' + crmpgNum(p.expectedKg) + ' kg' : '—'}</div>
+                <div class="crm-big">${expected ? '≈ ' + crmpgNum(expected) + ' kg' : '—'}</div>
                 <div class="crm-muted">${p.kgLow != null ? crmpgNum(p.kgLow) + '–' + crmpgNum(p.kgHigh) + ' kg' : ''}</div>
             </div>
         </div>
-        <div class="crm-muted crm-sub">${crmpgEsc(
+        ${table ? '<div class="crm-rule"></div>' + table : ''}
+        <div class="crm-forecast-note crm-muted">${crmpgEsc(
             crmT('crm_method_note', 'Based on {n} past orders, method: {m}.')
                 .replace('{n}', p.orderCount)
                 .replace('{m}', p.method === 'mixed'
                     ? crmT('crm_method_mixed', 'order rhythm + consumption rate, weighted by this customer\'s own past accuracy')
-                    : crmT('crm_method_rhythm', 'order rhythm only — under 6 orders the mix stays off')))}</div>`
-        : `<div class="crm-muted">${crmpgEsc(
-            p.reason === 'dormant'
-                ? crmT('crm_dormant_note', 'No estimate: this customer has been quiet for {n} days, well past their usual rhythm.').replace('{n}', p.quietDays)
-                : crmT('crm_few_note', 'No estimate yet: a reliable date needs at least 3 orders.'))}</div>`;
+                    : crmT('crm_method_rhythm', 'order rhythm only — under 6 orders the mix stays off')))}
+            ${mixTotal > 0 ? crmpgEsc(crmT('crm_mix_source', 'Size and coffee split taken from the last {n} orders ({kg} kg).')
+                .replace('{n}', last3.length).replace('{kg}', crmpgNum(mixTotal))) : ''}</div>`;
+}
 
-    const rhythmStrip = r.orders.length > 1 ? `
-        <div class="crm-cadence">${r.orders.slice(-6).map((o, i, arr) => {
-            const gap = i > 0 ? Math.round((new Date(o.date) - new Date(arr[i - 1].date)) / CRMPG_DAY_MS) : null;
-            return (gap != null ? `<span class="crm-gap">${gap} d</span>` : '') +
-                `<span class="crm-dot-order" title="${o.date} · ${crmpgNum(o.kg)} kg"></span>`;
-        }).join('')}</div>` : '';
+function crmpgOpenCustomer(customerId) {
+    const r = _crmpgRows.find(x => x.id === customerId);
+    if (!r) return;
+    _crmpgModalPeriod = 'all';
 
     openModal(r.name, `
         <div class="crm-modal">
@@ -983,22 +1196,21 @@ function crmpgOpenCustomer(customerId) {
                     <div class="crm-stat"><b>${crmpgShortDate(r.lastOrder)}</b><span>${crmpgEsc(crmT('crm_last_order', 'last order'))}</span></div>
                 </div>
 
-                <div class="crm-two">
-                    <div class="crm-card">
-                        <div class="crm-label">${crmpgEsc(crmT('crm_kg_per_month', 'kg per month'))}</div>
-                        ${crmpgBarsHtml(crmpgMonthLabels(r.months), r.monthly)}
+                <div class="crm-cols">
+                    <!-- Kiri: ikut filter periode -->
+                    <div class="crm-stack" id="crm-cust-left">
+                        ${crmpgLeftColumnHtml(r, _crmpgModalPeriod)}
                     </div>
-                    <div class="crm-card">${forecast}</div>
-                </div>
 
-                <div class="crm-two">
-                    <div class="crm-card">
-                        <div class="crm-label">${crmpgEsc(crmT('crm_what_they_buy', 'What they buy · by kg'))}</div>
-                        ${crmpgCoffeeListHtml(r.coffee)}
-                    </div>
-                    <div class="crm-card">
-                        <div class="crm-label">${crmpgEsc(crmT('crm_order_rhythm', 'Order rhythm — gaps between orders'))}</div>
-                        ${rhythmStrip || `<div class="crm-muted">${crmpgEsc(crmT('crm_no_history', 'no history yet'))}</div>`}
+                    <!-- Kanan: ritme sekecil isinya, perkiraan mengisi sisanya -->
+                    <div class="crm-stack">
+                        <div class="crm-card crm-hug">
+                            <div class="crm-label">${crmpgEsc(crmT('crm_order_rhythm_kg', 'Order rhythm — kg per order'))}</div>
+                            ${crmpgRhythmHtml(r)}
+                        </div>
+                        <div class="crm-card crm-fill">
+                            ${crmpgForecastHtml(r)}
+                        </div>
                     </div>
                 </div>
             </div>
