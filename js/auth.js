@@ -136,10 +136,14 @@ const SECTION_PERMISSIONS = {
     'sec-other-items': 'other_items_view',
     'sec-roasting': 'roasting_view',
     'sec-packing': 'packing_view',
-    'sec-customers': ['customer_view'],
-    // CRM_PAGE_PLAN.md §5.1 — satu izin untuk seluruh halaman. Sengaja TIDAK
-    // ada di PERMISSION_FALLBACKS: halaman ini harus dinyalakan sadar per role.
-    'sec-crm': 'crm_manage',
+    // Menu Customers dilebur ke CRM (2026-09-27). Halaman ini kini punya DUA
+    // izin, satu per tab: customer_view membuka tab Customer (direktori yang
+    // dulu jadi menu sendiri), crm_manage membuka tab Performance. Array = OR,
+    // jadi salah satunya sudah cukup untuk mencapai sectionnya; tombol tabnya
+    // sendiri disaring TAB_PERMISSIONS di js/app.js.
+    // crm_manage sengaja TIDAK ada di PERMISSION_FALLBACKS — harus dinyalakan
+    // sadar per role.
+    'sec-crm': ['customer_view', 'crm_manage'],
     'sec-handover': ['sales_request_view', 'sales_request_view_own', 'dispatch_approval_view'],
     // PURCHASE_REQUEST_PLAN.md §5.1: either key reaches the section (Approval
     // tab itself is hidden per-key inside — §3.6), same array-OR shape as
@@ -382,7 +386,7 @@ function getFirstAllowedSection() {
         'sec-other-items',
         'sec-roasting',
         'sec-packing',
-        'sec-customers',
+        'sec-crm',
         'sec-handover',
         'sec-purchasing',
         'sec-reports',

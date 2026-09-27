@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=34">
+    <link rel="stylesheet" href="css/styles.css?v=35">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -287,10 +287,6 @@
                 <li class="menu-item" data-target="sec-packing">
                     <i class="icon-archive"></i>
                     <span data-i18n="nav_packing">Packing</span>
-                </li>
-                <li class="menu-item" data-target="sec-customers">
-                    <i class="icon-users"></i>
-                    <span data-i18n="nav_customers">Customers</span>
                 </li>
                 <li class="menu-item" data-target="sec-crm">
                     <i class="icon-user-check"></i>
@@ -1468,14 +1464,27 @@
             <!-- ========================================== -->
             <!-- SECTION: CUSTOMER MANAGEMENT              -->
             <!-- ========================================== -->
-            <section id="sec-customers" class="page-section hidden">
+            <!-- ========================================== -->
+            <!-- SECTION 5: ITEM REQUESTS (SALES REQUESTS) -->
+            <!-- ========================================== -->
+            <!-- ========================================== -->
+            <!-- SECTION: CRM MANAGEMENT (CRM_PAGE_PLAN.md) -->
+            <!-- Halaman KEDUA untuk customer, terpisah dari #sec-customers:
+                 yang di atas untuk sales, yang ini untuk management.
+                 Satu izin: crm_manage. -->
+            <!-- ========================================== -->
+            <section id="sec-crm" class="page-section hidden">
                 <div class="tab-container">
                     <div class="tab-headers">
-                        <button class="tab-btn active" data-tab="tab-cust-directory" data-i18n="tab_cust_directory">Customer Directory</button>
-                        <button class="tab-btn" data-tab="tab-cust-crm" data-i18n="tab_cust_crm">CRM Insights</button>
+                        <button class="tab-btn active" data-tab="tab-crm-customer" data-i18n="tab_crm_customer">Customer</button>
+                        <button class="tab-btn" data-tab="tab-crm-performance" data-i18n="tab_crm_performance">Performance</button>
                     </div>
 
-                    <div id="tab-cust-directory" class="tab-content">
+                    <!-- TAB 1: Customers -->
+                    <!-- TAB 1: Customer — direktori customer, pindahan dari menu Customers.
+                         Izinnya tetap customer_view, jadi sales tidak kehilangan apa pun
+                         saat menunya dihapus dari sidebar. -->
+                    <div id="tab-crm-customer" class="tab-content">
                         <div class="card">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
                                 <h3 class="card-title" style="margin-bottom: 0;">Customer Directory</h3>
@@ -1552,55 +1561,19 @@
                         </div>
                     </div>
 
-                    <div id="tab-cust-crm" class="tab-content hidden">
-                        <div style="font-size:0.7rem; font-weight:700; letter-spacing:0.03em; color:var(--text-muted); margin-bottom:8px;" data-i18n="lbl_crm_segment_group">SEGMENT</div>
-                        <div id="cust-crm-seg-tiles" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:16px;"></div>
-
-                        <div style="font-size:0.7rem; font-weight:700; letter-spacing:0.03em; color:var(--text-muted); margin-bottom:8px;" data-i18n="lbl_crm_type_group">TYPE</div>
-                        <div id="cust-crm-type-tiles" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; margin-bottom:20px;"></div>
-
-                        <div class="card">
-                            <div class="table-container">
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th data-i18n="col_customer_name">Customer Name</th>
-                                            <th data-i18n="col_customer_type">Type</th>
-                                            <th data-i18n="col_crm_segment">Segment</th>
-                                            <th data-i18n="col_crm_reorder">Reorder</th>
-                                            <th data-i18n="col_crm_last_order">Last order</th>
-                                            <th style="text-align:right;" data-i18n="col_crm_kg_90d">Kg (90d)</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="cust-crm-table-body">
-                                        <!-- Dynamic CRM Insights rows -->
-                                    </tbody>
-                                </table>
-                            </div>
-                            <div id="cust-crm-table-caption" style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding-top:10px;"></div>
+                    <!-- TAB 2: Performance — halaman CRM, digerbangi crm_manage.
+                         Sub-tabnya TIDAK memakai .tab-btn/.tab-content: restoreLastTab()
+                         menyapu seluruh .tab-btn dalam satu section, sehingga tab
+                         bersarang akan saling mematikan. Dikelola js/crm.js sendiri. -->
+                    <div id="tab-crm-performance" class="tab-content hidden">
+                        <div class="crm-subtabs">
+                            <button class="btn btn-secondary btn-sm crm-subtab active"
+                                    onclick="crmpgSubTab('tab-crm-customers')" data-i18n="crm_sub_by_customer">By customer</button>
+                            <button class="btn btn-secondary btn-sm crm-subtab"
+                                    onclick="crmpgSubTab('tab-crm-sales')" data-i18n="crm_sub_by_sales">By sales</button>
                         </div>
-                    </div>
-                </div>
-            </section>
 
-            <!-- ========================================== -->
-            <!-- SECTION 5: ITEM REQUESTS (SALES REQUESTS) -->
-            <!-- ========================================== -->
-            <!-- ========================================== -->
-            <!-- SECTION: CRM MANAGEMENT (CRM_PAGE_PLAN.md) -->
-            <!-- Halaman KEDUA untuk customer, terpisah dari #sec-customers:
-                 yang di atas untuk sales, yang ini untuk management.
-                 Satu izin: crm_manage. -->
-            <!-- ========================================== -->
-            <section id="sec-crm" class="page-section hidden">
-                <div class="tab-container">
-                    <div class="tab-headers">
-                        <button class="tab-btn active" data-tab="tab-crm-customers" data-i18n="tab_crm_customers">Customers</button>
-                        <button class="tab-btn" data-tab="tab-crm-sales" data-i18n="tab_crm_sales">Sales Performance</button>
-                    </div>
-
-                    <!-- TAB 1: Customers -->
-                    <div id="tab-crm-customers" class="tab-content">
+                    <div id="tab-crm-customers" class="crm-subpane">
                         <div class="card">
                             <div class="crm-tile-group">
                                 <span class="crm-tile-label" data-i18n="crm_by_sales">By sales</span>
@@ -1658,7 +1631,7 @@
                     </div>
 
                     <!-- TAB 2: Sales Performance -->
-                    <div id="tab-crm-sales" class="tab-content hidden">
+                    <div id="tab-crm-sales" class="crm-subpane hidden">
                         <div class="card">
                             <div class="crm-table-head">
                                 <h3 class="card-title" style="margin-bottom:0;" data-i18n="crm_side_by_side">Side by side</h3>
@@ -1684,6 +1657,7 @@
                                 </table>
                             </div>
                         </div>
+                    </div>
                     </div>
                 </div>
             </section>
@@ -3132,21 +3106,21 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=88"></script>
+    <script src="js/translations.js?v=89"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
     <script src="js/db.js?v=5"></script>
-    <script src="js/auth.js?v=20"></script>
+    <script src="js/auth.js?v=21"></script>
     <script src="js/greenbean.js?v=24"></script>
     <script src="js/roasting.js?v=47"></script>
     <script src="js/packing.js?v=142"></script>
-    <script src="js/sales.js?v=61"></script>
-    <script src="js/crm.js?v=8"></script>
+    <script src="js/sales.js?v=62"></script>
+    <script src="js/crm.js?v=9"></script>
     <script src="js/otheritems.js?v=1"></script>
     <script src="js/settings.js?v=29"></script>
     <script src="js/tracking.js?v=8"></script>
     <script src="js/purchasing.js?v=3"></script>
-    <script src="js/app.js?v=124"></script>
+    <script src="js/app.js?v=125"></script>
 </body>
 </html>

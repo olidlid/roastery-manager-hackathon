@@ -5,11 +5,12 @@
      - #sec-customers      -> halaman sales (termasuk sub-tab CRM Insights)
      - #sec-crm (file ini) -> halaman management, satu izin: crm_manage
 
-   Semua nama di file ini diawali crmpg* / _crmpg* dengan sengaja: js/sales.js
-   sudah memakai _crmRows, _crmActiveSeg, renderCrmTable, openCrmCustomerModal
-   di scope global yang SAMA (tidak ada module system di app ini), jadi nama
-   pendek seperti _crmRows di sini akan langsung mematikan seluruh aplikasi
-   dengan "Identifier has already been declared".
+   Semua nama di file ini diawali crmpg* / _crmpg* dengan sengaja. Seluruh file
+   berbagi SATU scope global (tidak ada module system di app ini), jadi nama
+   pendek seperti _crmRows bisa langsung mematikan aplikasi dengan "Identifier
+   has already been declared" begitu file lain memakai nama yang sama — persis
+   yang dulu terjadi dengan sub-tab CRM Insights di js/sales.js (dihapus
+   2026-09-27 saat menu Customers dilebur ke sini).
 ============================================================================ */
 
 // --- Status order: dua aturan berbeda, disengaja (CRM_PAGE_PLAN.md §6.1) ---
@@ -480,10 +481,59 @@ function crmpgBuildSalesRows(rows, data) {
 /* ---------------------------------------------------------------------------
    5. Entry point section + tab
 --------------------------------------------------------------------------- */
+// Dipanggil app.js saat section CRM dibuka lewat menu.
+async function loadCrmSectionEntry() {
+    // Tombol tab yang disembunyikan enforceGranularPermissions() tetap bisa
+    // berstatus .active (dan panelnya tetap terlihat) kalau tidak diperiksa —
+    // user tanpa crm_manage akan melihat isi Performance meski tombolnya hilang.
+    const buttons = [...document.querySelectorAll('#sec-crm .tab-headers .tab-btn')];
+    const visible = buttons.filter(b => b.style.display !== 'none');
+    const active = buttons.find(b => b.classList.contains('active'));
+    if (visible.length && (!active || active.style.display === 'none')) {
+        crmpgActivateMainTab(visible[0].getAttribute('data-tab'));
+    }
+
+    const current = document.querySelector('#sec-crm .tab-headers .tab-btn.active');
+    await loadCrmMainTab(current ? current.getAttribute('data-tab') : 'tab-crm-customer', true);
+}
+
+function crmpgActivateMainTab(tabId) {
+    document.querySelectorAll('#sec-crm .tab-headers .tab-btn').forEach(b =>
+        b.classList.toggle('active', b.getAttribute('data-tab') === tabId));
+    document.querySelectorAll('#sec-crm > .tab-container > .tab-content').forEach(c =>
+        c.classList.toggle('hidden', c.id !== tabId));
+}
+
+// Tab utama: Customer (direktori pindahan dari menu lama) atau Performance.
+async function loadCrmMainTab(tabId, forceRefresh) {
+    if (tabId === 'tab-crm-customer') {
+        await loadCustomersSection(undefined, { refreshStats: !!forceRefresh });
+        return;
+    }
+    const activeSub = document.querySelector('#sec-crm .crm-subtab.active');
+    await loadCrmTabSpecificData(
+        activeSub ? crmpgSubPaneOf(activeSub) : 'tab-crm-customers', forceRefresh);
+}
+
+function crmpgSubPaneOf(btn) {
+    const m = (btn.getAttribute('onclick') || '').match(/crmpgSubTab\('([^']+)'\)/);
+    return m ? m[1] : 'tab-crm-customers';
+}
+
+// Sub-tab di dalam Performance. Sengaja tidak memakai .tab-btn/.tab-content:
+// restoreLastTab() menyapu seluruh .tab-btn dalam satu section, sehingga tab
+// bersarang akan saling mematikan.
+async function crmpgSubTab(paneId) {
+    document.querySelectorAll('#sec-crm .crm-subtab').forEach(b =>
+        b.classList.toggle('active', crmpgSubPaneOf(b) === paneId));
+    document.querySelectorAll('#sec-crm .crm-subpane').forEach(c =>
+        c.classList.toggle('hidden', c.id !== paneId));
+    await loadCrmTabSpecificData(paneId);
+}
+
+// Nama lama dipertahankan supaya pemanggil lama tidak putus.
 async function loadCrmSection(forceRefresh) {
-    const activeBtn = document.querySelector('#sec-crm .tab-btn.active');
-    const tabId = activeBtn ? activeBtn.getAttribute('data-tab') : 'tab-crm-customers';
-    await loadCrmTabSpecificData(tabId, forceRefresh);
+    await loadCrmSectionEntry(forceRefresh);
 }
 
 async function loadCrmTabSpecificData(tabId, forceRefresh) {
@@ -1513,4 +1563,7 @@ function crmpgOpenSales(key, activePaneId) {
 
 // Dipanggil dari app.js saat section dibuka lewat menu.
 window.loadCrmSection = loadCrmSection;
+window.loadCrmSectionEntry = loadCrmSectionEntry;
+window.loadCrmMainTab = loadCrmMainTab;
 window.loadCrmTabSpecificData = loadCrmTabSpecificData;
+window.crmpgSubTab = crmpgSubTab;

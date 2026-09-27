@@ -2252,3 +2252,9 @@ tbody tr:hover {
 /* Tombol kembali di modal customer — hanya muncul kalau modal itu dibuka
    dari daftar customer milik seorang sales. */
 .crm-back { margin-bottom: 10px; }
+
+/* Sub-tab di dalam tab Performance halaman CRM. Sengaja BUKAN .tab-btn:
+   restoreLastTab() menyapu seluruh .tab-btn dalam satu section, sehingga tab
+   bersarang akan saling mematikan. */
+.crm-subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.crm-subtab.active { background: var(--primary); border-color: var(--primary); color: var(--primary-contrast); }

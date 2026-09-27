@@ -521,8 +521,7 @@ const PAGE_METADATA = {
     'sec-settings': { title: 'System Settings', subtitle: 'Configure branding, printing layouts, and connection endpoints' },
     'sec-reports': { title: 'Reports', subtitle: '' },
     'sec-handover': { title: 'Handover', subtitle: '' },
-    'sec-customers': { title: 'Customer Management', subtitle: 'Manage wholesale and retail customers' },
-    'sec-crm': { title: 'CRM', subtitle: 'Customers grouped by sales, when each is likely to reorder, and how the team is doing' },
+    'sec-crm': { title: 'CRM', subtitle: 'Customer directory, reorder timing, and how the team is doing' },
     'sec-tracking': { title: 'Tracking', subtitle: 'Look up a lot barcode to trace a pack back to its coffee, process, supplier and dates' }
 };
 
@@ -1202,7 +1201,7 @@ crmTabBtns.forEach(btn => {
         });
 
         saveLastTab('sec-crm', targetTab);
-        await loadCrmTabSpecificData(targetTab);
+        await loadCrmMainTab(targetTab);
     });
 });
 
@@ -1231,32 +1230,7 @@ reportsTabBtns.forEach(btn => {
 });
 
 // --- SUB-TABS MANAGEMENT FOR CUSTOMERS (Directory | CRM Insights) ---
-const customersTabBtns = document.querySelectorAll('#sec-customers .tab-btn');
-const customersTabContents = document.querySelectorAll('#sec-customers .tab-content');
-
-customersTabBtns.forEach(btn => {
-    btn.addEventListener('click', async () => {
-        const targetTab = btn.getAttribute('data-tab');
-
-        customersTabBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        customersTabContents.forEach(content => {
-            if (content.id === targetTab) {
-                content.classList.remove('hidden');
-            } else {
-                content.classList.add('hidden');
-            }
-        });
-
-        saveLastTab('sec-customers', targetTab);
-        if (targetTab === 'tab-cust-crm') {
-            await loadCrmInsightsTab();
-        } else {
-            await loadCustomersSection();
-        }
-    });
-});
+// Wiring tab #sec-customers dihapus 2026-09-27: halamannya dilebur ke CRM.
 
 // Customers tab has 4 report views crammed into one page; a dropdown swaps
 // which one is visible instead of showing all of them stacked at once.
@@ -1324,16 +1298,6 @@ async function loadSectionData(sectionId) {
                 await loadPackingRecordsTable();
             }
             break;
-        case 'sec-customers': {
-            const activeCustTabBtn = document.querySelector('#sec-customers .tab-btn.active');
-            const activeCustTab = activeCustTabBtn ? activeCustTabBtn.getAttribute('data-tab') : 'tab-cust-directory';
-            if (activeCustTab === 'tab-cust-crm') {
-                await loadCrmInsightsTab(true);
-            } else {
-                await loadCustomersSection(undefined, { refreshStats: true });
-            }
-            break;
-        }
         case 'sec-tracking':
             loadTrackingSection();
             break;
@@ -1349,14 +1313,9 @@ async function loadSectionData(sectionId) {
             // js/sales.js per user request 2026-08-31, so it triggers on
             // that specific action instead of every visit to this section.
             break;
-        case 'sec-crm': {
-            const activeCrmTabBtn = document.querySelector('#sec-crm .tab-btn.active');
-            await loadCrmTabSpecificData(
-                activeCrmTabBtn ? activeCrmTabBtn.getAttribute('data-tab') : 'tab-crm-customers',
-                true   // masuk lewat menu = ambil data segar
-            );
+        case 'sec-crm':
+            await loadCrmSectionEntry();
             break;
-        }
         case 'sec-purchasing':
             const activePurchasingTabBtn = document.querySelector('#sec-purchasing .tab-btn.active');
             if (activePurchasingTabBtn) {
@@ -1409,6 +1368,10 @@ function enforceGranularPermissions() {
         'tab-sett-system': 'settings_system',
         // Reports tabs
         'tab-rep-stockopname': 'reports_stockopname_view',
+        // CRM: satu tab satu izin. Tanpa crm_manage, user hanya melihat tab
+        // Customer — direktori yang dulu berdiri sendiri di sidebar.
+        'tab-crm-customer': 'customer_view',
+        'tab-crm-performance': 'crm_manage',
     };
 
     // Hide tab buttons based on permissions (data-tab attribute)
@@ -1543,7 +1506,7 @@ function enforceGranularPermissions() {
 
     // --- CUSTOMER BUTTONS ---
     // "Add Customer" button in HTML (onclick="openCustomerModal()")
-    const custSection = document.getElementById('sec-customers');
+    const custSection = document.getElementById('tab-crm-customer');
     if (custSection) {
         const addCustBtn = custSection.querySelector('[onclick="openCustomerModal()"]');
         if (addCustBtn) addCustBtn.style.display = hasPermission('customer_add') ? '' : 'none';
