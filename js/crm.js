@@ -662,12 +662,30 @@ function crmpgStatusChip(status) {
     return `<span class="crm-chip ${m.cls}">${crmpgEsc(crmT(m.key, m.fallback))}</span>`;
 }
 
+// Satu tempat untuk kalimat waktu, supaya tabel dan modal tidak pernah
+// berbeda kata — dan supaya "1 days overdue" tidak pernah terbaca lagi.
+function crmpgDueText(daysUntil) {
+    if (daysUntil < 0) {
+        const n = Math.abs(daysUntil);
+        return n === 1 ? crmT('crm_overdue_day', '1 day overdue')
+                       : crmT('crm_overdue_days', '{n} days overdue').replace('{n}', n);
+    }
+    if (daysUntil === 0) return crmT('crm_due_today', 'due today');
+    return daysUntil === 1 ? crmT('crm_in_day', 'tomorrow')
+                           : crmT('crm_in_days', 'in {n} days').replace('{n}', daysUntil);
+}
+
+function crmpgQuietText(days) {
+    return days === 1 ? crmT('crm_quiet_day', 'quiet 1 day')
+                      : crmT('crm_quiet_days', 'quiet {n} days').replace('{n}', days);
+}
+
 function crmpgNextOrderCell(r) {
     const p = r.predict;
     if (!p.ok) {
         if (p.reason === 'dormant') {
             return `<span class="crm-muted">${crmpgEsc(crmT('crm_no_estimate', 'no estimate'))}</span>
-                <div class="crm-sub">${crmpgEsc(crmT('crm_quiet_days', 'quiet {n} days').replace('{n}', p.quietDays))}</div>`;
+                <div class="crm-sub">${crmpgEsc(crmpgQuietText(p.quietDays))}</div>`;
         }
         if (p.reason === 'none') {
             return `<span class="crm-muted">—</span>
@@ -677,11 +695,7 @@ function crmpgNextOrderCell(r) {
             <div class="crm-sub">${crmpgEsc(crmT('crm_need_three', 'needs 3 orders'))}</div>`;
     }
 
-    const due = p.daysUntil < 0
-        ? crmT('crm_overdue_days', '{n} days overdue').replace('{n}', Math.abs(p.daysUntil))
-        : (p.daysUntil === 0
-            ? crmT('crm_due_today', 'due today')
-            : crmT('crm_in_days', 'in {n} days').replace('{n}', p.daysUntil));
+    const due = crmpgDueText(p.daysUntil);
     const kgText = p.expectedKg
         ? ` · ~${crmpgNum(p.expectedKg)} ${crmT('crm_kg', 'kg')}`
         : '';
@@ -992,7 +1006,7 @@ function crmpgOpenCustomer(customerId) {
             <div id="crm-cust-journey" class="crm-mpane hidden">
                 ${crmpgJourneyHtml(r)}
             </div>
-        </div>`);
+        </div>`, '1080px');
 }
 
 function crmpgModalTab(btn, paneId) {
@@ -1071,27 +1085,14 @@ function crmpgJourneyHtml(r) {
    10. Tab Sales Performance
 --------------------------------------------------------------------------- */
 function crmpgRenderSalesTab() {
-    const box = document.getElementById('crm-sales-cards');
     const tbody = document.getElementById('crm-sales-table-body');
-    if (!box || !tbody) return;
+    if (!tbody) return;
 
-    const ranked = _crmpgSalesRows.filter(s => s.rankable && !s.unassigned);
-
-    box.innerHTML = ranked.slice(0, 2).map(s => `
-        <div class="crm-card">
-            <div class="crm-modal-head">
-                <div><b style="font-size:16px">${crmpgEsc(s.name)}</b>
-                    <div class="crm-muted">${s.customers.length} ${crmpgEsc(crmT('crm_customers', 'customers'))}</div></div>
-            </div>
-            <div class="crm-stats">
-                <div class="crm-stat"><b>${crmpgNum(s.kgAll)}</b><span>${crmpgEsc(crmT('crm_kg_dispatched', 'kg dispatched'))}</span></div>
-                <div class="crm-stat"><b>${s.ordersAll}</b><span>${crmpgEsc(crmT('crm_orders', 'orders'))}</span></div>
-                <div class="crm-stat"><b>${s.activeCustomers}/${s.customers.length}</b><span>${crmpgEsc(crmT('crm_active_customers', 'active customers'))}</span></div>
-                <div class="crm-stat"><b>${s.repeatRate == null ? '—' : s.repeatRate + '%'}</b><span>${crmpgEsc(crmT('crm_ordered_again', 'ordered again'))}</span></div>
-                <div class="crm-stat"><b>${s.goneQuiet}</b><span>${crmpgEsc(crmT('crm_needs_attention', 'needs attention'))}</span></div>
-                <div class="crm-stat"><b>${crmpgNum(s.kgPerCustomer)}</b><span>${crmpgEsc(crmT('crm_kg_per_customer', 'kg per customer'))}</span></div>
-            </div>
-        </div>`).join('') || `<div class="crm-muted">${crmpgEsc(crmT('crm_no_sales', 'No sales holds any customer yet.'))}</div>`;
+    if (!_crmpgSalesRows.length) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-secondary)">
+            ${crmpgEsc(crmT('crm_no_sales', 'No sales holds any customer yet.'))}</td></tr>`;
+        return;
+    }
 
     tbody.innerHTML = _crmpgSalesRows.map(s => `
         <tr class="${s.rankable ? 'crm-row' : 'crm-row crm-row-muted'}"
@@ -1110,6 +1111,16 @@ function crmpgRenderSalesTab() {
                 ? (s.kgDelta >= 0 ? '+' : '') + crmpgNum(s.kgDelta) + ' kg'
                 : crmpgEsc(crmT('crm_first_period', 'first full period'))}</td>
         </tr>`).join('');
+}
+
+// Kenapa customer ini masuk daftar perhatian. Sempat selalu berbunyi
+// "quiet N days", sehingga customer yang justru akan order lusa terbaca
+// seolah menghilang — kebalikan dari keadaan sebenarnya.
+function crmpgAttentionReason(c) {
+    if (c.status === 'dormant' || c.status === 'slipping') {
+        return c.daysSince != null ? crmpgQuietText(c.daysSince) : '';
+    }
+    return (c.predict && c.predict.ok) ? crmpgDueText(c.predict.daysUntil) : '';
 }
 
 function crmpgOpenSales(key) {
@@ -1165,8 +1176,7 @@ function crmpgOpenSales(key) {
                     ${attention.length ? attention.map(c => `
                         <div class="crm-legend-row">
                             <span><b>${crmpgEsc(c.name)}</b> — ${crmpgStatusChip(c.status)}</span>
-                            <span class="crm-muted">${c.daysSince != null
-                                ? crmpgEsc(crmT('crm_quiet_days', 'quiet {n} days').replace('{n}', c.daysSince)) : ''}</span>
+                            <span class="crm-muted">${crmpgEsc(crmpgAttentionReason(c))}</span>
                             <b>${crmpgNum(c.kgAll)} kg</b>
                         </div>`).join('')
                         : `<div class="crm-muted">${crmpgEsc(crmT('crm_all_on_track', 'Nobody is overdue right now.'))}</div>`}
@@ -1210,7 +1220,7 @@ function crmpgOpenSales(key) {
                         'Left empty on purpose — this one gets designed later. The data it will need is already being recorded, so nothing is lost in the meantime.'))}</div>
                 </div>
             </div>
-        </div>`);
+        </div>`, '1080px');
 }
 
 // Dipanggil dari app.js saat section dibuka lewat menu.
