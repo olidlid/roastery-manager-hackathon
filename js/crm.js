@@ -1178,9 +1178,13 @@ function crmpgBackBarHtml() {
     if (!_crmpgCustomerBackKey) return '';
     const s = _crmpgSalesRows.find(x => x.key === _crmpgCustomerBackKey);
     if (!s) return '';
+    // Nama salesnya tidak diulang di tombol: sudah tertulis di baris "Sales:"
+    // tepat di bawahnya, dan tombol sepanjang satu nama Arab merebut perhatian
+    // dari judul customernya sendiri.
     return `<div class="crm-back">
-        <button class="btn btn-secondary btn-sm" onclick="crmpgBackToSales()">
-            &larr; ${crmpgEsc(crmT('crm_back_to', 'Back to {name}').replace('{name}', s.name))}
+        <button class="btn btn-danger btn-sm" onclick="crmpgBackToSales()"
+                title="${crmpgEsc(crmT('crm_back_to', 'Back to {name}').replace('{name}', s.name))}">
+            &larr; ${crmpgEsc(crmT('crm_back', 'Back'))}
         </button>
     </div>`;
 }
