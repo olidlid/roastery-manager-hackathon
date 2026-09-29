@@ -413,9 +413,7 @@ function renderBlendTracking({ lot, bulk, machine, components, codeDefinitions, 
     const code = bulk.custom_coffee_code || '';
     const def = code ? (codeDefinitions || []).find(d => d.code === code) : null;
     const tagText = isCustom ? stT('trk_tag_custom', 'Custom Blend') : stT('trk_tag_post', 'Post-Blend');
-    titleEl.innerHTML = `${esc(lot.coffee_name || bulk.custom_blend_name || '-')}
-        <span class="badge-post-blend trk-tag">${esc(tagText)}</span>
-        ${code ? `<span class="trk-code-chip">${esc(code)}</span>` : ''}`;
+    titleEl.innerHTML = `<span>${esc(lot.coffee_name || bulk.custom_blend_name || '-')}<span class="badge-post-blend trk-tag">${esc(tagText)}</span></span>${code ? `<span class="trk-code-chip">${esc(code)}</span>` : ''}`;
 
     // Packing date: the packed lot that was searched, else every packed lot
     // made from this production lot.

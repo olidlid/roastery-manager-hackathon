@@ -2262,7 +2262,7 @@ tbody tr:hover {
 /* Tracking — blend result (custom blend / recipe post-blend): the blend's
    own facts, then one table row per component (2026-09-29). */
 .trk-tag { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 6px; vertical-align: middle; margin-left: 8px; }
-.trk-code-chip { float: right; border: 1px solid var(--primary); color: var(--primary); background: var(--primary-glow); border-radius: 8px; padding: 1px 10px; font-size: 0.9rem; font-weight: 600; font-family: monospace; }
+.trk-code-chip { border: 1px solid var(--primary); color: var(--primary); background: var(--primary-glow); border-radius: 8px; padding: 1px 10px; font-size: 0.9rem; font-weight: 600; font-family: monospace; }
 .trk-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; margin: 12px 0 0; }
 .trk-facts div { display: grid; gap: 2px; }
 .trk-facts dt { font-size: 0.75rem; color: var(--text-muted); }
@@ -2278,7 +2278,7 @@ tbody tr:hover {
 .trk-table tfoot td { font-weight: 700; border-top: 1px solid var(--border); border-bottom: none; background-color: rgba(0, 0, 0, 0.08); }
 .trk-table .trk-num { text-align: right; font-family: monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .trk-dash { color: var(--text-muted); }
-.trk-ing { font-weight: 700; }
+.trk-ing { font-weight: 700; min-width: 170px; }
 .trk-ing small { display: block; font-weight: 400; font-size: 0.75rem; color: var(--text-muted); }
 .trk-pill { display: inline-block; font-size: 0.64rem; font-weight: 700; text-transform: uppercase; padding: 1px 7px; border-radius: 999px; margin-bottom: 3px; }
 .trk-pill-bulk, .trk-pill-roast { background: var(--primary-glow); color: var(--primary); }
@@ -2286,7 +2286,7 @@ tbody tr:hover {
 [data-theme="dark"] .trk-pill-packed { color: var(--info); }
 .trk-pill-unreg { background: rgba(180, 83, 9, 0.12); color: #b45309; }
 [data-theme="dark"] .trk-pill-unreg { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
-.trk-lot { display: block; font-family: monospace; font-size: 0.75rem; color: var(--text-secondary); }
+.trk-lot { display: block; white-space: nowrap; font-family: monospace; font-size: 0.75rem; color: var(--text-secondary); }
 .trk-unreg-note { color: var(--text-secondary); }
 .trk-unreg-note b { color: #b45309; }
 [data-theme="dark"] .trk-unreg-note b { color: #fbbf24; }
