@@ -1288,6 +1288,11 @@ async function loadSalesDispatchRequestsTable() {
                 const matchRec = (recipes || []).find(r => r.name === cleanName);
                 if (matchRec) resolvedKey = `Blend-${matchRec.id}-${p.bag_size_g}-${p.machine_id}`;
             }
+            if (!resolvedKey) {
+                // Custom blend stock: free-text name, sells by its code.
+                const viaCode = packedCodeIdentity(p, greenbeans, recipes);
+                if (viaCode) resolvedKey = `${viaCode.type}-${viaCode.coffeeId}-${p.bag_size_g}-${p.machine_id}`;
+            }
             if (resolvedKey) {
                 stockMap.set(resolvedKey, (stockMap.get(resolvedKey) || 0) + (parseInt(p.quantity) || 0));
             }
@@ -1876,6 +1881,11 @@ async function openOrderDetailPopup(orderId, orders, orderItems, greenbeans, rec
                         cId = matchRec.id;
                     }
                 }
+                if (!coffeeType) {
+                    // Custom blend stock: free-text name, sells by its code.
+                    const viaCode = packedCodeIdentity(p, greenbeans, recipes);
+                    if (viaCode) { coffeeType = viaCode.type; cId = viaCode.coffeeId; }
+                }
                 machineId = p.machine_id || null;
             }
             if (coffeeType && cId && machineId) {
@@ -2152,7 +2162,10 @@ async function approveSalesOrder(orderId) {
             const gb = (greenbeans || []).find(g => g.name === cleanName);
             if (gb) return { type: 'Single', name: gb.name };
             const r = (recipes || []).find(rec => rec.name === cleanName);
-            return r ? { type: 'Blend', name: r.name } : null;
+            if (r) return { type: 'Blend', name: r.name };
+            // Custom blend stock: shown under its own blend name.
+            if (p.coffee_code && p.coffee_code_type) return { type: p.coffee_code_type, name: cleanName };
+            return null;
         }
         return null;
     }
@@ -2178,12 +2191,15 @@ async function approveSalesOrder(orderId) {
                 }
                 if (p.custom_coffee_name) {
                     const cleanName = p.custom_coffee_name.replace(/ \(Single\)$/, '').replace(/ \(Blend\)$/, '');
-                    if (type === 'Single') {
-                        const gb = (greenbeans || []).find(g => groupIds.includes(g.id) && g.name === cleanName);
-                        return !!gb;
-                    }
-                    const rec = (recipes || []).find(r => groupIds.includes(r.id) && r.name === cleanName);
-                    return !!rec;
+                    const byName = type === 'Single'
+                        ? (greenbeans || []).some(g => groupIds.includes(g.id) && g.name === cleanName)
+                        : (recipes || []).some(r => groupIds.includes(r.id) && r.name === cleanName);
+                    if (byName) return true;
+                    // Custom blend stock: its name matches nothing, it
+                    // carries the code it sells as instead — only used when
+                    // the name belongs to no coffee at all.
+                    const namedElsewhere = (greenbeans || []).some(g => g.name === cleanName) || (recipes || []).some(r => r.name === cleanName);
+                    return !namedElsewhere && p.coffee_code === item.coffee_code && p.coffee_code_type === type;
                 }
                 return false;
             });
@@ -3231,6 +3247,11 @@ async function openSalesRequestModal(orderId = null) {
                     coffeeType = 'Blend';
                     cId = matchRec.id;
                 }
+            }
+            if (!coffeeType) {
+                // Custom blend stock: free-text name, sells by its code.
+                const viaCode = packedCodeIdentity(p, greenbeans, recipes);
+                if (viaCode) { coffeeType = viaCode.type; cId = viaCode.coffeeId; }
             }
             machineId = p.machine_id || null;
         }

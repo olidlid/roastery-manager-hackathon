@@ -571,7 +571,10 @@ async function loadCustomBlendSection() {
         const kgByLabel = new Map();
         comps.forEach(c => {
             let label = 'Unknown';
-            if (c.source_type === 'Bulk') {
+            if (c.source_type === 'Unregistered') {
+                // Not from inventory (name + source typed in Custom Blend).
+                label = `${c.source_name || 'Unregistered coffee'} (unregistered)`;
+            } else if (c.source_type === 'Bulk') {
                 const src = (bulkList || []).find(b => b.id === c.source_bulk_id);
                 label = src ? src.coffee_name : 'Unknown';
             } else {
@@ -581,9 +584,10 @@ async function loadCustomBlendSection() {
             }
             kgByLabel.set(label, (kgByLabel.get(label) || 0) + (parseFloat(c.kg) || 0));
         });
+        const escHtml = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
         const compSummary = Array.from(kgByLabel.entries()).map(([label, kg]) => {
             const pct = totalKg > 0 ? (kg / totalKg * 100) : 0;
-            return `${label} ${pct.toFixed(0)}%`;
+            return `${escHtml(label)} ${pct.toFixed(0)}%`;
         }).join(' · ');
 
         const dateStr = (bulk.created_at || '').split('T')[0] || '-';

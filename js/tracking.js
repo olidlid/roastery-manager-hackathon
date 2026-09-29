@@ -287,11 +287,22 @@ async function performTrackingSearch(rawCode) {
             compositionEl.classList.remove('hidden');
         } else if (bulk && bulk.is_post_blend) {
             const comps = (postBlendComponents || []).filter(c => c.blend_bulk_id === bulk.id);
+            const escHtml = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
             const rowsHtml = comps.map(c => {
                 let label = 'Unknown';
                 let originLot = null;
+                let unregisteredHtml = null;
 
-                if (c.source_type === 'Bulk') {
+                if (c.source_type === 'Unregistered') {
+                    // Coffee added from outside inventory (Custom Blend,
+                    // 2026-09-29): no bulk card or lot to follow — the trace
+                    // ends at the name and source the user typed.
+                    label = escHtml(c.source_name || 'Unregistered coffee');
+                    unregisteredHtml = `<div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
+                        <span style="color: var(--warning); font-weight: 700;">Unregistered</span> · Source: ${escHtml(c.source_note || '-')}<br>
+                        Not from inventory — no green bean or roast record to trace
+                    </div>`;
+                } else if (c.source_type === 'Bulk') {
                     const srcBulk = (bulkList || []).find(b => b.id === c.source_bulk_id);
                     label = srcBulk ? srcBulk.coffee_name : 'Unknown';
                     // Most recent label ever printed for this source bulk, if any.
@@ -315,7 +326,9 @@ async function performTrackingSearch(rawCode) {
 
                 const kg = parseFloat(c.kg) || 0;
                 let detailHtml = '<span style="color: var(--text-muted); font-size: 0.8rem;">No further trace available</span>';
-                if (originLot) {
+                if (unregisteredHtml) {
+                    detailHtml = unregisteredHtml;
+                } else if (originLot) {
                     const subChain = resolveLotChain(originLot, ctx);
                     detailHtml = `<div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
                         Process: ${subChain.processText} · Supplier: ${subChain.supplierText}<br>

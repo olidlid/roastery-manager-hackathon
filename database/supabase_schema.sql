@@ -292,7 +292,8 @@ CREATE TABLE IF NOT EXISTS public.bulk_roasted_coffee (
     custom_blend_name TEXT,               -- V2 1I-a: user-typed name for a custom post-blend
     custom_blend_code TEXT,               -- V2 1I-a/1I-b: date-based identity code for a post-blend
     source_plan_id INTEGER REFERENCES public.roasting_plans(id) ON DELETE SET NULL,  -- V2 1I-b: links a recipe-assembled post-blend back to its parent roasting_plans row, so composition is derived from that parent's sub-plans (parent_plan_id) instead of a components table
-    custom_coffee_code TEXT,              -- V2 Custom Blend: user-typed short code for a custom blend (distinct from custom_blend_code, which is the auto-generated date-based bulk/lot code)
+    custom_coffee_code TEXT,              -- V2 Custom Blend: the registered Code Definitions code the blend sells as (distinct from custom_blend_code, which is the auto-generated date-based bulk/lot code). Picked from registered codes since 2026-09-29; older rows may hold a free-typed value
+    custom_coffee_type TEXT,              -- V2 Custom Blend (2026-09-29): 'Single' | 'Blend' — the sales type of custom_coffee_code (a code can belong to both, e.g. 23). See v2_custom_blend_unregistered_migration.sql
     production_date DATE NOT NULL DEFAULT CURRENT_DATE,  -- V2: re-keys bulk pooling by (coffee, machine, roast day) instead of pooling indefinitely — see bulk_production_date_migration.sql
     is_repack BOOLEAN DEFAULT FALSE,       -- V2 Repack (applied to production 2026-08-03): true for a bulk row created by opening finished packed stock back into loose bulk for re-packing (never renames the coffee — see repack_sources below). See database/repack_migration.sql.
     -- Phase 6 (STOCK_LEDGER_PLAN.md, applied to production 2026-08-22):
@@ -355,7 +356,12 @@ CREATE TABLE IF NOT EXISTS public.packed_coffee (
     blend_recipe_id INTEGER,
     custom_coffee_name TEXT,
     roast_batch_id INTEGER,
-    selling_price NUMERIC
+    selling_price NUMERIC,
+    -- Custom-blend packed stock only: the registered sales code it sells as
+    -- and its type (see database/v2_custom_blend_unregistered_migration.sql,
+    -- 2026-09-29). NULL for every other packed row.
+    coffee_code TEXT,
+    coffee_code_type TEXT   -- 'Single' | 'Blend'
 );
 
 -- Prevents two concurrent packing submits for the same coffee+size+machine
@@ -1161,11 +1167,15 @@ CREATE TABLE IF NOT EXISTS public.dispatch_lot_items (
 CREATE TABLE IF NOT EXISTS public.post_blend_components (
     id SERIAL PRIMARY KEY,
     blend_bulk_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE CASCADE,
-    source_type TEXT NOT NULL,  -- 'Bulk' | 'Packed'
+    source_type TEXT NOT NULL,  -- 'Bulk' | 'Packed' | 'Unregistered'
     source_bulk_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE SET NULL,
     source_packed_lot_id INTEGER REFERENCES public.packed_coffee_lots(id) ON DELETE SET NULL,
     kg NUMERIC NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Unregistered ingredient only (coffee not in inventory, no stock moves):
+    -- see database/v2_custom_blend_unregistered_migration.sql (2026-09-29).
+    source_name TEXT,   -- coffee name as typed
+    source_note TEXT    -- free-text source/origin, required by the app
 );
 
 -- 30. V2 Repack (applied to production 2026-08-03): one row per source
