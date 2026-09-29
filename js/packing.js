@@ -259,8 +259,10 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     };
     const lotCodeFor = (bulk) => bulk.custom_blend_code
         || buildPreviewLotCode(bulk, machines, greenbeans, recipes, roastBatches, bulk.production_date);
+    // Custom blends (Add Custom Blend, no parent plan) are tagged as such;
+    // recipe-assembled post-blends (source_plan_id set) keep "Post-Blend".
     const postBlendBadge = (bulk) => bulk.is_post_blend
-        ? ' <span class="badge-post-blend" style="font-size:0.65rem; font-weight:700; text-transform:uppercase; border-radius:4px; padding:1px 6px; vertical-align:middle;">Post-Blend</span>'
+        ? ` <span class="badge-post-blend" style="font-size:0.65rem; font-weight:700; text-transform:uppercase; border-radius:4px; padding:1px 6px; vertical-align:middle;">${bulk.source_plan_id ? 'Post-Blend' : 'Custom Blend'}</span>`
         : '';
     // Post-blend/custom blend cards only — coffee_name for these is a
     // freely-typed label entered in the Add Custom Blend modal (or a plan's
@@ -1356,7 +1358,7 @@ async function openCustomBlendModal() {
             return `
                 <div style="border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:8px;">
                     <div style="display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap;">
-                        <div class="form-group" style="width:150px; margin-bottom:0;">
+                        <div class="form-group" style="width:185px; margin-bottom:0;">
                             <label class="form-label">${cbT('cb_lbl_source_type', 'Source Type')}</label>
                             <select class="form-control cb-f" data-f="source" data-id="${id}">
                                 <option value="" ${!r.source ? 'selected' : ''} disabled>— ${cbT('cb_pick', 'pick')} —</option>

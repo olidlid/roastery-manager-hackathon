@@ -286,6 +286,11 @@ async function performTrackingSearch(rawCode) {
             </div>`;
             compositionEl.classList.remove('hidden');
         } else if (bulk && bulk.is_post_blend) {
+            // A custom blend has no roast batch of its own — its roast date
+            // is the one chosen when it was created (bulk production_date).
+            if (chain.roastDateText === '-' && bulk.production_date) {
+                document.getElementById('tracking-result-roast-date').textContent = bulk.production_date;
+            }
             const comps = (postBlendComponents || []).filter(c => c.blend_bulk_id === bulk.id);
             const escHtml = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
             const rowsHtml = comps.map(c => {
