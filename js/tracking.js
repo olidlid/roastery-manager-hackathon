@@ -64,7 +64,7 @@ function trackingUniqueJoin(values) {
 // null means "no label was ever printed for this source, resolve shallow"),
 // coffee_type, single_coffee_id, blend_recipe_id, latest_roast_batch_id.
 function resolveLotChain(lotLike, ctx) {
-    const { greenCoffees, greenCoffeeIntake, blendIngredients, roastBatches, productionLotBatches, roastBatchGreenLots, greenCoffeeLots } = ctx;
+    const { roastBatches, productionLotBatches } = ctx;
 
     // Every roast batch that actually fed this production lot (same
     // coffee+machine+day, snapshotted at print time — see
@@ -78,6 +78,15 @@ function resolveLotChain(lotLike, ctx) {
     const feedingBatches = linkedBatchIds.length > 0
         ? (roastBatches || []).filter(b => linkedBatchIds.includes(b.id))
         : (roastBatches || []).filter(b => b.id === lotLike.latest_roast_batch_id);
+    return chainFromBatches(feedingBatches, lotLike, ctx);
+}
+
+// The chain for a known set of roast batches — shared by resolveLotChain and
+// the recipe post-blend rows (whose batches come from a sub-plan instead of a
+// printed lot). `lotLike` only needs coffee_type / single_coffee_id /
+// blend_recipe_id for the no-lot-tracking fallbacks.
+function chainFromBatches(feedingBatches, lotLike, ctx) {
+    const { greenCoffees, greenCoffeeIntake, blendIngredients, roastBatchGreenLots, greenCoffeeLots } = ctx;
 
     const roastDateText = trackingUniqueJoin(feedingBatches.map(b => b.roast_date));
     const roastDegreeText = trackingUniqueJoin(feedingBatches.map(b => b.roast_degree));
@@ -161,6 +170,9 @@ async function performTrackingSearch(rawCode) {
         fetchData('packed_coffee_lots')
     ]);
     let lot = (lots || []).find(l => (l.lot_code || '').toUpperCase() === code);
+    const searchedPackedLot = (packedLotsForSearch || []).find(l =>
+        (l.strip_code || '') === rawCode.trim() || (l.lot_code || '').toUpperCase() === code
+    ) || null;
 
     // V2 FIFO strip code: the short code printed on packed-coffee stickers
     // (e.g. "10021") isn't itself a production_lots.lot_code — it's a
@@ -197,7 +209,9 @@ async function performTrackingSearch(rawCode) {
         { data: packedCoffeeLots },
         { data: packedList },
         { data: roastingPlans },
-        { data: repackSources }
+        { data: repackSources },
+        { data: recipes },
+        { data: codeDefinitions }
     ] = await Promise.all([
         fetchData('machines'),
         fetchData('green_coffee'),
@@ -212,7 +226,9 @@ async function performTrackingSearch(rawCode) {
         fetchData('packed_coffee_lots'),
         fetchData('packed_coffee'),
         fetchData('roasting_plans'),
-        fetchData('repack_sources')
+        fetchData('repack_sources'),
+        fetchData('blend_recipes'),
+        fetchData('code_definitions')
     ]);
 
     const ctx = { greenCoffees, greenCoffeeIntake, blendIngredients, roastBatches, productionLotBatches, roastBatchGreenLots, greenCoffeeLots };
@@ -232,131 +248,114 @@ async function performTrackingSearch(rawCode) {
     document.getElementById('tracking-result-water-activity').textContent = chain.waterActivityText;
     document.getElementById('tracking-result-density').textContent = chain.densityText;
 
-    // V2 1I: post-blend nested chain — a post-blend bulk's own "lot chain"
-    // is meaningless (it wasn't roasted, it was assembled from other stock),
-    // so instead recursively resolve each post_blend_components row's own
-    // origin and render it as an indented sub-list under the main result.
+    const fieldsEl = document.getElementById('tracking-result-fields');
+    if (fieldsEl) fieldsEl.classList.remove('hidden');
+
+    // Blends (custom blends and recipe-assembled post-blends) are a mix of
+    // several coffees, so a single Process/Supplier/lab value means nothing
+    // for them: the result shows only the blend's own facts, and every
+    // origin detail moves into one table row per component (mockup approved
+    // 2026-09-29). Repacks and ordinary lots keep the field grid.
     const compositionEl = document.getElementById('tracking-result-composition');
     if (compositionEl) {
         const bulk = (bulkList || []).find(b => b.id === lot.bulk_roasted_coffee_id);
-        if (bulk && bulk.is_post_blend && bulk.source_plan_id) {
-            // V2 1I-b: recipe-based post-blend — components are fresh roast
-            // batches (roast_batches.roast_plan_id), not existing stock, so
-            // resolve each sub-plan's own chain directly instead of via
-            // post_blend_components (that table is 1I-a only).
-            const subPlans = (roastingPlans || []).filter(p => p.parent_plan_id === bulk.source_plan_id);
-            const rowsHtml = subPlans.map(sp => {
-                const gb = (greenCoffees || []).find(g => g.id === sp.single_coffee_id);
-                const label = gb ? gb.name : 'Unknown';
-                const kg = parseFloat(sp.fulfilled_roasted_kg) || 0;
-
-                const subFeedingBatches = (roastBatches || []).filter(b => b.roast_plan_id === sp.id);
-                const subFeedingBatchIds = subFeedingBatches.map(b => b.id);
-                const subDrawnGreenLotIds = [...new Set(
-                    (roastBatchGreenLots || [])
-                        .filter(rbgl => subFeedingBatchIds.includes(rbgl.roast_batch_id))
-                        .map(rbgl => rbgl.green_coffee_lot_id)
-                )];
-                const subDrawnGreenLots = (greenCoffeeLots || []).filter(gl => subDrawnGreenLotIds.includes(gl.id));
-
-                let detailHtml = '<span style="color: var(--text-muted); font-size: 0.8rem;">No further trace available</span>';
-                if (subDrawnGreenLots.length > 0) {
-                    const process = trackingUniqueJoin(subDrawnGreenLots.map(gl => (greenCoffees || []).find(g => g.id === gl.green_coffee_id)).filter(Boolean).map(g => g.process));
-                    const supplier = trackingUniqueJoin(subDrawnGreenLots.map(gl => gl.supplier));
-                    const roastDate = trackingUniqueJoin(subFeedingBatches.map(b => b.roast_date));
-                    detailHtml = `<div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
-                        Process: ${process} · Supplier: ${supplier}<br>
-                        Roasted: ${roastDate} · Machine: ${(machines || []).find(m => m.id === sp.machine_id)?.name || '-'}
-                    </div>`;
-                } else if (gb) {
-                    detailHtml = `<div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
-                        Process: ${gb.process || '-'} · Supplier: ${gb.supplier || '-'}
-                    </div>`;
-                }
-
-                return `<li style="margin-bottom: 10px; padding-left: 12px; border-left: 2px solid var(--border-color);">
-                    <div style="font-weight: 600;">${label} <span style="font-weight: 400; color: var(--text-muted); font-family: monospace; font-size: 0.8rem;">— ${kg.toFixed(2)} kg${sp.status === 'Stopped' ? ' (stopped short)' : ''}</span></div>
-                    ${detailHtml}
-                </li>`;
-            }).join('');
-
-            compositionEl.innerHTML = `<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
-                <div style="font-weight: 700; margin-bottom: 8px;">Post-Blend Composition</div>
-                <ul style="list-style: none; margin: 0; padding: 0;">${rowsHtml || '<li style="color: var(--text-muted);">No components recorded</li>'}</ul>
-            </div>`;
-            compositionEl.classList.remove('hidden');
-        } else if (bulk && bulk.is_post_blend) {
-            // A custom blend has no roast batch of its own — its roast date
-            // is the one chosen when it was created (bulk production_date).
-            if (chain.roastDateText === '-' && bulk.production_date) {
-                document.getElementById('tracking-result-roast-date').textContent = bulk.production_date;
+        const typeOf = (type, singleId, blendId) => {
+            if (type === 'Single') {
+                const g = (greenCoffees || []).find(x => x.id === singleId);
+                return g ? { type: 'Single', code: g.code || '' } : null;
             }
-            const comps = (postBlendComponents || []).filter(c => c.blend_bulk_id === bulk.id);
-            const escHtml = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-            const rowsHtml = comps.map(c => {
-                let label = 'Unknown';
-                let originLot = null;
-                let unregisteredHtml = null;
+            if (type === 'Blend') {
+                const r = (recipes || []).find(x => x.id === blendId);
+                return r ? { type: 'Blend', code: r.code || '' } : null;
+            }
+            return null;
+        };
 
+        if (bulk && bulk.is_post_blend && bulk.source_plan_id) {
+            // Recipe-based post-blend — components are fresh roast batches
+            // (roast_batches.roast_plan_id) per sub-plan, not existing stock.
+            const subPlans = (roastingPlans || []).filter(p => p.parent_plan_id === bulk.source_plan_id);
+            const components = subPlans.map(sp => {
+                const gb = (greenCoffees || []).find(g => g.id === sp.single_coffee_id);
+                const feeding = (roastBatches || []).filter(b => b.roast_plan_id === sp.id);
+                return {
+                    name: gb ? gb.name : 'Unknown',
+                    identity: gb ? { type: 'Single', code: gb.code || '' } : null,
+                    source: 'roast',
+                    lotCode: trackingUniqueJoin(feeding.map(b => b.batch_number)),
+                    extra: sp.status === 'Stopped' ? stT('trk_stopped_short', 'stopped short') : '',
+                    kg: parseFloat(sp.fulfilled_roasted_kg) || 0,
+                    chain: chainFromBatches(feeding, { coffee_type: 'Single', single_coffee_id: sp.single_coffee_id }, ctx)
+                };
+            });
+            const roastDate = trackingUniqueJoin(subPlans.flatMap(sp => (roastBatches || []).filter(b => b.roast_plan_id === sp.id).map(b => b.roast_date)));
+            renderBlendTracking({ lot, bulk, machine, components, codeDefinitions, packedCoffeeLots, searchedPackedLot, roastDate, roastDateNote: '', isCustom: false });
+        } else if (bulk && bulk.is_post_blend) {
+            const comps = (postBlendComponents || []).filter(c => c.blend_bulk_id === bulk.id).sort((a, b) => a.id - b.id);
+            const components = comps.map(c => {
+                const kg = parseFloat(c.kg) || 0;
                 if (c.source_type === 'Unregistered') {
-                    // Coffee added from outside inventory (Custom Blend,
-                    // 2026-09-29): no bulk card or lot to follow — the trace
-                    // ends at the name and source the user typed.
-                    label = escHtml(c.source_name || 'Unregistered coffee');
-                    unregisteredHtml = `<div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
-                        <span style="color: var(--warning); font-weight: 700;">Unregistered</span> · Source: ${escHtml(c.source_note || '-')}<br>
-                        Not from inventory — no green bean or roast record to trace
-                    </div>`;
-                } else if (c.source_type === 'Bulk') {
+                    // Coffee added from outside inventory: the trace ends at
+                    // the name and source the user typed.
+                    return { name: c.source_name || 'Unregistered coffee', identity: null, source: 'unreg', note: c.source_note || '-', kg, chain: null };
+                }
+                if (c.source_type === 'Bulk') {
                     const srcBulk = (bulkList || []).find(b => b.id === c.source_bulk_id);
-                    label = srcBulk ? srcBulk.coffee_name : 'Unknown';
                     // Most recent label ever printed for this source bulk, if any.
-                    originLot = (lots || [])
+                    let originLot = (lots || [])
                         .filter(l => l.bulk_roasted_coffee_id === c.source_bulk_id)
                         .sort((a, b) => (b.production_date || '').localeCompare(a.production_date || ''))[0] || null;
+                    const printed = !!originLot;
                     if (!originLot && srcBulk) {
                         // No label was ever printed for this source — resolve
-                        // shallow, straight off the bulk row (name/process/
-                        // supplier only, no batch-level roast/green-lot precision).
+                        // shallow, straight off the bulk row.
                         originLot = { id: null, coffee_type: srcBulk.coffee_type, single_coffee_id: srcBulk.single_coffee_id, blend_recipe_id: srcBulk.blend_recipe_id, latest_roast_batch_id: null };
                     }
-                } else {
-                    const plLot = (packedCoffeeLots || []).find(l => l.id === c.source_packed_lot_id);
-                    const packed = plLot ? (packedList || []).find(p => p.id === plLot.packed_coffee_id) : null;
-                    label = packed ? (packed.custom_coffee_name || 'Roasted Coffee') : 'Unknown';
-                    if (plLot && plLot.production_lot_id) {
-                        originLot = (lots || []).find(l => l.id === plLot.production_lot_id) || null;
+                    let lotCode = printed ? originLot.lot_code : '';
+                    if (!lotCode && srcBulk && typeof buildPreviewLotCode === 'function') {
+                        lotCode = buildPreviewLotCode(srcBulk, machines, greenCoffees, recipes, roastBatches, srcBulk.production_date || '');
                     }
+                    const chainOut = originLot ? resolveLotChain(originLot, ctx) : null;
+                    if (chainOut && chainOut.roastDateText === '-' && srcBulk && srcBulk.production_date) chainOut.roastDateText = srcBulk.production_date;
+                    return {
+                        name: srcBulk ? srcBulk.coffee_name : 'Unknown',
+                        identity: srcBulk ? typeOf(srcBulk.coffee_type, srcBulk.single_coffee_id, srcBulk.blend_recipe_id) : null,
+                        source: 'bulk', lotCode: lotCode || '-', kg, chain: chainOut
+                    };
                 }
-
-                const kg = parseFloat(c.kg) || 0;
-                let detailHtml = '<span style="color: var(--text-muted); font-size: 0.8rem;">No further trace available</span>';
-                if (unregisteredHtml) {
-                    detailHtml = unregisteredHtml;
-                } else if (originLot) {
-                    const subChain = resolveLotChain(originLot, ctx);
-                    detailHtml = `<div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
-                        Process: ${subChain.processText} · Supplier: ${subChain.supplierText}<br>
-                        Green arrival: ${subChain.greenbeanDateText} · Roasted: ${subChain.roastDateText}
-                    </div>`;
+                const plLot = (packedCoffeeLots || []).find(l => l.id === c.source_packed_lot_id);
+                const packed = plLot ? (packedList || []).find(p => p.id === plLot.packed_coffee_id) : null;
+                const originLot = (plLot && plLot.production_lot_id) ? (lots || []).find(l => l.id === plLot.production_lot_id) || null : null;
+                const bagG = packed ? parseFloat(packed.bag_size_g) || 0 : 0;
+                const bags = bagG > 0 ? Math.round(kg / (bagG / 1000)) : 0;
+                let identity = originLot ? typeOf(originLot.coffee_type, originLot.single_coffee_id, originLot.blend_recipe_id) : null;
+                if (!identity && packed) {
+                    const clean = String(packed.custom_coffee_name || '').replace(/ \((Single|Blend)\)$/, '');
+                    const g = (greenCoffees || []).find(x => x.name === clean);
+                    const r = (recipes || []).find(x => x.name === clean);
+                    identity = g ? { type: 'Single', code: g.code || '' } : r ? { type: 'Blend', code: r.code || '' }
+                        : (packed.coffee_code ? { type: packed.coffee_code_type || '', code: packed.coffee_code } : null);
                 }
-
-                return `<li style="margin-bottom: 10px; padding-left: 12px; border-left: 2px solid var(--border-color);">
-                    <div style="font-weight: 600;">${label} <span style="font-weight: 400; color: var(--text-muted); font-family: monospace; font-size: 0.8rem;">— ${kg.toFixed(2)} kg</span></div>
-                    ${detailHtml}
-                </li>`;
-            }).join('');
-
-            compositionEl.innerHTML = `<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
-                <div style="font-weight: 700; margin-bottom: 8px;">Post-Blend Composition</div>
-                <ul style="list-style: none; margin: 0; padding: 0;">${rowsHtml || '<li style="color: var(--text-muted);">No components recorded</li>'}</ul>
-            </div>`;
-            compositionEl.classList.remove('hidden');
+                return {
+                    name: packed ? (packed.custom_coffee_name || 'Roasted Coffee') : 'Unknown',
+                    identity, source: 'packed',
+                    lotCode: plLot ? (plLot.lot_code || plLot.strip_code || '-') : '-',
+                    extra: bags > 0 ? stT('trk_bags', '{n} × {g}g bags').replace('{n}', bags).replace('{g}', bagG) : '',
+                    kg, chain: originLot ? resolveLotChain(originLot, ctx) : null
+                };
+            });
+            // A custom blend has no roast batch of its own — its roast date
+            // is the one chosen when it was created (bulk production_date).
+            renderBlendTracking({
+                lot, bulk, machine, components, codeDefinitions, packedCoffeeLots, searchedPackedLot,
+                roastDate: bulk.production_date || chain.roastDateText,
+                roastDateNote: stT('trk_roast_chosen', 'chosen when the blend was created'),
+                isCustom: true
+            });
         } else if (bulk && bulk.is_repack) {
             // V2 Repack: a repacked lot's own chain is meaningless the same
             // way a post-blend's is (it wasn't roasted, it was opened from
-            // already-finished stock) — mirrors the is_post_blend 'Packed'
-            // branch above exactly, since repack_sources always points at
+            // already-finished stock), since repack_sources always points at
             // packed_coffee_lots (repack never opens another bulk directly).
             // The coffee name is deliberately the SAME at every source (V2
             // Repack never renames), so each row is labeled by its strip/lot
@@ -396,4 +395,94 @@ async function performTrackingSearch(rawCode) {
     }
 
     setTrackingResultState('result');
+}
+
+function trackingEsc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+}
+
+// Blend result: title tag + code chip, the blend's own facts in place of the
+// single-coffee field grid, then one table row per component.
+function renderBlendTracking({ lot, bulk, machine, components, codeDefinitions, packedCoffeeLots, searchedPackedLot, roastDate, roastDateNote, isCustom }) {
+    const esc = trackingEsc;
+    const fieldsEl = document.getElementById('tracking-result-fields');
+    const compositionEl = document.getElementById('tracking-result-composition');
+    const titleEl = document.getElementById('tracking-result-coffee-name');
+    if (fieldsEl) fieldsEl.classList.add('hidden');
+
+    const code = bulk.custom_coffee_code || '';
+    const def = code ? (codeDefinitions || []).find(d => d.code === code) : null;
+    const tagText = isCustom ? stT('trk_tag_custom', 'Custom Blend') : stT('trk_tag_post', 'Post-Blend');
+    titleEl.innerHTML = `${esc(lot.coffee_name || bulk.custom_blend_name || '-')}
+        <span class="badge-post-blend trk-tag">${esc(tagText)}</span>
+        ${code ? `<span class="trk-code-chip">${esc(code)}</span>` : ''}`;
+
+    // Packing date: the packed lot that was searched, else every packed lot
+    // made from this production lot.
+    const packedDates = searchedPackedLot && searchedPackedLot.production_lot_id === lot.id
+        ? [searchedPackedLot.packed_date]
+        : (packedCoffeeLots || []).filter(l => l.production_lot_id === lot.id).map(l => l.packed_date);
+    const packDate = trackingUniqueJoin(packedDates);
+
+    const total = components.reduce((s, c) => s + c.kg, 0);
+    const sellsAs = code
+        ? `${esc(code)}${def ? ' — ' + esc(def.name) : ''}${bulk.custom_coffee_type ? `<small>${esc(bulk.custom_coffee_type)}</small>` : ''}`
+        : '-';
+    const fact = (label, value, note) => `<div><dt>${esc(label)}</dt><dd>${value}${note ? `<small>${esc(note)}</small>` : ''}</dd></div>`;
+    const factsHtml = `<dl class="trk-facts">
+        ${fact(stT('tracking_lbl_lot_code', 'Lot Code'), `<span class="trk-mono">${esc(lot.lot_code)}</span>`)}
+        ${fact(stT('trk_sells_as', 'Sells as'), sellsAs)}
+        ${fact(stT('tracking_lbl_machine', 'Machine'), esc(machine ? machine.name : '-'))}
+        ${fact(stT('tracking_lbl_roast_date', 'Roasting Date'), esc(roastDate || '-'), roastDateNote)}
+        ${fact(stT('tracking_lbl_pack_date', 'Packing Date'), esc(packDate))}
+        ${fact(stT('trk_blend_size', 'Blend Size'), `<span class="trk-mono">${total.toFixed(2)} kg</span>`,
+            stT('trk_components', '{n} components').replace('{n}', components.length) + (bulk.custom_blend_code ? ` · ${bulk.custom_blend_code}` : ''))}
+    </dl>`;
+
+    const pillText = { bulk: 'Bulk', packed: 'Packed', unreg: stT('trk_src_unreg', 'Unregistered'), roast: stT('trk_src_roast', 'Roast batch') };
+    const cell = v => (v === null || v === undefined || v === '' || v === '-') ? '<td class="trk-dash">-</td>' : `<td>${esc(v)}</td>`;
+    const numCell = v => (v === null || v === undefined || v === '' || v === '-') ? '<td class="trk-num trk-dash">-</td>' : `<td class="trk-num">${esc(v)}</td>`;
+    const rowsHtml = components.map(c => {
+        const pct = total > 0 ? c.kg / total * 100 : 0;
+        const sub = c.source === 'unreg'
+            ? stT('trk_not_inventory', 'not in inventory')
+            : (c.identity ? `${c.identity.type}${c.identity.code ? ' · ' + stT('trk_code', 'code') + ' ' + c.identity.code : ''}` : '');
+        const head = `
+            <td class="trk-ing">${esc(String(c.name).replace(/ \((Single|Blend)\)$/, ''))}${sub ? `<small>${esc(sub)}</small>` : ''}</td>
+            <td><span class="trk-pill trk-pill-${c.source}">${esc(pillText[c.source])}</span>${c.lotCode ? `<span class="trk-lot">${esc(c.lotCode)}</span>` : ''}${c.extra ? `<span class="trk-lot trk-dash">${esc(c.extra)}</span>` : ''}</td>
+            <td class="trk-num">${c.kg.toFixed(2)} kg</td>
+            <td class="trk-num">${pct.toFixed(0)}%<span class="trk-bar" style="width:${Math.max(2, Math.round(pct * 0.6))}px"></span></td>`;
+        if (c.source === 'unreg') {
+            return `<tr>${head}<td class="trk-unreg-note" colspan="8"><b>${esc(stT('trk_source', 'Source'))}:</b> ${esc(c.note)} — ${esc(stT('trk_unreg_note', 'not from inventory, so there is no green bean, roast or lab record to trace.'))}</td></tr>`;
+        }
+        const ch = c.chain || {};
+        return `<tr>${head}
+            ${cell(ch.processText)}${cell(ch.supplierText)}${cell(ch.greenbeanDateText)}${cell(ch.roastDateText)}${cell(ch.roastDegreeText)}
+            ${numCell(ch.moistureText)}${numCell(ch.waterActivityText)}${numCell(ch.densityText)}</tr>`;
+    }).join('');
+
+    const th = (key, fb, num) => `<th${num ? ' class="trk-num"' : ''}>${esc(stT(key, fb))}</th>`;
+    compositionEl.innerHTML = `${factsHtml}
+        <div class="trk-comp-head">
+            <h4>${esc(stT('trk_composition', 'Blend Composition'))}</h4>
+            <span>${esc(stT('trk_composition_hint', 'Each row traces one ingredient back to its green bean'))}</span>
+        </div>
+        <div class="table-container trk-table-wrap">
+            <table class="trk-table">
+                <thead><tr>
+                    ${th('trk_col_ingredient', 'Ingredient')}${th('trk_col_source', 'Source')}${th('trk_col_amount', 'Amount', true)}${th('trk_col_share', 'Share', true)}
+                    ${th('tracking_lbl_process', 'Process')}${th('tracking_lbl_supplier', 'Supplier')}${th('tracking_lbl_greenbean_date', 'Greenbean Received')}
+                    ${th('tracking_lbl_roast_date', 'Roasting Date')}${th('tracking_lbl_roast_degree', 'Roast Degree')}
+                    ${th('tracking_lbl_moisture', 'Moisture Content', true)}${th('tracking_lbl_water_activity', 'Water Activity', true)}${th('tracking_lbl_density', 'Density', true)}
+                </tr></thead>
+                <tbody>${rowsHtml || `<tr><td colspan="12" class="trk-dash">${esc(stT('trk_no_components', 'No components recorded'))}</td></tr>`}</tbody>
+                <tfoot><tr>
+                    <td colspan="2">${esc(stT('trk_total', 'Total'))}</td>
+                    <td class="trk-num">${total.toFixed(2)} kg</td>
+                    <td class="trk-num">${components.length ? '100%' : '-'}</td>
+                    <td colspan="8"></td>
+                </tr></tfoot>
+            </table>
+        </div>`;
+    compositionEl.classList.remove('hidden');
 }

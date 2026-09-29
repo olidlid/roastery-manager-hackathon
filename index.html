@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=35">
+    <link rel="stylesheet" href="css/styles.css?v=36">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -2423,7 +2423,7 @@
 
                 <div id="tracking-result-card" class="card hidden" style="margin-top: 16px;">
                     <h3 class="card-title" id="tracking-result-coffee-name">-</h3>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 12px;">
+                    <div id="tracking-result-fields" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 12px;">
                         <div>
                             <div style="font-size: 0.75rem; color: var(--text-muted);" data-i18n="tracking_lbl_lot_code">Lot Code</div>
                             <div id="tracking-result-lot-code" style="font-weight: 600;">-</div>
@@ -3154,7 +3154,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=92"></script>
+    <script src="js/translations.js?v=93"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
@@ -3167,7 +3167,7 @@
     <script src="js/crm.js?v=10"></script>
     <script src="js/otheritems.js?v=1"></script>
     <script src="js/settings.js?v=29"></script>
-    <script src="js/tracking.js?v=10"></script>
+    <script src="js/tracking.js?v=11"></script>
     <script src="js/purchasing.js?v=3"></script>
     <script src="js/app.js?v=125"></script>
 </body>

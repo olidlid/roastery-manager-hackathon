@@ -2258,3 +2258,36 @@ tbody tr:hover {
    bersarang akan saling mematikan. */
 .crm-subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
 .crm-subtab.active { background: var(--primary); border-color: var(--primary); color: var(--primary-contrast); }
+
+/* Tracking — blend result (custom blend / recipe post-blend): the blend's
+   own facts, then one table row per component (2026-09-29). */
+.trk-tag { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 6px; vertical-align: middle; margin-left: 8px; }
+.trk-code-chip { float: right; border: 1px solid var(--primary); color: var(--primary); background: var(--primary-glow); border-radius: 8px; padding: 1px 10px; font-size: 0.9rem; font-weight: 600; font-family: monospace; }
+.trk-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; margin: 12px 0 0; }
+.trk-facts div { display: grid; gap: 2px; }
+.trk-facts dt { font-size: 0.75rem; color: var(--text-muted); }
+.trk-facts dd { margin: 0; font-weight: 600; }
+.trk-facts dd small { display: block; font-weight: 400; font-size: 0.75rem; color: var(--text-muted); }
+.trk-mono { font-family: monospace; font-variant-numeric: tabular-nums; }
+.trk-comp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 22px 0 10px; padding-top: 14px; border-top: 1px solid var(--border); }
+.trk-comp-head h4 { margin: 0; font-size: 1rem; font-weight: 700; }
+.trk-comp-head span { font-size: 0.8rem; color: var(--text-muted); }
+.trk-table { min-width: 1080px; }
+.trk-table th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); white-space: nowrap; }
+.trk-table td { padding: 9px 10px; vertical-align: top; }
+.trk-table tfoot td { font-weight: 700; border-top: 1px solid var(--border); border-bottom: none; background-color: rgba(0, 0, 0, 0.08); }
+.trk-table .trk-num { text-align: right; font-family: monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.trk-dash { color: var(--text-muted); }
+.trk-ing { font-weight: 700; }
+.trk-ing small { display: block; font-weight: 400; font-size: 0.75rem; color: var(--text-muted); }
+.trk-pill { display: inline-block; font-size: 0.64rem; font-weight: 700; text-transform: uppercase; padding: 1px 7px; border-radius: 999px; margin-bottom: 3px; }
+.trk-pill-bulk, .trk-pill-roast { background: var(--primary-glow); color: var(--primary); }
+.trk-pill-packed { background: rgba(88, 146, 204, 0.16); color: #3d78b5; }
+[data-theme="dark"] .trk-pill-packed { color: var(--info); }
+.trk-pill-unreg { background: rgba(180, 83, 9, 0.12); color: #b45309; }
+[data-theme="dark"] .trk-pill-unreg { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+.trk-lot { display: block; font-family: monospace; font-size: 0.75rem; color: var(--text-secondary); }
+.trk-unreg-note { color: var(--text-secondary); }
+.trk-unreg-note b { color: #b45309; }
+[data-theme="dark"] .trk-unreg-note b { color: #fbbf24; }
+.trk-bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--primary); vertical-align: middle; margin-left: 8px; opacity: 0.7; }
