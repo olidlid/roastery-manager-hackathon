@@ -2,11 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Last reviewed against the code: 2026-09-30.** If something here contradicts the code, the code wins — and fix this file in the same commit.
+
 ## Project Overview
 Roastery Manager Pro is a web-based coffee roastery management system. It manages the full production lifecycle — from green bean inventory to roasted coffee packing and sales dispatch.
 
 **Live URL:** https://roasterymanagerv2.vercel.app
-**GitHub:** https://github.com/olidlid/roasterymanagerv2 (public)
+**GitHub:** https://github.com/olidlid/roasterymanagerv2 (private)
 **Tech Stack:** HTML, CSS, JavaScript (Vanilla), Supabase (PostgreSQL + Auth)
 **Deployment:** Vercel (auto-deploy from GitHub main branch, rewrites all routes to index.html — see vercel.json)
 
@@ -16,53 +18,52 @@ Roastery Manager Pro is a web-based coffee roastery management system. It manage
 
 ```
 roastery-manager-v2/
-├── index.html              # Main SPA (login, dashboard, all pages)
+├── index.html              # Main SPA — every page lives here as a <section>
 ├── leader.html              # Lightweight "Leader" approval app (approve/reject sales requests)
 ├── css/styles.css           # Design system (CSS custom properties / design tokens in :root)
-├── js/                      # index.html loads these as plain (non-module) <script> tags, in this order:
-│   ├── translations.js        # Translation dictionaries (EN/AR strings — see README_TRANSLATION.md)
-│   ├── i18n.js                # i18n + RTL layout engine (data-i18n / data-i18n-placeholder)
-│   ├── supabase.js            # Supabase client init (hardcoded credentials, shared by both apps)
-│   ├── db.js                  # fetchData/saveData/deleteData/upsertData, _dbCache, saving-indicator helpers
-│   ├── auth.js                 # checkAuthentication, loadUserProfile, hasPermission, applyRoleAccess, syncCustomRolesFromSupabase
-│   ├── greenbean.js            # Green coffee inventory + arrival UI logic
-│   ├── roasting.js             # Roasting plans & batches UI logic
-│   ├── packing.js              # Packing UI logic
-│   ├── sales.js                # Customers, requests, dispatch approval UI logic
-│   ├── settings.js             # Settings page (roles, translations import/export, debug tools) UI logic
-│   ├── app.js                 # Remaining core/shared app logic + bootstrap (~3,800 lines, down from ~13,000 pre-split — see REFACTORING.md); loaded LAST since it depends on everything above
-│   ├── leader.js               # Logic for leader.html (separate from the app.js chain above)
-│   └── app_backup.js           # Untracked local pre-split snapshot (~13,000 lines) — not loaded by index.html, not part of the app; safe to ignore/delete, kept locally as a rollback reference only
-├── js/modules/ui/           # Empty directory, no files — leftover stub from refactor planning, not used
-├── dist/                    # Capacitor build source for the Android "Leader" app.
-│                             #   dist/index.html is leader.html and only loads js/supabase.js + js/leader.js
-│                             #   (confirmed by its own <script> tags) — dist/js/app.js (6,359 lines) sits in
-│                             #   this folder but is NOT referenced by dist/index.html and is a stale pre-split
-│                             #   copy; ignore/remove it rather than treating it as "mirrors js/". capacitor.config.json
-│                             #   (webDir: "dist", appId: com.roastery.leader) packages this into the Android app.
-├── android/                  # Capacitor-generated Android project (Gradle) for the Leader app
-├── database/supabase_schema.sql  # Column-accurate snapshot of PRODUCTION schema (synced 2026-07-06)
-├── server.js                 # Trivial static file server for local dev (node server.js, port 8000)
-└── test.js                   # Parses <script src="js/..."> tags from index.html, concatenates them in order, evaluates in a jsdom/vm sandbox to catch SyntaxErrors
+├── js/                      # index.html loads these as plain (non-module) <script> tags, IN THIS ORDER:
+│   ├── translations.js        # EN/AR dictionaries (see README_TRANSLATION.md)
+│   ├── i18n.js                # i18n + RTL engine (data-i18n / data-i18n-placeholder)
+│   ├── supabase.js            # Supabase client init (hardcoded credentials, shared with leader.html)
+│   ├── db.js                  # fetchData/saveData/deleteData/upsertData, computeOrderStatsByKey,
+│   │                          #   median/daysBetween, stock-opname guards (see "Stock safety" below)
+│   ├── auth.js                # checkAuthentication, loadUserProfile, hasPermission, SECTION_PERMISSIONS,
+│   │                          #   applyMenuVisibility, filterCustomersByAccess, syncCustomRolesFromSupabase
+│   ├── greenbean.js           # Green coffee inventory, arrivals, outbound, lab analysis
+│   ├── roasting.js            # Roasting plans, batches, blends, test-batch approval
+│   ├── packing.js             # Packing, unpack/repack, stock release, waste, dispatch checkout (largest file)
+│   ├── sales.js               # Customer directory, Segments (RFM), sales requests, dispatch approval
+│   ├── crm.js                 # CRM page: customers by sales, reorder prediction, sales performance
+│   ├── otheritems.js          # Non-coffee goods bought and resold (OTHER_ITEMS_PLAN.md)
+│   ├── settings.js            # Settings: roles/permissions, translations import/export, debug tools
+│   ├── tracking.js            # Lot barcode lookup → traces a pack back to its coffee/batch/supplier
+│   ├── purchasing.js          # Purchase requests + approval (PURCHASE_REQUEST_PLAN.md)
+│   ├── app.js                 # Bootstrap, navigation, modals, dashboard, reports, stock opname
+│   ├── leader.js              # Logic for leader.html (separate from the chain above)
+│   └── app_backup.js          # Untracked pre-split snapshot — NOT loaded, safe to delete
+├── database/                 # supabase_schema.sql (source of truth) + ~38 migration files
+├── docs/                     # PRD.html, CRM mockups, reorder_backtest.js (console tool)
+├── server.js                 # Static file server for local dev (node server.js, port 8000)
+└── test.js                   # Concatenates every js/*.js in load order, evaluates in jsdom → catches SyntaxErrors
 ```
+
+There is **no bundler, transpiler, or build step**. Every `js/*.js` file is loaded directly by the browser as a plain script, and they all share ONE global scope. A name declared in one file collides with the same name in another and kills the whole app with "Identifier has already been declared" — `js/crm.js` prefixes everything `crmpg*` for exactly this reason.
 
 ---
 
 ## Commands
 
-- **Run locally:** `node server.js` → serves the app at http://localhost:8000 (plain static file server, no build step)
-- **Syntax-check all split scripts:** `node test.js` (parses the `<script src="js/...">` tags out of `index.html` in document order, concatenates them exactly like the browser's shared global scope would, and evaluates the result in a jsdom `vm` context to catch SyntaxErrors/`X is not defined` — automatically picks up new files if `js/` is split further; there is no real test suite; `npm test` is a stub that always fails)
-- **Quick syntax check alternative:** `node --check js/<file>.js` (run per file, e.g. `js/app.js`, `js/auth.js`, `js/greenbean.js`, etc.)
-- **Android build:** standard Capacitor/Gradle flow from `android/` (`gradlew assembleDebug`, etc.); `dist/` must be (re)built/copied first since `capacitor.config.json` points `webDir` at it. ⚠️ `dist/js/app.js` (6,359 lines) was NOT updated by the V1 modularization — it's a separate, stale snapshot from before the split, not mirroring the current `js/*.js` split files. Confirm/resync before the next Android build.
-
-There is no bundler, transpiler, or package build for the main app — every `js/*.js` file is loaded directly by the browser as a plain script, in the load order listed above.
+- **Run locally:** `node server.js` → http://localhost:8000
+- **Syntax-check everything:** `node test.js` — parses the `<script src="js/...">` tags out of `index.html` in document order, concatenates them exactly as the browser's shared global scope would, and evaluates the result in jsdom. Catches SyntaxErrors AND duplicate declarations. There is no real test suite; `npm test` is a stub that always fails.
+- **Single file:** `node --check js/<file>.js`
+- **Android build:** standard Capacitor/Gradle flow from `android/`; `dist/` must be (re)built first. ⚠️ `dist/js/app.js` is a stale pre-split snapshot that `dist/index.html` doesn't even load — ignore it.
 
 ---
 
 ## Supabase Configuration
 
 **Project URL:** `https://YOUR_PROJECT_REF.supabase.co`
-**Anon key:** hardcoded in `js/supabase.js` (both `index.html` and `leader.html` load this same file) — intentional, see "Full Supabase Mode" below.
+**Anon key:** hardcoded in `js/supabase.js` (both apps load this file) — intentional.
 **Auth providers:** Email/Password + Google OAuth (`flowType: 'implicit'`, `detectSessionInUrl: true`)
 
 ### Google OAuth Setup
@@ -70,151 +71,170 @@ There is no bundler, transpiler, or package build for the main app — every `js
 - **Client ID:** `241927420519-c8gngv7uov9indmfdt1naomqjhihj891.apps.googleusercontent.com`
 - **Authorized JavaScript Origins:** `https://roasterymanagerv2.vercel.app`, `https://YOUR_PROJECT_REF.supabase.co`
 - **Authorized Redirect URI:** `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`
-- **Publishing status:** In Production (External)
 
 ### `handle_new_user` trigger
-`database/supabase_schema.sql` defines a trigger on `auth.users` that auto-creates a row in `public.profiles` on signup (role defaults to `'Roaster'`). If you change the `profiles` schema, this trigger must be updated to match or new signups will silently fail to get a profile row.
+A trigger on `auth.users` auto-creates a `public.profiles` row on signup (role defaults to `'Roaster'`). Change the `profiles` schema and this trigger must change too, or new signups silently get no profile.
 
 ---
 
 ## Database Schema
 
-`database/supabase_schema.sql` is a **column-accurate snapshot of production** (synced 2026-07-06 from `information_schema`). It covers all 20 production tables: `profiles`, `custom_roles`, `company_settings`, `green_coffee`, `green_coffee_intake`, `blend_recipes`, `blend_ingredients`, `machines`, `roasting_plans`, `roast_batches`, `bulk_roasted_coffee`, `waste_inventory`, `packaging_sizes`, `packed_coffee`, `packing_records`, `customers`, `sales_agents`, `request_orders`, `request_order_items`, `sales_orders` (legacy).
+`database/supabase_schema.sql` is the **column-level source of truth**, now ~49 tables. Every schema change follows the same three steps, in order:
 
-**Rules for keeping it in sync (this drift caused all 6 production bugs on 2026-07-05/06):**
-- Any schema change: update the file first, apply the same ALTER/CREATE to production via SQL Editor, then run `NOTIFY pgrst, 'reload schema';` (PostgREST caches the schema — without this, the REST API throws "Could not find the '<col>' column ... in the schema cache" even when the column exists; occasionally needs running twice).
-- Never add columns via the Supabase dashboard without mirroring them in the file.
-- Many tables carry **legacy columns** from earlier app generations (marked `-- legacy` in the file). Don't reuse them for new features.
-- `handover_logs` does **not** exist in production even though `MOCK_DB` in `js/app.js` still references it — live fetches for it fall back to the local mock cache.
+1. Update `database/supabase_schema.sql` **first**.
+2. Apply the same ALTER/CREATE to production via the Supabase SQL Editor.
+3. Run `NOTIFY pgrst, 'reload schema';` — PostgREST caches the schema, and without this the REST API throws *"Could not find the '&lt;col&gt;' column ... in the schema cache"* even though the column exists. Occasionally needs running twice.
+
+Never add columns through the Supabase dashboard without mirroring them in the file. Many tables carry **legacy columns** marked `-- legacy`; don't reuse them for new features.
+
+### Stock safety — read this before touching any stock path
+
+This is the part of the codebase that has cost the most real money, and every rule below exists because something went wrong.
+
+**Source of truth is the LOT tables, never the summary columns:**
+
+| Real stock | Derived, trigger-maintained — NEVER write directly |
+|---|---|
+| `green_coffee_lots.remaining_kg` | `green_coffee.stock_kg` (via `sync_green_coffee_stock`) |
+| `packed_coffee_lots.remaining_pcs` | `packed_coffee.quantity` (via `sync_packed_coffee_quantity`) |
+| `bulk_roasted_coffee.bulk_available` | — |
+
+**Every movement goes through an atomic RPC**, never a bare UPDATE: `consume_/refund_green_coffee_lot`, `adjust_green_coffee_lot`, `consume_/refund_packed_lot`, `set_packed_lot_remaining`, `consume_/refund_bulk_lot`, `set_bulk_lot_available`, `other_item_consume/stock_in/set_qty`. **Credit the caller with the number the RPC returns, not the number you asked for.**
+
+**Movement ledgers are append-only** and never deleted: `packed_stock_movements`, `bulk_stock_movements`, `green_coffee_lot_adjustments`, `other_item_movements`.
+
+**Stock opname (stock take) freezes stock.** While a `stock_takes` row is `'counting'` or `'posting'`, the `stock_take_freeze_guard` trigger blocks writes on `green_coffee_lots`, `packed_coffee_lots` and `bulk_roasted_coffee`. Call `ensureNoStockOpname()` (js/db.js) BEFORE starting any stock write, and surface the failure — a swallowed freeze error is what produced the "packing didn't go in" complaints (`d6703f8`).
+
+**Every stock path is all-or-nothing** (convention set in `ee14598`): lock the screen, do the work, **verify by reading back**, then report success — or roll back and say plainly that nothing was saved. `showStockFailed()` (nothing changed, safe to retry) and `showStockPartial()` (half-done, do NOT repeat) in js/db.js exist to keep that distinction honest.
 
 ### `profiles`
-`id (uuid, PK)`, `name`, `email`, `role` (default `'Roaster'`), `avatar_url`, `created_at`.
-RLS: `full_access` (`FOR ALL USING (true)`), same permissive pattern as every other table — see "Database Schema" rules above (authorization is enforced client-side via `hasPermission('user_management')`, not by RLS). This line previously (incorrectly) documented "own row only" for UPDATE, which was stale/contradicted the schema file's own generic RLS block and caused Admin/Developer edits to another user's role to be silently rejected. If `profiles` UPDATE ever stops working for one user editing another's role, re-run the `full_access` policy for this table specifically (see 2026-07-06 fix).
+`id (uuid, PK)`, `name`, `email`, `role`, `avatar_url`, `created_at`. RLS is `full_access` (`FOR ALL USING (true)`) like every other table — authorization is enforced client-side, not by RLS.
 
 ### `custom_roles`
-Role definitions with granular permissions. `id`, `name` (unique), `color`, `is_system`, `permissions` (jsonb, ~40 boolean keys like `greenbean_view`, `roasting_batch_approve`, `dispatch_approval_dispatch`, `settings_system`, `user_management`), `created_at`.
-Default roles (seeded from `MOCK_DB.custom_roles` in `js/app.js` if the table is empty on first sync): **Developer, Admin, Production Leader, Roaster, Packing Team, Sales Agent** — each with a different permission matrix (see `hasPermission()` / `applyRoleAccess()`, both in `js/auth.js`).
+`id`, `name` (unique), `color`, `is_system`, `permissions` (jsonb, ~80 boolean keys), `created_at`.
 
-⚠️ **Known RLS drift (found 2026-07-09):** production's actual RLS policy on this table stopped matching the `full_access` policy documented in `supabase_schema.sql` — `DELETE`/`UPDATE` silently no-op (HTTP 200, empty result, row untouched), same symptom class as the `profiles` UPDATE drift below. This means "Delete Role" in Settings → Role Management may silently fail. Fix: run `database/fix_custom_roles_rls.sql` in the Supabase SQL Editor to re-apply the `full_access` policy.
+⚠️ **Role names in production are NOT the seeded names.** `MOCK_DB.custom_roles` in js/app.js seeds Developer / Admin / Production Leader / Roaster / Packing Team / Sales Agent, but production actually runs roles like **`admin2`**, `Sales Manager`, `Supermarket Sales`, `Retail Sales`, `Sale 101`, `Procurement`. Any migration that switches a permission on **by role name** will miss the real admins. This already happened once with `crm_manage` (2026-09-27).
+
+⚠️ **A permission key missing from a role's jsonb reads as `false`.** Every new permission key must be backfilled into the existing `custom_roles` rows in production, or the feature is invisible to everyone including Admin. This already happened with `purchase_request_view_own`.
+
+⚠️ **Permissions are read from a localStorage cache** (`mock_custom_roles`), refreshed by `syncCustomRolesFromSupabase()` on page load. After changing a role, the page must be **reloaded** before the change takes effect.
+
+⚠️ **Known RLS drift:** production's policy on `custom_roles` stopped matching the documented `full_access` policy — DELETE/UPDATE silently no-op (HTTP 200, empty result, row untouched). Fix: run `database/fix_custom_roles_rls.sql`.
 
 ---
 
 ## Architecture
 
 ### Full Supabase Mode (no mock/demo mode in the UI)
-As of commit `00699f1`, the app always talks to the live Supabase project:
-- `isMockMode` is hardcoded to `false` at declaration (`js/app.js:64` — line number shifted after the V1 modularization split moved `db.js`/`auth.js`/UI modules out of `app.js`; see REFACTORING.md) and is only ever flipped back to `true` by the Developer-only "Reset Mock Database" debug tool (`window.resetMockDatabase`) — a local-cache-clearing utility, not a real mode switch for normal users.
-- Supabase URL/anon key are hardcoded in `js/supabase.js` so every browser/device connects to the same project without any setup step.
-- `MOCK_DB` and `initMockDatabases()` still exist in `js/app.js` (not moved during the split — see REFACTORING.md) — they're not dead weight, they double as (a) the seed data hydrated into Supabase's `custom_roles` table the first time it's empty, and (b) the reset target for the Developer debug tool. `fetchData`/`saveData`/`deleteData` (now in `js/db.js`) still branch on `isMockMode` for historical reasons, but that branch is effectively unreachable in normal use.
-- `custom_roles` is the one table intentionally kept as a localStorage cache (`mock_custom_roles`) even in live mode — `syncCustomRolesFromSupabase()` (in `js/auth.js`) pulls it from Supabase into localStorage on load so `hasPermission()` can check permissions synchronously without an await on every render. `company_settings`, by contrast, is read directly from Supabase in `loadCompanySettings()` — it does not use the mock cache path.
+The app always talks to the live Supabase project. `isMockMode` is hardcoded `false` and is only flipped by the Developer-only "Reset Mock Database" debug tool. `MOCK_DB` still exists in js/app.js as (a) seed data for `custom_roles` on first sync and (b) the reset target for that debug tool. Leftover `if (isMockMode)` branches are effectively dead but still exercised by the debug tool — don't remove them without reworking the tool.
 
 ### Authentication flow
-1. `checkAuthentication()` runs on load, wires `supabaseClient.auth.onAuthStateChange` and checks the current session.
-2. No session → `auth-overlay` shown (Email/Password or Google OAuth), app container hidden.
-3. Session exists → `loadUserProfile(userId)` fetches the row from `profiles`, `syncCustomRolesFromSupabase()` runs, `applyRoleAccess()` shows/hides sidebar sections based on the resolved role's permissions, dashboard loads.
-4. New signups get a `profiles` row via the `handle_new_user` DB trigger (see above), not application code.
+1. `checkAuthentication()` wires `supabaseClient.auth.onAuthStateChange` and checks the session.
+2. No session → `auth-overlay` shown, app container hidden.
+3. Session → `loadUserProfile(userId)` reads `profiles`, `syncCustomRolesFromSupabase()` fills the permission cache, `applyRoleAccess()` shows/hides menus, dashboard loads.
+4. New signups get their `profiles` row from the DB trigger, not app code.
 
-### SPA structure (`index.html` / `js/db.js` + `js/auth.js` + `js/greenbean.js` + `js/roasting.js` + `js/packing.js` + `js/sales.js` + `js/settings.js` + `js/app.js`)
-Since the V1 modularization (see REFACTORING.md), these load as separate plain `<script>` tags in the order listed in "Project Structure" above — all in one shared global scope (no ES modules, no bundler), so any function/global from an earlier-loaded file is available to later ones. `js/app.js` loads last and holds bootstrap + whatever core logic wasn't feature-specific enough to move to a UI module.
-- Single page with `<section id="sec-*" class="page-section hidden">` blocks (dashboard, greenbean, roasting, packing, customers, handover, reports, settings, etc.); `navigateTo(sectionId)` toggles visibility and calls `loadSectionData(sectionId)` to lazy-load that section's data.
-- `fetchData(table)` / `saveData(table, record)` / `deleteData(table, id)` (all in `js/db.js`) are the only data-access primitives used throughout — always Supabase-backed selects/upserts/deletes keyed by `id`, wrapped in try/catch that falls back to a cached mock read on fetch failure.
-- `_dbCache` (a `Map`, in `js/db.js`) memoizes `getMockTable()` reads within a session; `invalidateCache(table)` is called after every mutating mock write. This is only relevant to the mock-cache code path described above.
-- Permissions gate UI, not data: `hasPermission(key)` (in `js/auth.js`) reads the cached role permissions synchronously; there's no server-side RLS enforcement of the granular permission keys beyond Supabase's coarser table-level RLS policies.
-- Modals are rendered via `openModal(title, htmlContent)`; confirmations via `showWarningModal()`; the app has no toast/notification framework beyond these overlay-style modals.
-- i18n: any user-facing string must go through `data-i18n` / `data-i18n-placeholder` attributes (HTML) or `window.t('key')` (JS), with the key added to both `en` and `ar` in `js/translations.js`. Arabic triggers RTL layout via `js/i18n.js` (`adjustSidebarLayoutForRTL`). See `README_TRANSLATION.md` for the Excel/CSV import-export workflow non-technical users use to edit translations.
-- Theming: colors must go through CSS custom properties in `css/styles.css` (`var(--bg-app)`, `var(--text-primary)`, etc.) — never hardcode colors, since the same variables drive dark/light mode.
+### SPA structure
+One page, one `<section id="sec-*" class="page-section hidden">` per screen. `navigateTo(sectionId)` toggles visibility, sets the header from `PAGE_METADATA`, restores the last tab, and calls `loadSectionData(sectionId)`.
+
+Current sidebar: **Dashboard · Inventory** (Greenbean / Bulk Roasted / Packed Coffee / Other Items) **· Production · Packing · CRM · Goods Handover · Purchasing · Reports · Tracking · Setting**.
+
+- `fetchData(table)` / `saveData(table, record)` / `deleteData(table, id)` (js/db.js) are the only data-access primitives. `saveData` updates when the record has an `id`, inserts when it doesn't.
+- Permissions gate the UI, not the data: `hasPermission(key)` reads the synchronous cache; `SECTION_PERMISSIONS` gates sections (an array means OR), `TAB_PERMISSIONS` in js/app.js gates individual tab buttons.
+- Modals go through `openModal(title, htmlContent, customWidth)`; confirmations through `showWarningModal()`; long operations through `lockProcessingScreen(text)` which returns `{setText, release}`. There is no toast framework.
+- **i18n:** every user-facing string goes through `data-i18n` / `data-i18n-placeholder` (HTML) or `window.t('key')` (JS), with the key added to **both** `en` and `ar` in js/translations.js. Arabic triggers RTL via js/i18n.js. There must be **no hardcoded Indonesian or English text in the UI** — commit `69ca581` was the cleanup for exactly that leak.
+- **Theming:** colors go through the CSS custom properties in css/styles.css (`var(--bg-app)`, `var(--danger)`, …). Never hardcode a color; the same variables drive dark and light mode.
+
+### CRM page (`js/crm.js`, `#sec-crm`) — added 2026-09-26/27
+The Customers menu was **merged into CRM** on 2026-09-27; there is no separate Customers section any more. The page has two main tabs, each with its own permission:
+
+| Main tab | Permission | Sub-tabs |
+|---|---|---|
+| **Customer** | `customer_view` | **Directory** (the old customer directory) · **Segments** (RFM: VIP / Regular / At Risk / Dormant / New) |
+| **Performance** | `crm_manage` | **By customer** (reorder prediction table) · **By sales** (per-sales scorecard) |
+
+`SECTION_PERMISSIONS['sec-crm']` is `['customer_view', 'crm_manage']` — either reaches the section, and `TAB_PERMISSIONS` hides the individual tab buttons. `loadCrmSectionEntry()` then forces the section onto a tab the user may actually open; without it, a hidden-but-active tab would still show its contents.
+
+Sub-tabs deliberately do **not** use `.tab-btn`/`.tab-content`: `restoreLastTab()` sweeps every `.tab-btn` inside a section, so nested tabs would kill each other. They use `.crm-subtab`/`.crm-subpane` handled by `crmpgSubTab(btn, paneId)`, scoped to the panel the button lives in.
+
+**Reorder prediction** (CRM_PAGE_PLAN.md §6.2) mixes order rhythm with consumption rate, weighted per customer by that customer's own past error, clamped to 0.5×–2.5× their usual gap. Under 3 orders there is no date at all; a customer past 2× their rhythm gets no date either. Overall accuracy is printed under the table so the method can't rot unnoticed. Re-verify any change with `docs/reorder_backtest.js` (paste into the browser console).
+
+**Two different status vocabularies, on purpose:** Performance answers *rhythm* (Steady / Loyal / Slipping / Dormant / Ordered once / Never ordered); Segments answers *rank against peers of the same customer type* (VIP / Regular / At Risk / …).
 
 ### `leader.html` / `js/leader.js`
-A minimal companion page (also the source for the Capacitor Android "Leader" app via `dist/`) that only lists pending sales orders and lets a leader Approve/Reject them, reusing `window.fetchData`/`saveData` from the shared `js/supabase.js` client.
-
----
-
-## Recent Changes (as of 2026-07-05)
-
-- Fixed `handle_new_user()` trigger to match the actual `profiles` schema (it previously inserted into a non-existent `username` column, breaking every signup).
-- Fixed Google OAuth by adding the missing Authorized JavaScript Origins in Google Cloud Console.
-- Removed dual localStorage/Supabase ("mock"/"demo") mode from the *login/setup* flow specifically — hardcoded Supabase credentials and `custom_roles` sync so all browsers/devices share one dataset (`00699f1`). Note this did not remove the underlying `MOCK_DB`/cache machinery described above, only the user-facing demo-mode UI and the "Setup Database Connection" / developer-bypass login screens.
-
-## V1 Modularization (completed, merged 2026-07-08 via `160ce0e`)
-
-`js/app.js` (13,018 lines, 160 functions) was split into 7 plain `<script>` files — `db.js`, `auth.js`, `greenbean.js`, `roasting.js`, `packing.js`, `sales.js`, `settings.js` — leaving `app.js` at ~3,800 lines. Plain-script split was chosen over ES modules specifically to avoid breaking 82 inline `onclick=` handlers and ~25 mutable global state variables. Also added shadow lot-tracking tables (`green_coffee_lots`, `packed_coffee_lots`, INTEGER FKs) for future V2 use. Full rationale, before/after metrics, and the FK-type gotcha (SERIAL/INTEGER, not UUID) are in **REFACTORING.md**. V2 phase scope (FIFO, Work Order, B2B, AI) is tracked in **V2_ROADMAP.md**.
-
-## Current Status
-
-**Working:** Email/Password + Google OAuth auth, RBAC via `custom_roles` (6 default roles / ~40 permission keys), dashboard, green coffee inventory CRUD, roasting plans & batches, packing, sales requests & dispatch approval, dark/light theme, EN/AR i18n, barcode scan → quick roast log, customer management.
-
-**Removed (2026-08-27):** the standalone WhatsApp leader-notification service (`whatsapp-service/`) — was never used, unlikely to be needed soon. It shared no code with the main app (separate Node process, only integration point was polling the same Supabase project), so removal was just deleting that local directory. If it's ever wanted again, it can be rebuilt from scratch or recovered from git history before this commit (it was never git-tracked — see `.gitignore` — so there's no tracked history to restore either; the design (poll `request_orders` for `status = 'Pending Approval'`, message `LEADER_PHONE` via `whatsapp-web.js`+Puppeteer) is documented here for reference only).
-
-**Needs more testing/completion:**
-- Full end-to-end workflow across Green Bean → Roasting → Packing → Sales.
-- Reports module (chart data binding, date filtering).
-- Print output for requests/dispatch/waybill/labels.
-- Mobile responsiveness.
-- ~~`database/supabase_schema.sql` should be brought up to date with production~~ — DONE 2026-07-06 (full sync from production `information_schema`; keep it in sync per the rules in "Database Schema" above).
-
-**Known technical debt:**
-- ~~`js/app.js` is monolithic (~11,000 lines) with no module boundaries~~ — DONE 2026-07-08, split into `db.js`/`auth.js`/`greenbean.js`/`roasting.js`/`packing.js`/`sales.js`/`settings.js` + `app.js` (see "V1 Modularization" above and REFACTORING.md).
-- Leftover `if (isMockMode)` branches throughout `js/app.js` are effectively dead in normal operation but are still exercised by the Developer "Reset Mock Database" debug tool — don't remove them without also removing/reworking that tool.
-- `desktop-tutorial/` at the repo root is a leftover GitHub Desktop scaffold folder, unrelated to the app.
-- `dist/js/app.js` (6,359 lines) is a stale, unreferenced pre-split copy sitting in the Android build source — `dist/index.html` doesn't even load it (only `js/supabase.js` + `js/leader.js`). Safe to delete; not part of the app.
-- `js/app_backup.js` at the repo root (untracked, ~13,018 lines) is a local-only pre-split snapshot, not loaded anywhere — safe to delete once confirmed no longer needed as a rollback reference.
-- `js/modules/ui/` is an empty directory with no files — leftover stub, safe to remove.
+A minimal companion page (also the source for the Capacitor Android "Leader" app via `dist/`) that lists pending sales orders and lets a leader approve/reject them, reusing `window.fetchData`/`saveData` from the shared `js/supabase.js` client.
 
 ---
 
 ## Roles & Permissions Matrix
 
-| Role | Dashboard | Inventory | Production | Packing | Sales | Reports | Settings |
-|------|-----------|-----------|------------|---------|-------|---------|----------|
-| Developer | Yes | Full | Full | Full | Full | Yes | All + Debug Tools |
-| Admin | Yes | Full | Full | Full | Full | Yes | All |
-| Production Leader | Yes | Full | Full | Full | View only | Yes | Production only |
-| Roaster | Yes | View only | Batches only (add, no edit/delete/approve) | No | No | No | No |
-| Packing Team | Yes | No | No | Full | Request view only | No | No |
-| Sales Agent | Yes | No | No | No | Full | Yes | No |
+| Role | Dashboard | Inventory | Production | Packing | CRM | Sales | Reports | Settings |
+|------|-----------|-----------|------------|---------|-----|-------|---------|----------|
+| Developer | Yes | Full | Full | Full | Both tabs | Full | Yes | All + Debug Tools |
+| Admin | Yes | Full | Full | Full | Both tabs | Full | Yes | All |
+| Production Leader | Yes | Full | Full | Full | Both tabs | View only | Yes | Production only |
+| Roaster | Yes | View only | Batches only | No | No | No | No | No |
+| Packing Team | Yes | No | No | Full | No | Request view only | No | No |
+| Sales Agent | Yes | No | No | No | Customer tab only | Full | Yes | No |
 
-Exact keys live in each role's `permissions` object in `custom_roles` (seeded from `MOCK_DB.custom_roles` in `js/app.js`) — check there before assuming a permission key exists.
+Exact keys live in each role's `permissions` jsonb (seeded from `MOCK_DB.custom_roles` in js/app.js). Notable keys added recently: `crm_manage` (CRM Performance tab), `packing_waste_control` (Close Lot above 5 kg + Return from Waste), `other_items_*`, `purchase_*`, `reports_stockopname_*`, `customer_cat_retail/wholesale/supermarket`.
+
+---
+
+## Plan documents
+
+Feature work in this repo is planned in a root-level `*_PLAN.md` before the code is written, and the plan stays as the record. Read the relevant one before changing that area:
+
+`CRM_PAGE_PLAN.md` (CRM page + prediction) · `CRM_JOURNEY_DATA.md` (what the unbuilt Journey tab needs) · `CRM_INSIGHTS_PLAN.md` (Segments sub-tab) · `CUSTOMER_CATEGORY_ROLE_PLAN.md` (category access) · `STOCK_LEDGER_PLAN.md` · `STOCK_OPNAME_PLAN.md` · `OTHER_ITEMS_PLAN.md` · `PURCHASE_REQUEST_PLAN.md` · `APPROVAL_REVISION_PLAN.md` · `CHECKOUT_AUTOFILL_PLAN.md` · `CUSTOMER_TYPEAHEAD_PLAN.md` · `TEST_BATCH_CARD_PLAN.md` · `REFACTORING.md` (why plain scripts, not ES modules) · `V2_ROADMAP.md`.
+
+`SONNET_PROMPT_*.md` files are handoff prompts for separate implementation sessions; each points at its plan.
+
+---
+
+## Current Status
+
+**Working:** Email/Password + Google OAuth, RBAC via `custom_roles`, dashboard, green coffee inventory with lot tracking + lab analysis, roasting plans/batches/blends, packing with unpack/repack/waste, stock release, dispatch checkout, stock ledgers for packed and bulk, stock opname (stock take) with freeze, sales requests + dispatch approval, purchase requests, other items, lot tracking lookup, CRM page, dark/light theme, EN/AR i18n.
+
+**Needs more testing/completion:** Reports module (chart binding, date filtering), print output (requests/dispatch/waybill/labels), mobile responsiveness.
+
+**Known technical debt:**
+- `js/packing.js` is 8,400 lines and `js/app.js` 6,600 — the next split candidates.
+- `js/app_backup.js` (untracked, ~13,000 lines) is a pre-split snapshot loaded by nothing — safe to delete.
+- `dist/js/app.js` is a stale pre-split copy that `dist/index.html` doesn't reference — safe to delete.
+- Leftover `if (isMockMode)` branches (see "Full Supabase Mode").
+- `handover_logs` is referenced by `MOCK_DB` but does not exist in production.
 
 ---
 
 ## Test Credentials
 
 - **Email:** cholidulasyhar00@gmail.com
-- **Password:** [See team shared document or ask team for current password]
-- **Role:** Developer (Developer-only UI, e.g. Settings → Debug Tools, is gated on `currentUser.role === 'Developer'`, not a permission key).
-
-⚠️ **Security Note:** This repo is now private. If credentials are ever exposed, reset the password in Supabase Dashboard → Authentication → Users.
+- **Password:** [ask the team — never commit it]
+- **Role:** Developer (Developer-only UI is gated on `currentUser.role === 'Developer'`, not a permission key).
 
 ---
 
 ## Development Guidelines
 
-- No build tools/bundler for the web app — every `js/*.js` file runs as-is in the browser. External libraries (Supabase JS, Chart.js, Lucide, JsBarcode) are loaded via CDN `<script>` tags in `index.html`/`leader.html`, not npm.
-- After editing any `js/*.js` file, run `node test.js` (or `node --check js/<file>.js` for a single file) to catch syntax errors before committing — there's a history of syntax-error regressions in this codebase (see commit `fc33261`).
-- `index.html` cache-busts each split script with its own `?v=` query param (e.g. `js/app.js?v=53`, `js/auth.js?v=5`, `js/sales.js?v=2`) — bump the `?v=` of whichever file you changed when shipping, so browsers don't serve a stale cached copy of just that file.
-- Any new user-facing string needs a `data-i18n`/`t()` key added to *both* `en` and `ar` in `js/translations.js` — see `.agents/AGENTS.md` for the localization/RTL/theming rules enforced in this repo (no hardcoded English text, no hardcoded colors, always null-check DOM elements before attaching listeners).
-- `js/supabase.js` is shared by both `index.html` and `leader.html` — changes to Supabase client init affect both apps (and the Capacitor Android build in `dist/`, which must be kept in sync manually).
+- No build tools. External libraries (Supabase JS, Chart.js, Lucide, JsBarcode) come from CDN `<script>` tags, not npm.
+- After editing any `js/*.js`, run **`node test.js`** before committing. This repo has a history of syntax-error regressions (`fc33261`).
+- **Bump the `?v=` query param** in index.html for every file you changed (`js/crm.js?v=10`, `css/styles.css?v=35`, …), or browsers serve a stale copy of just that file.
+- Any new user-facing string needs a key in **both** `en` and `ar` in js/translations.js.
+- **Null-check DOM elements** before attaching listeners — sections are all in one document and may not be the visible one.
+- `js/supabase.js` is shared by index.html, leader.html and the Android build — changes there affect all three.
+- See `.agents/AGENTS.md` for the localization/RTL/theming rules enforced in this repo.
 
 ---
 
 ## Deployment Checklist
 
-**Before pushing code to main / deploying to production:**
+- [ ] **Syntax:** `node test.js` passes
+- [ ] **Schema alignment:** code matches `database/supabase_schema.sql`; if they diverged, both change in the same commit
+- [ ] **Migration applied** to production + `NOTIFY pgrst, 'reload schema';`
+- [ ] **New permission keys backfilled** into production `custom_roles` — including the real role names (`admin2`, not just `Admin`)
+- [ ] **Cache busting:** `?v=` bumped for every changed file
+- [ ] **Hard refresh** (`Ctrl+Shift+R`) and test the changed feature end to end
+- [ ] **Error handling:** new data mutations check `error` and tell the user; stock paths follow the all-or-nothing convention above
+- [ ] After pushing to main, wait for Vercel to report "Ready", then hard refresh and re-test on production
 
-- [ ] **Syntax:** `node test.js` passes (checks all split `js/*.js` files together as the browser would load them)
-- [ ] **Schema alignment:** Code changes match `database/supabase_schema.sql` (or production schema if ahead)
-- [ ] **Hard refresh testing:** Hard refresh app (`Ctrl+Shift+R`), test changed features end-to-end
-- [ ] **Documentation:** Schema file updated if any DB columns added/removed
-- [ ] **Error handling:** New data mutations (saveData) check `error` and alert on failure (don't fail silently)
-- [ ] **Cache busting:** If JS changes shipped, bump `?v=X` in `index.html` for each changed script (`app.js`, `auth.js`, `greenbean.js`, etc.) so browsers load a fresh copy of that file
-
-**Schema Sync (Critical):**
-- **Single source of truth:** `database/supabase_schema.sql` must reflect production schema
-- **Before merge:** Code must match schema; if schema and code diverge, update both in same PR
-- **Before deploy:** Verify production schema = file schema (or run migrations if ahead)
-- **Lesson:** All 6 bugs in July 2026 session were schema mismatches between development file and production DB
-
-**Rollout:**
-- After push to main, wait for Vercel deployment to complete (check dashboard — status should be "Ready")
-- Hard refresh app and test again to ensure new code is live
-- Monitor browser console for errors on first user interactions with new features
+**Lesson worth repeating:** every one of the six bugs in the July 2026 session was a mismatch between this file's schema and the production schema. Keeping them in sync is not bookkeeping — it is the difference between a working deploy and a silent failure.
