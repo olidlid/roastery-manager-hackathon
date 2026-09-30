@@ -394,7 +394,7 @@ const PERMISSION_GROUPS = [
         { key: 'dispatch_approval_print', label: 'Print Waybill' }
     ]},
     { label: '👥 Customers', keys: [
-        { key: 'customer_view', label: 'View Customers' },
+        { key: 'customer_view', label: 'View Customers (opens CRM → Customer tab)' },
         { key: 'customer_add', label: 'Add Customer' },
         { key: 'customer_edit', label: 'Edit Customer' },
         { key: 'customer_delete', label: 'Delete Customer' }
@@ -412,11 +412,15 @@ const PERMISSION_GROUPS = [
         { key: 'customer_cat_wholesale', label: 'Wholesale Category Access' },
         { key: 'customer_cat_supermarket', label: 'Supermarket Category Access' }
     ]},
-    // CRM_PAGE_PLAN.md §2.2 — satu izin untuk satu halaman utuh, justru itu
-    // alasan halaman CRM dipisah dari Customers. Pagar KATEGORI di atas tetap
-    // berlaku di dalamnya: crm_manage membuka halamannya, bukan customernya.
-    { label: '📊 CRM Management', keys: [
-        { key: 'crm_manage', label: 'CRM page (customers by sales + sales performance)' }
+    // Sesudah menu Customers dilebur ke CRM (2026-09-27), halaman CRM punya DUA
+    // izin, satu per tab utama:
+    //   customer_view (grup Customers di atas) -> tab Customer: Directory + Segments
+    //   crm_manage                             -> tab Performance: By customer + By sales
+    // Labelnya menyebut tabnya secara eksplisit: sebelumnya berbunyi "CRM page",
+    // yang membuat admin mengira satu centang ini membuka seluruh halaman.
+    // Pagar KATEGORI di atas tetap berlaku di dalam keduanya.
+    { label: '📊 CRM Performance', keys: [
+        { key: 'crm_manage', label: 'CRM Performance (by customer + by sales)' }
     ]},
     // PURCHASE_REQUEST_PLAN.md §5.1 — six active keys. A seventh key,
     // purchase_request_view_own, exists in the data (seeded false for every
