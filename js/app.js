@@ -6225,6 +6225,7 @@ async function printStockCountForm(category = null) {
             </div>
             <table>
                 <thead>
+                    ${machine ? `<tr class="machine-row"><th colspan="5">${stockCategoryLabel(catKey)} · ${tMachine}: ${machine}</th></tr>` : ''}
                     <tr>
                         <th style="width:60px;">${tHeaderCode}</th>
                         <th>${tHeaderItem}</th>
@@ -6270,6 +6271,11 @@ async function printStockCountForm(category = null) {
         tbody td { padding: 6px 10px; border: 1px solid #cfcfcf; font-size: 12px; height: 26px; }
         tbody td.c { text-align: center; }
         tbody td.blank { background: #fff; }
+        /* Lives in <thead>, so the browser repeats it on every printed sheet
+           of a machine's list, not only the first. */
+        thead { display: table-header-group; }
+        thead tr.machine-row th { background: #e6eedf; color: #2d5016; font-size: 12px; letter-spacing: 0.3px; padding: 7px 10px; border: 1px solid #2d5016; }
+        tbody tr { page-break-inside: avoid; }
         .signoff { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; margin-top: 24px; }
         .sig { text-align: center; }
         .sig-line { border-top: 1px solid #333; margin-bottom: 4px; padding-top: 32px; }
