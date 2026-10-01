@@ -879,8 +879,32 @@
 
                     <div id="tab-oi-release" class="tab-content hidden">
                         <div class="card">
-                            <h3 class="card-title" data-i18n="oi_release_title">Stock Release</h3>
-                            <p style="font-size: 0.85rem; color: var(--text-muted);" data-i18n="oi_release_coming_soon">Coming soon.</p>
+                            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 12px; flex-wrap: wrap;">
+                                <div>
+                                    <h3 class="card-title" style="margin-bottom: 4px;" data-i18n="oi_release_title">Stock Release</h3>
+                                    <p style="font-size: 0.82rem; color: var(--text-muted); margin: 0;" data-i18n="oi_release_subtitle">Goods leaving stock without a Sales Request — sample, internal use, marketing event. Recorded immediately, no approval step.</p>
+                                </div>
+                                <button id="btn-oi-release-stock" class="btn btn-primary btn-sm" data-i18n="btn_oi_release_stock">
+                                    <i class="icon-plus"></i> Release Stock
+                                </button>
+                            </div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th data-i18n="col_date">Date</th>
+                                            <th data-i18n="col_category">Category</th>
+                                            <th data-i18n="col_item">Item</th>
+                                            <th data-i18n="lbl_pr_item_qty">Qty</th>
+                                            <th data-i18n="col_notes">Note</th>
+                                            <th data-i18n="waste_col_recorded_by">Recorded By</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="oi-release-table-body">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -3154,7 +3178,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=93"></script>
+    <script src="js/translations.js?v=94"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
@@ -3165,10 +3189,10 @@
     <script src="js/packing.js?v=144"></script>
     <script src="js/sales.js?v=66"></script>
     <script src="js/crm.js?v=10"></script>
-    <script src="js/otheritems.js?v=1"></script>
+    <script src="js/otheritems.js?v=2"></script>
     <script src="js/settings.js?v=30"></script>
     <script src="js/tracking.js?v=12"></script>
     <script src="js/purchasing.js?v=3"></script>
-    <script src="js/app.js?v=125"></script>
+    <script src="js/app.js?v=126"></script>
 </body>
 </html>

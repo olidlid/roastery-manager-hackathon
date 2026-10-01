@@ -6152,8 +6152,34 @@ async function printStockCountForm(category = null) {
     const tDate = window.t ? (window.t('col_date') || 'Date') : 'Date';
     const tBy = window.t ? (window.t('col_performed_by') || 'Counted By') : 'Counted By';
 
-    function renderPage(catKey, isLast) {
+    const tMachine = window.t ? (window.t('tracking_lbl_machine') || 'Machine') : 'Machine';
+
+    // Packed stock is counted one machine's shelf at a time (stock is split
+    // per machine), so Packed prints one page per machine, rows sorted by
+    // code then name then size; the machine moves from every row's label to
+    // the page header, and the blank write-in rows belong to that machine.
+    // Green bean and bulk have no machine split — one page each, as before.
+    const byCode = (a, b) => String(a.coffeeCode || '~').localeCompare(String(b.coffeeCode || '~'), undefined, { numeric: true })
+        || a.label.localeCompare(b.label) || (a.bagSizeG || 0) - (b.bagSizeG || 0);
+    function pagesFor(catKey) {
         const list = byCat[catKey] || [];
+        if (catKey !== 'packed') return [{ catKey, machine: null, list }];
+        const byMachine = new Map();
+        list.forEach(g => {
+            const m = g.machineName || '-';
+            if (!byMachine.has(m)) byMachine.set(m, []);
+            byMachine.get(m).push(g);
+        });
+        if (byMachine.size === 0) return [{ catKey, machine: null, list: [] }];
+        return [...byMachine.keys()].sort((a, b) => a.localeCompare(b)).map(m => ({
+            catKey, machine: m,
+            list: byMachine.get(m)
+                .map(g => ({ ...g, label: g.label.endsWith(` · ${m}`) ? g.label.slice(0, -(m.length + 3)) : g.label }))
+                .sort(byCode)
+        }));
+    }
+
+    function renderPage({ catKey, machine, list }, isLast) {
         let rows = '';
         list.forEach(g => {
             const sys = g.unit === 'kg' ? g.systemQty.toFixed(1) : g.systemQty;
@@ -6187,6 +6213,7 @@ async function printStockCountForm(category = null) {
                 </div>
                 <div class="lh-right">
                     <div class="doc-title">${stockCategoryLabel(catKey)}</div>
+                    ${machine ? `<div class="doc-machine">${tMachine}: ${machine}</div>` : ''}
                     <div class="doc-sub">${subtitle}</div>
                 </div>
             </div>
@@ -6214,9 +6241,8 @@ async function printStockCountForm(category = null) {
         </div>`;
     }
 
-    const pages = category
-        ? renderPage(category, true)
-        : renderPage('greenbean', false) + renderPage('bulk', false) + renderPage('packed', true);
+    const pageSpecs = (category ? [category] : ['greenbean', 'bulk', 'packed']).flatMap(pagesFor);
+    const pages = pageSpecs.map((p, i) => renderPage(p, i === pageSpecs.length - 1)).join('');
 
     const printContent = `<!DOCTYPE html>
 <html>
@@ -6235,6 +6261,7 @@ async function printStockCountForm(category = null) {
         .lh-right { text-align: right; }
         .doc-title { font-size: 17px; font-weight: 800; color: #2d5016; text-transform: uppercase; letter-spacing: 0.5px; }
         .doc-sub { font-size: 10px; color: #999; margin-top: 2px; }
+        .doc-machine { display: inline-block; margin-top: 4px; padding: 2px 10px; border: 1.5px solid #2d5016; border-radius: 4px; font-size: 13px; font-weight: 800; color: #2d5016; }
         .meta { display: flex; gap: 40px; font-size: 11px; color: #555; margin-bottom: 12px; }
         table { width: 100%; border-collapse: collapse; }
         thead th { background: #2d5016; color: #fff; padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; text-align: left; border: 1px solid #2d5016; }
