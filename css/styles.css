@@ -2291,3 +2291,9 @@ tbody tr:hover {
 .trk-unreg-note b { color: #b45309; }
 [data-theme="dark"] .trk-unreg-note b { color: #fbbf24; }
 .trk-bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--primary); vertical-align: middle; margin-left: 8px; opacity: 0.7; }
+
+/* Stock count sheet: one tab per category / per machine for packed. Not
+   .tab-btn on purpose (restoreLastTab sweeps every .tab-btn in a section). */
+.so-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.so-tab.active { background: var(--primary); border-color: var(--primary); color: var(--primary-contrast); }
+.so-tab-count { font-family: monospace; font-size: 0.75rem; opacity: 0.75; margin-left: 4px; }

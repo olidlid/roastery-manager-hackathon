@@ -3975,6 +3975,10 @@ let stockTakeResumeInfo = null;
 // item) or an in-page resume never drops what was typed.
 let stockTakeDrafts = new Map();
 let stockTakeSaveInFlight = false;
+// Which section tab of the count sheet is showing ('greenbean', 'bulk' or
+// 'packed|<machine name>'). Only hides rows — save/finalize always cover
+// every row of the take.
+let stockTakeActiveSection = null;
 // Fase 4: packed_coffee_lots + production_lots, fetched once per open take
 // and reused by every lot-detail screen (print Tahap 2, the detail modal,
 // the bottom bar's lot count) instead of refetching per group. Safe to
@@ -4153,6 +4157,43 @@ async function buildStockTakeGroups(onlyCategory = null) {
     });
 
     return onlyCategory ? groups.filter(g => g.category === onlyCategory) : groups;
+}
+
+// One row order for the count sheet AND the printed Stock Count Form (user
+// request 2026-10-01): green bean by code; bulk as built; packed by machine,
+// then code, name, size. Rows without a code go last; found items (added
+// during the count) go last within their machine.
+const STOCK_CATEGORY_ORDER = { greenbean: 0, bulk: 1, packed: 2 };
+function stockGroupMachine(g) {
+    if (g.category !== 'packed') return null;
+    if (g.machineName) return g.machineName;
+    // Found/stale rows rebuilt from a saved item: the label ends in the machine.
+    const parts = String(g.label || '').split(' · ');
+    return parts.length > 1 ? parts[parts.length - 1] : '-';
+}
+function stockGroupSection(g) {
+    return g.category === 'packed' ? `packed|${stockGroupMachine(g)}` : g.category;
+}
+function compareStockGroupsByCode(a, b) {
+    return (!a.coffeeCode - !b.coffeeCode)
+        || String(a.coffeeCode || '').localeCompare(String(b.coffeeCode || ''), undefined, { numeric: true })
+        || String(a.label || '').localeCompare(String(b.label || ''))
+        || (a.bagSizeG || 0) - (b.bagSizeG || 0);
+}
+function sortStockTakeGroups(groups) {
+    return (groups || []).map((g, i) => ({ g, i })).sort((x, y) => {
+        const a = x.g, b = y.g;
+        const cat = (STOCK_CATEGORY_ORDER[a.category] ?? 9) - (STOCK_CATEGORY_ORDER[b.category] ?? 9);
+        if (cat) return cat;
+        if (a.category === 'bulk') return x.i - y.i;
+        if (a.category === 'packed') {
+            const m = stockGroupMachine(a).localeCompare(stockGroupMachine(b));
+            if (m) return m;
+            const found = !!a.isFoundItem - !!b.isFoundItem;
+            if (found) return found;
+        }
+        return compareStockGroupsByCode(a, b) || x.i - y.i;
+    }).map(x => x.g);
 }
 
 function stockCategoryLabel(cat) {
@@ -4459,7 +4500,8 @@ async function startStockTake(category = null) {
         g.counted = false;
     }
 
-    currentStockTakeGroups = groups;
+    currentStockTakeGroups = sortStockTakeGroups(groups);
+    stockTakeActiveSection = null;
     stockTakeDrafts = new Map();
 
     const sheet = document.getElementById('stockopname-sheet');
@@ -4574,7 +4616,8 @@ async function resumeStockTake(take) {
         }
     });
 
-    currentStockTakeGroups = resumedGroups;
+    currentStockTakeGroups = sortStockTakeGroups(resumedGroups);
+    stockTakeActiveSection = null;
     stockTakeResumeInfo = { date: (take.started_at ? take.started_at.split('T')[0] : (take.take_date || '')), by: take.started_by || take.performed_by || '-' };
 
     const sheet = document.getElementById('stockopname-sheet');
@@ -4619,6 +4662,7 @@ function renderStockTakeSheet() {
             ? `<td class="text-center" style="cursor:pointer; color:var(--text-muted); font-weight:700;" onclick="openStockTakeDetailModal([${i}])" title="${window.t ? (window.t('stockopname_open_detail') || 'Enter lot detail') : 'Enter lot detail'}">›</td>`
             : `<td></td>`;
         const tr = document.createElement('tr');
+        tr.dataset.section = stockGroupSection(g);
         tr.innerHTML = `
             <td class="text-center" style="font-family:monospace; font-weight:700;">${g.coffeeCode || '—'}</td>
             <td><strong>${g.label}</strong>${staleTag}${foundTag}</td>
@@ -4636,15 +4680,17 @@ function renderStockTakeSheet() {
     // own — typing from the printed sheet has to work without a mouse
     // (STOCK_OPNAME_PLAN.md §4.2).
     const inputs = Array.from(tbody.querySelectorAll('.stockopname-actual-input'));
-    inputs.forEach((input, pos) => {
+    inputs.forEach((input) => {
         input.addEventListener('input', () => { updateVarianceCell(input); recordStockTakeDraft(input); });
         input.addEventListener('keydown', (e) => {
             if (e.key !== 'Enter') return;
             e.preventDefault();
-            const next = inputs[pos + 1];
+            const visible = inputs.filter(x => !x.closest('tr').classList.contains('hidden'));
+            const next = visible[visible.indexOf(input) + 1];
             if (next) next.focus(); else input.blur();
         });
     });
+    renderStockTakeTabs();
 
     // Fase 4 §4.2: "Cetak rincian"/"Input rincian" are always available in
     // the header, regardless of whether anything currently needs detailing
@@ -4956,6 +5002,48 @@ function updateProgressNote() {
     }
     el.textContent = text;
     updateStockTakeSaveButton();
+    updateStockTakeTabCounts();
+}
+
+// Section tabs above the count table: one per category, and one per machine
+// for packed (stock is split per machine). Hidden when there's one section.
+function renderStockTakeTabs() {
+    const bar = document.getElementById('stockopname-sheet-tabs');
+    const tbody = document.getElementById('stockopname-count-body');
+    if (!bar || !tbody || !currentStockTakeGroups) return;
+    const sections = [];
+    currentStockTakeGroups.forEach(g => { const s = stockGroupSection(g); if (!sections.includes(s)) sections.push(s); });
+    if (!sections.includes(stockTakeActiveSection)) stockTakeActiveSection = sections[0] || null;
+    const multiCategory = new Set(currentStockTakeGroups.map(g => g.category)).size > 1;
+    const label = s => {
+        if (!s.startsWith('packed|')) return stockCategoryLabel(s);
+        const machine = s.slice(7);
+        return multiCategory ? `${stockCategoryLabel('packed')} · ${machine}` : machine;
+    };
+    const esc = v => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    if (sections.length <= 1) {
+        bar.classList.add('hidden');
+        bar.innerHTML = '';
+    } else {
+        bar.classList.remove('hidden');
+        bar.innerHTML = sections.map(s => `<button type="button" class="btn btn-secondary btn-sm so-tab${s === stockTakeActiveSection ? ' active' : ''}" data-section="${esc(s)}">${esc(label(s))} <span class="so-tab-count" data-section="${esc(s)}"></span></button>`).join('');
+        bar.querySelectorAll('.so-tab').forEach(btn => {
+            btn.onclick = () => { stockTakeActiveSection = btn.dataset.section; renderStockTakeTabs(); };
+        });
+    }
+    tbody.querySelectorAll('tr[data-section]').forEach(tr => {
+        tr.classList.toggle('hidden', sections.length > 1 && tr.dataset.section !== stockTakeActiveSection);
+    });
+    updateStockTakeTabCounts();
+}
+
+function updateStockTakeTabCounts() {
+    const bar = document.getElementById('stockopname-sheet-tabs');
+    if (!bar || !currentStockTakeGroups) return;
+    bar.querySelectorAll('.so-tab-count').forEach(span => {
+        const inSection = currentStockTakeGroups.filter(g => stockGroupSection(g) === span.dataset.section);
+        span.textContent = `${inSection.filter(g => g.counted).length}/${inSection.length}`;
+    });
 }
 
 // Cancelling marks the row 'cancelled' (STOCK_OPNAME_PLAN.md §5.1) — it is
@@ -6154,31 +6242,23 @@ async function printStockCountForm(category = null) {
 
     const tMachine = window.t ? (window.t('tracking_lbl_machine') || 'Machine') : 'Machine';
 
-    // Packed stock is counted one machine's shelf at a time (stock is split
-    // per machine), so Packed prints one page per machine, rows sorted by
-    // code then name then size; the machine moves from every row's label to
-    // the page header, and the blank write-in rows belong to that machine.
-    // Green bean and bulk have no machine split — one page each; green bean
-    // is sorted by code too, bulk keeps its order. Rows without a code go last.
-    const byCode = (a, b) => (!a.coffeeCode - !b.coffeeCode)
-        || String(a.coffeeCode || '').localeCompare(String(b.coffeeCode || ''), undefined, { numeric: true })
-        || a.label.localeCompare(b.label) || (a.bagSizeG || 0) - (b.bagSizeG || 0);
+    // Same row order as the count sheet (sortStockTakeGroups). Packed is
+    // counted one machine's shelf at a time, so it prints one page per
+    // machine: the machine moves from every row's label to the page header,
+    // and the blank write-in rows belong to that machine.
     function pagesFor(catKey) {
-        const list = byCat[catKey] || [];
-        if (catKey === 'greenbean') return [{ catKey, machine: null, list: [...list].sort(byCode) }];
+        const list = sortStockTakeGroups(byCat[catKey] || []);
         if (catKey !== 'packed') return [{ catKey, machine: null, list }];
         const byMachine = new Map();
         list.forEach(g => {
-            const m = g.machineName || '-';
+            const m = stockGroupMachine(g);
             if (!byMachine.has(m)) byMachine.set(m, []);
             byMachine.get(m).push(g);
         });
         if (byMachine.size === 0) return [{ catKey, machine: null, list: [] }];
-        return [...byMachine.keys()].sort((a, b) => a.localeCompare(b)).map(m => ({
+        return [...byMachine.entries()].map(([m, rows]) => ({
             catKey, machine: m,
-            list: byMachine.get(m)
-                .map(g => ({ ...g, label: g.label.endsWith(` · ${m}`) ? g.label.slice(0, -(m.length + 3)) : g.label }))
-                .sort(byCode)
+            list: rows.map(g => ({ ...g, label: g.label.endsWith(` · ${m}`) ? g.label.slice(0, -(m.length + 3)) : g.label }))
         }));
     }
 

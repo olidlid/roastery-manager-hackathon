@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=37">
+    <link rel="stylesheet" href="css/styles.css?v=38">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -2342,6 +2342,7 @@
                                     <label class="form-label" for="stockopname-notes" data-i18n="lbl_stockopname_notes">Notes (optional)</label>
                                     <input type="text" id="stockopname-notes" class="form-control">
                                 </div>
+                                <div id="stockopname-sheet-tabs" class="so-tabs hidden"></div>
                                 <div class="table-container">
                                     <table id="stockopname-count-table">
                                         <thead>
@@ -3193,6 +3194,6 @@
     <script src="js/settings.js?v=30"></script>
     <script src="js/tracking.js?v=12"></script>
     <script src="js/purchasing.js?v=3"></script>
-    <script src="js/app.js?v=129"></script>
+    <script src="js/app.js?v=130"></script>
 </body>
 </html>
