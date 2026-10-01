@@ -6159,7 +6159,9 @@ async function printStockCountForm(category = null) {
     // code then name then size; the machine moves from every row's label to
     // the page header, and the blank write-in rows belong to that machine.
     // Green bean and bulk have no machine split — one page each, as before.
-    const byCode = (a, b) => String(a.coffeeCode || '~').localeCompare(String(b.coffeeCode || '~'), undefined, { numeric: true })
+    // Rows without a code go last.
+    const byCode = (a, b) => (!a.coffeeCode - !b.coffeeCode)
+        || String(a.coffeeCode || '').localeCompare(String(b.coffeeCode || ''), undefined, { numeric: true })
         || a.label.localeCompare(b.label) || (a.bagSizeG || 0) - (b.bagSizeG || 0);
     function pagesFor(catKey) {
         const list = byCat[catKey] || [];
