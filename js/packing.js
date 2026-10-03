@@ -1863,7 +1863,7 @@ async function loadPackingRecordsTable() {
     tbody.innerHTML = '';
 
     if (!records || records.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="text-center-muted">No packing records found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center-muted">No packing records found.</td></tr>`;
         return;
     }
 
@@ -1877,6 +1877,9 @@ async function loadPackingRecordsTable() {
         // corrected here — older rows have no lot to safely adjust.
         const lot = rec.packed_coffee_lot_id ? (packedLots || []).find(l => l.id === rec.packed_coffee_lot_id) : null;
         const lotCode = lot ? lot.lot_code : '-';
+        // Strip code = the short number printed on the bag's sticker, the
+        // one people actually scan/read off the shelf.
+        const stripCode = lot && lot.strip_code ? lot.strip_code : '-';
         const isCorrection = rec.status === 'Correction';
 
         const tr = document.createElement('tr');
@@ -1887,6 +1890,7 @@ async function loadPackingRecordsTable() {
             <td>${rec.size_label || (rec.bag_size_g ? (rec.bag_size_g >= 1000 ? `${rec.bag_size_g/1000}kg` : `${rec.bag_size_g}g`) : '-')}</td>
             <td>${rec.quantity || 0}</td>
             <td><code>${lotCode}</code></td>
+            <td><code style="font-weight:700;">${stripCode}</code></td>
             <td>${lot ? `<button type="button" class="btn btn-secondary btn-sm btn-edit-packing-record" data-id="${rec.id}">Edit</button>` : ''}</td>
         `;
         tbody.appendChild(tr);
