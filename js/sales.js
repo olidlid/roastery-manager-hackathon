@@ -2767,6 +2767,26 @@ async function approveSalesOrder(orderId) {
         e.preventDefault();
         const rows = document.querySelectorAll('.approval-item-row');
 
+        // A line approved with 0 everywhere (packed + bulk + roast) is
+        // recorded as fully unfulfilled and packing has nothing to check
+        // out for it — ما031026001 (3 Oct 2026) went out with 90 bags and no
+        // stock movement this way. Say so before saving.
+        const zeroLines = [...rows].filter(r => {
+            const v = sel => parseInt((r.querySelector(sel) || {}).value) || 0;
+            return (parseInt(r.getAttribute('data-requested')) || 0) > 0 && v('.inp-fulfill') + v('.inp-bulk') + v('.inp-prod') === 0;
+        }).map(r => {
+            const head = r.firstElementChild ? r.firstElementChild.textContent.trim() : '';
+            return `• ${head} — ${r.getAttribute('data-requested')} ${stT('approve_zero_unfulfilled', 'bags unfulfilled')}`;
+        });
+        if (zeroLines.length > 0) {
+            const all = zeroLines.length === rows.length;
+            const msg = (all
+                ? stT('approve_zero_all', 'Every line is approved with 0. The WHOLE order will be recorded as unfulfilled — packing will have nothing to prepare or dispatch.')
+                : stT('approve_zero_some', 'These lines are approved with 0 and will be recorded as unfulfilled — packing will not prepare them:'))
+                + '\n\n' + zeroLines.join('\n') + '\n\n' + stT('approve_zero_ask', 'Approve anyway?');
+            if (!await showWarningModal(msg, true, stT('approve_zero_title', 'Approve with 0?'), stT('approve_zero_btn', 'Yes, approve'))) return;
+        }
+
         // Fresh claim ledger for THIS submit — deliberately not reusing
         // claimedSoFarByBulkId from the render-time proposal above, since
         // the leader may have edited numbers after the proposal was first

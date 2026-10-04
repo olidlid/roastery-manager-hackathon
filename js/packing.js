@@ -2322,7 +2322,12 @@ async function loadPackingRequestsSection() {
         // 2026-07-27: an order auto-marked "Ready" from stale packed stock
         // at approval had no path to reopen and fix it). Edit reopens the
         // same checkout modal regardless of ready state.
-        const actionBtnHtml = allDone
+        // Every line "done" with 0 bags checked out = approved with 0 on every
+        // line: nothing to hand over, so no Dispatch (see dispatchOrder).
+        const nothingOut = allDone && totalPrepared === 0;
+        const actionBtnHtml = nothingOut
+            ? `<span style="flex: 1; font-size: 0.74rem; color: var(--danger); font-weight: 600; align-self: center;">${stT('card_nothing_to_dispatch', 'Approved with 0 — nothing to pack or dispatch')}</span>`
+            : allDone
             ? `<button class="btn btn-secondary btn-sm btn-edit-ready-order" data-order="${order.id}" style="flex: 0 0 auto; padding-left: 14px; padding-right: 14px;" title="Edit / correct fulfillment" ${hasPermission('packing_dispatch_checkout') ? '' : 'disabled title="No permission to edit orders"'}>Edit</button><button class="btn btn-success btn-sm btn-dispatch-order" data-order="${order.id}" style="flex: 1; font-weight: 700;">Dispatch</button>`
             : `<button class="btn btn-primary btn-sm btn-prepare-order" data-order="${order.id}" style="flex: 1; font-weight: 700;" ${hasPermission('packing_dispatch_checkout') ? '' : 'disabled title="No permission to checkout orders"'}>${isPartial ? (window.t ? window.t('btn_continue_packing') : 'Continue') : 'Prepare'}</button>`;
 
@@ -4457,14 +4462,37 @@ async function printOrderDetail(orderId) {
     printWindow.document.close();
 }
 
+// Dispatch only closes the order — stock already left at checkout. Refused
+// when checkout took nothing at all (ما031026001, 3 Oct 2026: every line was
+// approved with 0, the card offered Dispatch, and 90 bags went out with no
+// stock movement). Records when and by whom, for Completed Order.
 async function dispatchOrder(orderId) {
-    const { data: orders } = await fetchData('request_orders');
-    const order = orders.find(o => o.id === orderId);
-    if (!order) return;
-    
-    order.status = 'Dispatched';
-    await saveData('request_orders', order);
-    
+    const sb = window.supabaseClient;
+    const [{ data: order, error: oErr }, { data: items, error: iErr }] = await Promise.all([
+        sb.from('request_orders').select('*').eq('id', orderId).maybeSingle(),
+        sb.from('request_order_items').select('quantity_prepared').eq('request_order_id', orderId)
+    ]);
+    if (oErr || iErr || !order) {
+        await showWarningModal(stT('dispatch_load_failed', 'Could not load the order — nothing was changed. Try again.'), false, null, null, 'warning');
+        return;
+    }
+    const checkedOut = (items || []).reduce((s, i) => s + (parseInt(i.quantity_prepared) || 0), 0);
+    if (checkedOut === 0) {
+        await showWarningModal(stT('dispatch_nothing_out', 'Nothing has been checked out for this order, so there is nothing to dispatch. If bags were handed over, check them out first; otherwise ask the leader to revise the approval or use Unable to Fulfill.'), false, stT('dispatch_nothing_out_title', 'Nothing to dispatch'), null, 'warning');
+        return;
+    }
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const { error } = await saveData('request_orders', {
+        id: order.id,
+        status: 'Dispatched',
+        dispatch_date: today,
+        dispatched_by: (currentUser && currentUser.name) || null
+    });
+    if (error) {
+        await showWarningModal(stT('dispatch_save_failed', 'The order was NOT dispatched: {msg}').replace('{msg}', error.message), false, null, null, 'warning');
+        return;
+    }
     await showWarningModal('Order dispatched! The sales team has picked up the packed items.', false, null, null, 'success');
     loadPackingRequestsSection();
     scheduleDashboardRefresh();
@@ -6723,6 +6751,21 @@ async function openCustomPackingModal() {
     });
 }
 
+// Completed Order (Ordered vs Dispatched, 2026-10-04). Every coffee line shows
+// how many bags actually left stock against how many sales ordered, so an
+// order that went out short — or with nothing at all, like ما031026001 on
+// 3 Oct, approved with 0 on every line — is visible at a glance. Clicking a
+// row opens the lots/strip codes each line was checked out from (fetched
+// only then, so the list itself costs no more than before).
+//
+// "Dispatched" per line = quantity_prepared (bags packing checked out). The
+// shortfall is quantity_unfulfilled; the part decided at approval is
+// requested − allocated − pending (approval writes those three together),
+// anything above that was finalized at packing checkout.
+const HIST_STATUS = { full: 'full', partial: 'partial', none: 'none', ready: 'ready' };
+function histT(key, fallback) { return stT(key, fallback); }
+let packingHistoryOpen = new Set();
+
 async function loadPackingHistorySection() {
     const [
         { data: orders },
@@ -6742,14 +6785,10 @@ async function loadPackingHistorySection() {
     const tbody = document.getElementById('packing-history-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
-
-    if (!orders || orders.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="text-center-muted">No completed orders found.</td></tr>`;
-        return;
-    }
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
     // Only show orders where all items are Ready for Handover, or status is Dispatched
-    const historyOrders = [...orders]
+    const historyOrders = [...(orders || [])]
         .filter(o => {
             if (o.status === 'Dispatched') return true;
             // Checked on the ORDER, never inferred from items: a stopped
@@ -6758,97 +6797,240 @@ async function loadPackingHistorySection() {
             // and would otherwise surface here with a Print Waybill button
             // for stock that was already returned.
             if (o.status === 'Unable to Fulfill') return false;
-            // Include orders where ALL items are Ready for Handover
             const items = (orderItems || []).filter(i => i.request_order_id === o.id);
-            if (items.length > 0 && items.every(i => i.item_status === 'Ready for Handover')) return true;
-            return false;
+            return items.length > 0 && items.every(i => i.item_status === 'Ready for Handover');
         })
         .sort((a, b) => new Date(b.order_date) - new Date(a.order_date) || b.id - a.id);
 
-    if (historyOrders.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="text-center-muted">No completed orders found.</td></tr>`;
+    const coffeeNameOf = (item) => {
+        const type = item.coffee_type;
+        const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
+        if (item.coffee_code) {
+            const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
+            return def ? def.name : `Code ${item.coffee_code}`;
+        }
+        if (type === 'Single') return ((greenbeans || []).find(g => g.id === coffeeId) || {}).name || 'Single Origin';
+        return ((recipes || []).find(r => r.id === coffeeId) || {}).name || 'Blend';
+    };
+    const sizeLabel = g => (parseInt(g) || 0) >= 1000 ? `${(parseInt(g) || 0) / 1000}kg` : `${g || '?'}g`;
+    const statusLabel = {
+        full: histT('hist_status_full', 'Fully dispatched'),
+        partial: histT('hist_status_partial', 'Partial'),
+        none: histT('hist_status_none', 'Nothing dispatched'),
+        ready: histT('hist_status_ready', 'Ready')
+    };
+
+    const rows = historyOrders.map(order => {
+        const items = (orderItems || []).filter(i => i.request_order_id === order.id);
+        const lines = items.map(i => ({
+            item: i,
+            name: coffeeNameOf(i),
+            machine: i.machine_id ? ((machines || []).find(m => m.id === i.machine_id) || {}).name : null,
+            g: parseInt(i.bag_size_g) || 0,
+            ordered: parseInt(i.quantity_requested) || 0,
+            out: parseInt(i.quantity_prepared) || 0
+        }));
+        const ordered = lines.reduce((s, l) => s + l.ordered, 0);
+        const out = lines.reduce((s, l) => s + l.out, 0);
+        const isDispatched = order.status === 'Dispatched';
+        const state = !isDispatched ? HIST_STATUS.ready : out === 0 ? HIST_STATUS.none : out < ordered ? HIST_STATUS.partial : HIST_STATUS.full;
+        return { order, lines, ordered, out, state, isDispatched,
+            orderedKg: lines.reduce((s, l) => s + l.ordered * l.g / 1000, 0),
+            outKg: lines.reduce((s, l) => s + l.out * l.g / 1000, 0) };
+    });
+
+    renderPackingHistoryChips(rows);
+
+    if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center-muted">${esc(histT('hist_empty', 'No completed orders found.'))}</td></tr>`;
         return;
     }
 
-    let tbodyHtml = '';
-    for (const order of historyOrders) {
-        const items = (orderItems || []).filter(i => i.request_order_id === order.id);
-        
-        // Build items detail
-        let itemsDetailHtml = '';
-        if (items.length > 0) {
-            itemsDetailHtml = `<div style="display: flex; flex-direction: column; gap: 4px;">`;
-            for (const item of items) {
-                const type = item.coffee_type;
-                const coffeeId = type === 'Single' ? item.single_coffee_id : item.blend_recipe_id;
-                let coffeeName = '';
-                if (item.coffee_code) {
-                    const def = (codeDefinitions || []).find(d => d.code === item.coffee_code);
-                    coffeeName = def ? def.name : `Code ${item.coffee_code}`;
-                } else if (type === 'Single') {
-                    const gb = (greenbeans || []).find(g => g.id === coffeeId);
-                    coffeeName = gb ? gb.name : 'Single Origin';
-                } else {
-                    const r = (recipes || []).find(rec => rec.id === coffeeId);
-                    coffeeName = r ? r.name : 'Blend';
-                }
-                const sizeG = item.bag_size_g || '?';
-                const requested = parseInt(item.quantity_requested) || 0;
-                const histMach = item.machine_id ? (machines || []).find(m => m.id === item.machine_id) : null;
-                const histMachTag = histMach ? `<span style="font-size:0.68rem; color:#0891b2; font-weight:600; background:rgba(6,182,212,0.1); padding:0px 5px; border-radius:3px; margin-left:4px;">${histMach.name}</span>` : '';
-                
-                itemsDetailHtml += `
-                    <div style="display:flex; align-items:center; gap:8px; font-size:0.82rem;">
-                        <span style="font-weight:600; color:var(--text-primary);">${coffeeName}</span>${histMachTag}
-                        <span style="display:inline-flex; align-items:center; gap:4px; background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:6px; padding:1px 8px; font-size:0.78rem; font-weight:600; color:var(--text-secondary);">
-                            ${sizeG}g: <strong style="color:var(--primary);">${requested} bags</strong>
-                        </span>
-                    </div>`;
-            }
-            itemsDetailHtml += `</div>`;
-        } else {
-            itemsDetailHtml = '<span class="text-muted-color">-</span>';
-        }
-        
-        // Ready date
-        const readyDate = order.ready_date || order.order_date;
-        
-        // Dispatched column
-        const isDispatched = order.status === 'Dispatched';
-        const dispatchedCell = isDispatched 
-            ? `<span style="font-weight:600; font-size:0.85rem;">${order.dispatched_date || order.order_date}</span>`
-            : `<span style="font-size:0.72rem; color:var(--warning); font-weight:600; display:inline-flex; align-items:center; gap:3px;"><span style="display:inline-block; width:5px; height:5px; background:var(--warning); border-radius:50%;"></span>Waiting for Dispatch</span>`;
-        
-        // Status badge
-        const statusBadge = isDispatched
-            ? `<span style="font-size:0.75rem; padding:2px 10px; border-radius:9999px; font-weight:700; background:rgba(6,182,212,0.15); color:#0891b2; display:inline-block;">Dispatched</span>`
-            : `<span style="font-size:0.75rem; padding:2px 10px; border-radius:9999px; font-weight:700; background:rgba(16,185,129,0.15); color:var(--success); display:inline-block;">Ready</span>`;
-        
-        tbodyHtml += `
-        <tr>
-            <td><strong>${order.order_date}</strong></td>
-            <td><code style="font-size:0.8rem;">${order.order_number || '#ORD-'+order.id}</code></td>
-            <td><strong>${order.sales_name || '-'}</strong></td>
-            <td>${itemsDetailHtml}</td>
-            <td><span style="font-size:0.8rem;">${readyDate}</span></td>
-            <td>${dispatchedCell}</td>
-            <td>${statusBadge}</td>
+    let html = '';
+    for (const r of rows) {
+        const { order } = r;
+        const linesHtml = r.lines.length ? `<div class="hist-lines">${r.lines.map(l => {
+            const cls = l.out === 0 ? 'none' : l.out < l.ordered ? 'part' : 'ok';
+            const short = Math.max(0, l.ordered - l.out);
+            return `<div class="hist-line">
+                <span class="hist-name">${esc(l.name)}</span>
+                ${l.machine ? `<span class="hist-mach">${esc(l.machine)}</span>` : '<span></span>'}
+                <span class="hist-size">${sizeLabel(l.g)}</span>
+                <span class="hist-qty ${cls}"><b>${l.out}</b> <span class="of">/ ${l.ordered}</span>${short > 0 ? `<span class="hist-short">${esc(histT('hist_short', '{n} short · unfulfilled').replace('{n}', short))}</span>` : ''}</span>
+            </div>`;
+        }).join('')}</div>` : '<span class="text-muted-color">-</span>';
+
+        const dispatchCell = r.isDispatched
+            ? (order.dispatch_date
+                ? `<span style="font-weight:600;">${esc(order.dispatch_date)}</span><small class="hist-sub">${esc(order.dispatched_by || '-')}</small>`
+                : `<span class="text-muted-color">—</span><small class="hist-sub">${esc(histT('hist_not_recorded', 'not recorded'))}</small>`)
+            : `<span class="hist-waiting">${esc(histT('hist_waiting', 'Waiting for dispatch'))}</span>`;
+
+        const isOpen = packingHistoryOpen.has(order.id);
+        html += `
+        <tr class="hist-row hist-${r.state}" data-order="${order.id}" tabindex="0" aria-expanded="${isOpen}">
+            <td><strong>${esc(order.order_date)}</strong></td>
+            <td><code style="font-size:0.8rem;">${esc(order.order_number || '#ORD-' + order.id)}</code></td>
+            <td><strong>${esc(order.sales_name || '-')}</strong></td>
+            <td>${linesHtml}</td>
+            <td><div class="hist-tot"><b>${r.out} / ${r.ordered}</b><span>${r.outKg.toFixed(1)} / ${r.orderedKg.toFixed(1)} kg</span></div></td>
+            <td>${dispatchCell}</td>
+            <td><span class="hist-pill hist-pill-${r.state}">${esc(statusLabel[r.state])}</span></td>
             <td>
                 <button class="btn btn-secondary btn-sm btn-print-waybill" data-id="${order.id}" style="display:inline-flex; align-items:center; gap:4px; white-space:nowrap;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
                     Print Waybill
                 </button>
             </td>
-        </tr>`;
+        </tr>
+        <tr class="hist-detail${isOpen ? '' : ' hidden'}" data-detail-of="${order.id}"><td colspan="8"><div class="hist-detail-box">${esc(histT('hist_loading', 'Loading…'))}</div></td></tr>`;
     }
-    tbody.innerHTML = tbodyHtml;
+    tbody.innerHTML = html;
 
-    // Attach print waybill handlers
-    document.querySelectorAll('.btn-print-waybill').forEach(btn => {
-        btn.addEventListener('click', () => printWaybill(parseInt(btn.getAttribute('data-id'))));
+    const rowById = new Map(rows.map(r => [r.order.id, r]));
+    tbody.querySelectorAll('.btn-print-waybill').forEach(btn => {
+        btn.addEventListener('click', (e) => { e.stopPropagation(); printWaybill(parseInt(btn.getAttribute('data-id'))); });
+    });
+    const toggle = (tr) => {
+        const id = parseInt(tr.dataset.order);
+        const detail = tbody.querySelector(`tr[data-detail-of="${id}"]`);
+        if (!detail) return;
+        const opening = detail.classList.contains('hidden');
+        detail.classList.toggle('hidden', !opening);
+        tr.setAttribute('aria-expanded', String(opening));
+        if (opening) { packingHistoryOpen.add(id); fillPackingHistoryDetail(detail, rowById.get(id)); }
+        else packingHistoryOpen.delete(id);
+    };
+    tbody.querySelectorAll('tr.hist-row').forEach(tr => {
+        tr.addEventListener('click', () => toggle(tr));
+        tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(tr); } });
+    });
+    packingHistoryOpen.forEach(id => {
+        const detail = tbody.querySelector(`tr[data-detail-of="${id}"]`);
+        if (detail && rowById.get(id)) fillPackingHistoryDetail(detail, rowById.get(id));
     });
 
     applyFiltersForTable(document.querySelector('#tab-packing-history table'));
+}
+
+// Chips above the table drive the existing Status column filter (col 6), so
+// chips and the column's own filter dropdown never disagree.
+function renderPackingHistoryChips(rows) {
+    const bar = document.getElementById('packing-history-chips');
+    if (!bar) return;
+    const key = 'tab-packing-history_6';
+    const labels = {
+        full: histT('hist_status_full', 'Fully dispatched'),
+        partial: histT('hist_status_partial', 'Partial'),
+        none: histT('hist_status_none', 'Nothing dispatched'),
+        ready: histT('hist_status_ready', 'Ready')
+    };
+    const active = ACTIVE_FILTERS[key];
+    const current = active && active.size === 1 ? [...active][0] : null;
+    const chips = [['all', histT('hist_chip_all', 'All'), rows.length]]
+        .concat(['full', 'partial', 'none', 'ready'].map(s => [s, labels[s], rows.filter(r => r.state === s).length]))
+        .filter(([s, , n]) => s === 'all' || n > 0);
+    bar.innerHTML = chips.map(([s, label, n]) => {
+        const on = s === 'all' ? !current : current === labels[s];
+        return `<button type="button" class="btn btn-secondary btn-sm hist-chip${on ? ' active' : ''}" data-label="${s === 'all' ? '' : label}">${label} <span class="hist-chip-n">${n}</span></button>`;
+    }).join('');
+    bar.querySelectorAll('.hist-chip').forEach(btn => {
+        btn.onclick = () => {
+            const label = btn.getAttribute('data-label');
+            if (label) ACTIVE_FILTERS[key] = new Set([label]); else delete ACTIVE_FILTERS[key];
+            bar.querySelectorAll('.hist-chip').forEach(b => b.classList.toggle('active', b === btn));
+            applyFiltersForTable(document.querySelector('#tab-packing-history table'));
+        };
+    });
+}
+
+async function fillPackingHistoryDetail(detailRow, r) {
+    const box = detailRow.querySelector('.hist-detail-box');
+    if (!box || !r) return;
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const sb = window.supabaseClient;
+    const itemIds = r.lines.map(l => l.item.id);
+    let dli = [], moves = [], lots = [];
+    try {
+        if (itemIds.length) {
+            const [a, b] = await Promise.all([
+                sb.from('dispatch_lot_items').select('request_order_item_id, packed_coffee_lot_id, qty, created_at').in('request_order_item_id', itemIds),
+                sb.from('packed_stock_movements').select('packed_coffee_lot_id, delta_pcs, ref_id, performed_by, created_at, operation').eq('ref_table', 'request_order_items').in('ref_id', itemIds).eq('operation', 'dispatch')
+            ]);
+            if (a.error || b.error) throw (a.error || b.error);
+            dli = a.data || []; moves = b.data || [];
+            const lotIds = [...new Set(dli.map(d => d.packed_coffee_lot_id).filter(Boolean))];
+            if (lotIds.length) {
+                const c = await sb.from('packed_coffee_lots').select('id, lot_code, strip_code').in('id', lotIds);
+                if (c.error) throw c.error;
+                lots = c.data || [];
+            }
+        }
+    } catch (e) {
+        box.innerHTML = `<span style="color:var(--danger);">${esc(histT('hist_detail_failed', 'Could not load the lot detail: {msg}').replace('{msg}', e.message || e))}</span>`;
+        return;
+    }
+    const fmtTime = ts => ts ? new Date(ts).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-';
+    const sizeLabel = g => g >= 1000 ? `${g / 1000}kg` : `${g}g`;
+    const o = r.order;
+
+    const tableRows = r.lines.map(l => {
+        const it = l.item;
+        const requested = l.ordered;
+        const unful = parseInt(it.quantity_unfulfilled) || 0;
+        const atApproval = Math.min(unful, Math.max(0, requested - (parseInt(it.quantity_allocated) || 0) - (parseInt(it.quantity_pending) || 0)));
+        const atPacking = Math.max(0, unful - atApproval);
+        const why = unful > 0
+            ? [atApproval ? histT('hist_unful_approval', '{n} unfulfilled · decided at approval').replace('{n}', atApproval) : '',
+               atPacking ? histT('hist_unful_packing', '{n} unfulfilled · finalized at packing').replace('{n}', atPacking) : ''].filter(Boolean).join('; ')
+            : (l.out >= requested ? histT('hist_complete', 'complete') : '');
+        // One row per lot this line was checked out from (summed per lot).
+        const perLot = new Map();
+        dli.filter(d => d.request_order_item_id === it.id).forEach(d => {
+            const cur = perLot.get(d.packed_coffee_lot_id) || { qty: 0, at: d.created_at };
+            cur.qty += parseInt(d.qty) || 0;
+            if (d.created_at < cur.at) cur.at = d.created_at;
+            perLot.set(d.packed_coffee_lot_id, cur);
+        });
+        const label = `<b>${esc(l.name)}</b> ${sizeLabel(l.g)}`;
+        if (perLot.size === 0) {
+            return `<tr><td>${label}</td><td class="hist-sub" colspan="3">${esc(histT('hist_no_checkout', 'No bags checked out'))}</td><td class="num">${l.out} / ${requested}</td><td class="hist-sub">${esc(why)}</td></tr>`;
+        }
+        const entries = [...perLot.entries()];
+        return entries.map(([lotId, v], idx) => {
+            const lot = lots.find(x => x.id === lotId) || {};
+            const mv = moves.filter(m => m.ref_id === it.id && m.packed_coffee_lot_id === lotId).sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
+            return `<tr>
+                <td>${idx === 0 ? label : ''}</td>
+                <td class="trk-mono">${esc(lot.lot_code || '-')}</td>
+                <td class="trk-mono"><b>${esc(lot.strip_code || '-')}</b></td>
+                <td class="hist-sub">${esc(fmtTime(mv ? mv.created_at : v.at))}${mv && mv.performed_by ? ' · ' + esc(mv.performed_by) : ''}</td>
+                <td class="num">${v.qty}</td>
+                <td class="hist-sub">${idx === entries.length - 1 ? esc(why) : ''}</td>
+            </tr>`;
+        }).join('');
+    }).join('');
+
+    const warn = r.state === HIST_STATUS.none
+        ? `<div class="hist-warn"><b>${esc(histT('hist_warn_title', 'Marked Dispatched, but no bags left stock.'))}</b> ${esc(histT('hist_warn_body', 'Checkout took nothing for this order — check whether bags were handed over without a checkout.'))}</div>`
+        : '';
+    const approval = o.decided_by_name
+        ? histT('hist_approval_by', 'Approved by {name} · {time}').replace('{name}', o.decided_by_name).replace('{time}', fmtTime(o.decided_at))
+        : '-';
+    box.innerHTML = `${warn}
+        <div class="hist-detail-head">
+            <span><b>${esc(histT('hist_lbl_approval', 'Approval'))}:</b> ${esc(approval)}</span>
+            <span><b>${esc(histT('hist_lbl_dispatched_by', 'Dispatched by'))}:</b> ${esc(o.dispatched_by || histT('hist_not_recorded', 'not recorded'))}</span>
+        </div>
+        <div class="table-container">
+            <table class="hist-dtable">
+                <thead><tr>
+                    <th>${esc(histT('hist_col_coffee', 'Coffee'))}</th><th>${esc(histT('hist_col_lot', 'Lot'))}</th><th>${esc(histT('col_strip_code', 'Strip'))}</th>
+                    <th>${esc(histT('hist_col_checked_out', 'Checked out'))}</th><th class="num">${esc(histT('hist_col_bags', 'Bags'))}</th><th>${esc(histT('hist_col_note', 'Note'))}</th>
+                </tr></thead>
+                <tbody>${tableRows}</tbody>
+            </table>
+        </div>`;
 }
 
 // ============================================================

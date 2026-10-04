@@ -2545,6 +2545,12 @@ function applyFiltersForTable(table) {
     } else {
         dataRows.forEach(row => { row.style.display = rowMatches(row) ? '' : 'none'; });
     }
+    // Expandable detail rows (one colspan cell, so skipped above) follow
+    // their parent row: a filtered-out order must not leave its detail behind.
+    tbody.querySelectorAll('tr[data-detail-of]').forEach(d => {
+        const parent = d.previousElementSibling;
+        d.style.display = parent && parent.style.display === 'none' ? 'none' : '';
+    });
 
     // Highlight trigger buttons if they have active filters
     ths.forEach(th => {
