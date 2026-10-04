@@ -232,15 +232,15 @@ async function rtFetchRefs() {
 async function rtResolveSticker(raw, refs) {
     const v = String(raw || '').trim();
     if (!/^[A-Za-z0-9-]{3,40}$/.test(v)) return { error: rtT('ret_strip_invalid', 'That doesn\'t look like a strip code.') };
-    const lots = await rtQ(rtSb().from('packed_coffee_lots').select('*').or(`strip_code.eq.${v},lot_code.eq.${v}`).order('id', { ascending: false }).limit(5));
-    const lot = lots.find(l => l.strip_code === v) || lots[0];
-    if (!lot) return { error: rtT('ret_strip_not_found', 'No lot with that strip code. Check the number, or click the Coffee box to enter it by hand.') };
-    const [packedRows, plRows] = await Promise.all([
-        rtQ(rtSb().from('packed_coffee').select('*').eq('id', lot.packed_coffee_id)),
-        lot.production_lot_id ? rtQ(rtSb().from('production_lots').select('*').eq('id', lot.production_lot_id)) : Promise.resolve([])
-    ]);
-    const packed = packedRows[0], pl = plRows[0] || null;
-    const bulk = pl && pl.bulk_roasted_coffee_id ? (await rtQ(rtSb().from('bulk_roasted_coffee').select('id, is_post_blend, custom_coffee_code, custom_coffee_type, coffee_name').eq('id', pl.bulk_roasted_coffee_id)))[0] : null;
+    // One round trip: the lot with its packed coffee, production lot and bulk card embedded.
+    const lots = await rtQ(rtSb().from('packed_coffee_lots')
+        .select('*, packed_coffee(*), production_lots(*, bulk_roasted_coffee(id, is_post_blend, custom_coffee_code, custom_coffee_type, coffee_name))')
+        .or(`strip_code.eq.${v},lot_code.eq.${v}`).order('id', { ascending: false }).limit(5));
+    const row = lots.find(l => l.strip_code === v) || lots[0];
+    if (!row) return { error: rtT('ret_strip_not_found', 'No lot with that strip code. Check the number, or click the Coffee box to enter it by hand.') };
+    const { packed_coffee: packed, production_lots: plRow, ...lot } = row;
+    const { bulk_roasted_coffee: bulk = null, ...plRest } = plRow || {};
+    const pl = plRow ? plRest : null;
     const strip = s => String(s || '').replace(/ \((Single|Blend)\)$/, '');
     let kind = null, singleId = null, blendId = null, name = null, code = null, type = null;
     if (pl && pl.single_coffee_id) { const g = refs.greens.find(x => x.id === pl.single_coffee_id); if (g) { kind = 'single'; singleId = g.id; name = g.name; code = g.code; type = 'Single'; } }
