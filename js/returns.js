@@ -108,11 +108,21 @@ async function returnProvenanceForBulk(bulkIds) {
 // ============================================================================
 // Returns tab
 // ============================================================================
+// Disable the clicked button and show "Loading…" until its modal is open.
+async function rtWithBusy(btn, fn) {
+    if (!btn || btn.disabled) return;
+    const label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = rtT('hist_loading', 'Loading…');
+    try { await fn(); } finally { btn.disabled = false; btn.innerHTML = label; }
+}
+
 async function loadReturnsSection() {
     const btn = document.getElementById('btn-record-return');
     if (btn) {
         btn.style.display = hasPermission('returns_manage') ? '' : 'none';
-        btn.onclick = () => openRecordReturnModal();
+        btn.onclick = () => rtWithBusy(btn, openRecordReturnModal);
+        if (hasPermission('returns_manage')) rtLoadRefs(true).catch(() => {});
     }
     const chips = document.getElementById('returns-filters');
     if (chips) chips.onclick = (e) => {
@@ -171,7 +181,7 @@ async function loadReturnsSection() {
     tbody.innerHTML = rows.join('') || `<tr><td colspan="8" class="text-center-muted">${rtEsc(rtT('ret_empty', 'No returns here.'))}</td></tr>`;
     tbody.onclick = async (e) => {
         const a = e.target.closest('[data-ret-act]');
-        if (a) return openReturnActionModal(parseInt(a.dataset.retAct));
+        if (a) return rtWithBusy(a, () => openReturnActionModal(parseInt(a.dataset.retAct)));
         const d = e.target.closest('[data-ret-del]');
         if (d) return deleteReturn(parseInt(d.dataset.retDel));
     };
@@ -193,7 +203,20 @@ async function deleteReturn(returnId) {
 // ============================================================================
 // Lookups: sticker, roast log, production lot, inventory destination
 // ============================================================================
-async function rtLoadRefs() {
+// Reference lists (customers, codes, coffees, machines, sizes) change rarely,
+// and every Supabase round trip costs 1–3 s here — so keep them a few minutes.
+// Opening the Returns tab refreshes them in the background (rtLoadRefs(true)).
+let rtRefsCache = null;
+const RT_REFS_TTL_MS = 5 * 60 * 1000;
+function rtLoadRefs(fresh) {
+    if (!fresh && rtRefsCache && Date.now() - rtRefsCache.at < RT_REFS_TTL_MS) return rtRefsCache.promise;
+    const promise = rtFetchRefs();
+    rtRefsCache = { at: Date.now(), promise };
+    promise.catch(() => { if (rtRefsCache && rtRefsCache.promise === promise) rtRefsCache = null; });
+    return promise;
+}
+
+async function rtFetchRefs() {
     const [customers, codeDefinitions, greens, recipes, machines, sizes] = await Promise.all([
         rtQ(rtSb().from('customers').select('id, name').order('name')),
         rtQ(rtSb().from('code_definitions').select('*')),
@@ -212,8 +235,11 @@ async function rtResolveSticker(raw, refs) {
     const lots = await rtQ(rtSb().from('packed_coffee_lots').select('*').or(`strip_code.eq.${v},lot_code.eq.${v}`).order('id', { ascending: false }).limit(5));
     const lot = lots.find(l => l.strip_code === v) || lots[0];
     if (!lot) return { error: rtT('ret_strip_not_found', 'No lot with that strip code. Check the number, or click the Coffee box to enter it by hand.') };
-    const packed = (await rtQ(rtSb().from('packed_coffee').select('*').eq('id', lot.packed_coffee_id)))[0];
-    const pl = lot.production_lot_id ? (await rtQ(rtSb().from('production_lots').select('*').eq('id', lot.production_lot_id)))[0] : null;
+    const [packedRows, plRows] = await Promise.all([
+        rtQ(rtSb().from('packed_coffee').select('*').eq('id', lot.packed_coffee_id)),
+        lot.production_lot_id ? rtQ(rtSb().from('production_lots').select('*').eq('id', lot.production_lot_id)) : Promise.resolve([])
+    ]);
+    const packed = packedRows[0], pl = plRows[0] || null;
     const bulk = pl && pl.bulk_roasted_coffee_id ? (await rtQ(rtSb().from('bulk_roasted_coffee').select('id, is_post_blend, custom_coffee_code, custom_coffee_type, coffee_name').eq('id', pl.bulk_roasted_coffee_id)))[0] : null;
     const strip = s => String(s || '').replace(/ \((Single|Blend)\)$/, '');
     let kind = null, singleId = null, blendId = null, name = null, code = null, type = null;
@@ -245,8 +271,12 @@ async function rtResolveSticker(raw, refs) {
 async function rtRoastLog(code, type, machineId, date, refs) {
     const ids = (type === 'Single' ? refs.greens : refs.recipes).filter(x => x.code === code).map(x => x.id);
     const out = [];
+    const [batches, customs] = await Promise.all([
+        ids.length ? rtQ(rtSb().from('roast_batches').select('id, single_coffee_id, blend_recipe_id, coffee_type, qc_status').eq('machine_id', machineId).eq('roast_date', date)) : Promise.resolve([]),
+        rtQ(rtSb().from('bulk_roasted_coffee').select('id, coffee_name').eq('is_post_blend', true).is('source_plan_id', null)
+            .eq('custom_coffee_code', code).eq('custom_coffee_type', type).eq('machine_id', machineId).eq('production_date', date))
+    ]);
     if (ids.length) {
-        const batches = await rtQ(rtSb().from('roast_batches').select('id, single_coffee_id, blend_recipe_id, coffee_type, qc_status').eq('machine_id', machineId).eq('roast_date', date));
         const count = new Map();
         batches.filter(b => b.qc_status !== 'Failed' && b.coffee_type === type && ids.includes(type === 'Single' ? b.single_coffee_id : b.blend_recipe_id))
             .forEach(b => { const id = type === 'Single' ? b.single_coffee_id : b.blend_recipe_id; count.set(id, (count.get(id) || 0) + 1); });
@@ -255,8 +285,6 @@ async function rtRoastLog(code, type, machineId, date, refs) {
             out.push({ kind: type === 'Single' ? 'single' : 'recipe', id, name: x ? x.name : `#${id}`, batches: n });
         });
     }
-    const customs = await rtQ(rtSb().from('bulk_roasted_coffee').select('id, coffee_name').eq('is_post_blend', true).is('source_plan_id', null)
-        .eq('custom_coffee_code', code).eq('custom_coffee_type', type).eq('machine_id', machineId).eq('production_date', date));
     customs.forEach(c => out.push({ kind: 'custom', id: null, name: c.coffee_name, batches: 1 }));
     return out;
 }
@@ -986,10 +1014,14 @@ async function openReturnActionModal(itemId) {
     if (!hasPermission('returns_manage')) return;
     let refs, item, ret, actions, origin;
     try {
-        refs = await rtLoadRefs();
-        item = (await rtQ(rtSb().from('stock_return_items').select('*').eq('id', itemId)))[0];
-        ret = (await rtQ(rtSb().from('stock_returns').select('*').eq('id', item.return_id)))[0];
-        actions = await rtQ(rtSb().from('stock_return_actions').select('*').eq('return_item_id', itemId));
+        let rows;
+        [refs, rows, actions] = await Promise.all([
+            rtLoadRefs(),
+            rtQ(rtSb().from('stock_return_items').select('*, stock_returns(*)').eq('id', itemId)),
+            rtQ(rtSb().from('stock_return_actions').select('*').eq('return_item_id', itemId))
+        ]);
+        if (!rows[0] || !rows[0].stock_returns) throw new Error(rtT('ret_err_changed', 'This item changed meanwhile — reopen it and try again.'));
+        ({ stock_returns: ret, ...item } = rows[0]);
         origin = ret.customer_id ? ((refs.customers.find(c => c.id === ret.customer_id) || {}).name || '-') : (ret.origin_text || '-');
     } catch (e) { await showStockFailed(e.message || String(e)); return; }
     const rem = rtRemaining(item, actions);
