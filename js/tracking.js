@@ -394,6 +394,16 @@ async function performTrackingSearch(rawCode) {
         }
     }
 
+    // Item Return (js/returns.js): bags that came back into this lot, or the
+    // returned coffee a RETURN bulk card was made from.
+    if (typeof renderReturnTracking === 'function') {
+        renderReturnTracking({
+            lot,
+            bulk: (bulkList || []).find(b => b.id === lot.bulk_roasted_coffee_id) || null,
+            packedLots: (packedCoffeeLots || []).filter(l => l.production_lot_id === lot.id)
+        });
+    }
+
     setTrackingResultState('result');
 }
 

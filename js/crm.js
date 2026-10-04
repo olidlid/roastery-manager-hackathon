@@ -129,9 +129,31 @@ async function crmpgLoadData(forceRefresh) {
         profiles: pRes.data || [],
         greenbeans: gRes.data || [],
         recipes: rRes.data || [],
-        codeDefinitions: dRes.data || []
+        codeDefinitions: dRes.data || [],
+        // Item Return (js/returns.js): kg returned per customer — shown on
+        // its own, never subtracted from the sales weight (2026-09-30 ruling).
+        returnedKgByCustomer: await crmpgReturnedKg(visibleIds)
     };
     return _crmpgData;
+}
+
+async function crmpgReturnedKg(visibleIds) {
+    const out = {};
+    try {
+        const sb = window.supabaseClient;
+        const [{ data: rets, error: e1 }, { data: items, error: e2 }] = await Promise.all([
+            sb.from('stock_returns').select('id, customer_id').not('customer_id', 'is', null),
+            sb.from('stock_return_items').select('return_id, sealed_pcs, opened_kg, bag_size_g')
+        ]);
+        if (e1 || e2) return out;
+        const custByReturn = new Map((rets || []).filter(r => visibleIds.has(r.customer_id)).map(r => [r.id, r.customer_id]));
+        (items || []).forEach(it => {
+            const cid = custByReturn.get(it.return_id);
+            if (!cid) return;
+            out[cid] = (out[cid] || 0) + (parseInt(it.sealed_pcs) || 0) * (parseInt(it.bag_size_g) || 0) / 1000 + (parseFloat(it.opened_kg) || 0);
+        });
+    } catch (e) { /* returns not set up yet — no figure */ }
+    return out;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1295,6 +1317,7 @@ function crmpgOpenCustomer(customerId, fromSalesModal) {
                     <div class="crm-stat"><b>${r.predict.rhythm ? Math.round(r.predict.rhythm) + ' d' : '—'}</b><span>${crmpgEsc(crmT('crm_rhythm', 'rhythm'))}</span></div>
                     <div class="crm-stat"><b>${crmpgShortDate(r.firstOrder)}</b><span>${crmpgEsc(crmT('crm_first_order', 'first order'))}</span></div>
                     <div class="crm-stat"><b>${crmpgShortDate(r.lastOrder)}</b><span>${crmpgEsc(crmT('crm_last_order', 'last order'))}</span></div>
+                    <div class="crm-stat"><b>${crmpgNum(((_crmpgData && _crmpgData.returnedKgByCustomer) || {})[customerId] || 0, 1)}</b><span>${crmpgEsc(crmT('crm_kg_returned', 'kg returned'))}</span></div>
                 </div>
 
                 <div class="crm-cols">

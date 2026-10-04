@@ -48,6 +48,8 @@ async function loadPackingSection() {
                     loadRepackHistorySection();
                 } else if (btn.getAttribute('data-target') === 'tab-stock-release') {
                     loadStockReleaseSection();
+                } else if (btn.getAttribute('data-target') === 'tab-returns') {
+                    loadReturnsSection();
                 }
             });
         });
@@ -97,7 +99,10 @@ async function loadPackingSection() {
         fetchData('request_orders')
     ]);
 
-    renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches, bulkReservations, requestOrderItems, requestOrders);
+    const returnInfoByBulk = typeof returnProvenanceForBulk === 'function'
+        ? await returnProvenanceForBulk((bulkList || []).filter(b => b.is_return && parseFloat(b.bulk_available) > 0.005).map(b => b.id))
+        : new Map();
+    renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches, bulkReservations, requestOrderItems, requestOrders, returnInfoByBulk);
     // btn-custom-packing's click handler (openCustomPackingModal) is already
     // wired once at parse time in roasting.js — not re-wired here to avoid
     // attaching a second listener that would fire the modal twice per click.
@@ -111,7 +116,7 @@ async function loadPackingSection() {
 // showing the combined kg plus an expandable list of its dates, oldest first
 // (FIFO order). Print Barcode / Pack stay per roast date either way — each
 // date is its own lot and must never be conflated.
-function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches, bulkReservations, requestOrderItems, requestOrders) {
+function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBlendComponents, packedLots, packedList, roastingPlans, repackSources, roastBatches, bulkReservations, requestOrderItems, requestOrders, returnInfoByBulk = new Map()) {
     const container = document.getElementById('ready-to-pack-cards');
     const emptyEl = document.getElementById('ready-to-pack-empty');
     const filterBar = document.getElementById('rtp-filter-bar');
@@ -157,7 +162,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     const groups = [];
     const groupPos = new Map();
     activeBulk.forEach(b => {
-        const k = b.is_post_blend ? `postblend:${b.id}` : (b.is_repack ? `repack:${b.id}` : groupKey(b));
+        const k = b.is_post_blend ? `postblend:${b.id}` : (b.is_repack ? `repack:${b.id}` : (b.is_return ? `return:${b.id}` : groupKey(b)));
         if (!groupPos.has(k)) { groupPos.set(k, groups.length); groups.push([]); }
         groups[groupPos.get(k)].push(b);
     });
@@ -239,7 +244,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     // identify the coffee at a glance next to the name.
     function codeBadgeHtmlFor(bulk) {
         let coffeeCode = null;
-        if (bulk.is_post_blend) {
+        if (bulk.is_post_blend || (bulk.is_return && bulk.custom_coffee_code)) {
             coffeeCode = bulk.custom_coffee_code || null;
         } else if (bulk.coffee_type === 'Single') {
             const gb = (greenbeans || []).find(g => g.id === bulk.single_coffee_id);
@@ -279,7 +284,15 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
     // card to modal (explicit user request).
     const repackBadge = (bulk) => bulk.is_repack
         ? ` <span class="badge-repack" style="font-size:0.65rem; font-weight:700; text-transform:uppercase; border-radius:4px; padding:1px 6px; vertical-align:middle;" data-i18n="badge_repack">Repack</span>`
-        : '';
+        : (bulk.is_return
+            ? ` <span class="badge-roasted" style="font-size:0.65rem; font-weight:700; text-transform:uppercase; border-radius:4px; padding:1px 6px; vertical-align:middle;">${stT('badge_return', 'Return')}</span>`
+            : '');
+    // Item Return: which return(s) this card was made from (js/returns.js).
+    const returnProvenanceHtmlFor = (bulk) => {
+        const info = bulk.is_return ? returnInfoByBulk.get(bulk.id) : null;
+        if (!info) return '';
+        return `<div style="font-size:0.75rem; color:var(--text-secondary); background:var(--bg-app); border:1px solid var(--border); border-radius:6px; padding:4px 8px; margin-top:4px;">${info}</div>`;
+    };
     // "dari 2·0037 ×2 · 1·0041 ×4" — which source lots this bulk was opened
     // from, so the team can see provenance without opening the Repack tab's
     // history. Reads strip_code (short FIFO code) when the source lot has
@@ -419,6 +432,7 @@ function renderReadyToPackCards(bulkList, machines, greenbeans, recipes, postBle
                     <div style="font-size: 0.8rem; color: var(--text-muted);">${machineLabel(bulk)}</div>
                     <div style="font-size: 0.8rem; color: var(--text-muted);">${bulk.production_date || '-'}</div>
                     ${repackProvenanceHtmlFor(bulk)}
+                    ${returnProvenanceHtmlFor(bulk)}
                 </div>
                 ${codeBadgeHtmlFor(bulk)}
             </div>
@@ -882,6 +896,7 @@ async function loadWasteInventorySection() {
     const sourceLabel = (r) => {
         if (r.source_type === 'Bulk') return window.t ? window.t('waste_source_bulk') : 'Bulk';
         if (r.source_type === 'Roast Batch') return window.t ? window.t('waste_source_batch') : 'Roast Batch';
+        if (r.source_type === 'Return') return stT('waste_source_return', 'Return');
         return r.source_type || '-';
     };
 
@@ -1083,7 +1098,10 @@ function packedCodeIdentity(p, greenbeans, recipes) {
 // The sales identity a bulk card's packed stock should carry — only custom
 // blends have one; every other bulk card returns null (unchanged behaviour).
 function packedCodeForBulk(bulk) {
-    if (!bulk || !bulk.is_post_blend || bulk.source_plan_id) return null;
+    if (!bulk) return null;
+    // Custom blends, and return cards whose coffee is a custom blend or
+    // unknown (js/returns.js) — both carry custom_coffee_code + type.
+    if (!((bulk.is_post_blend && !bulk.source_plan_id) || bulk.is_return)) return null;
     if (!bulk.custom_coffee_code || !bulk.custom_coffee_type) return null;
     return { coffee_code: bulk.custom_coffee_code, coffee_code_type: bulk.custom_coffee_type };
 }
@@ -1149,7 +1167,7 @@ async function openCustomBlendModal() {
         .filter(b => (b.coffee_type === 'Single' || b.coffee_type === 'Blend') && parseFloat(b.bulk_available) > 0.005 && !b.is_post_blend)
         .forEach(b => {
             const id = b.coffee_type === 'Single' ? b.single_coffee_id : b.blend_recipe_id;
-            const key = `${b.coffee_type}:${id}`;
+            const key = `${b.coffee_type}:${id != null ? id : 'name:' + b.coffee_name}`;
             if (!bulkCoffees.has(key)) {
                 bulkCoffees.set(key, { key, type: b.coffee_type, name: resolveCoffeeName(b.coffee_type, id) || stripType(b.coffee_name), lots: [] });
             }
@@ -4517,7 +4535,7 @@ function buildLotCode(bulk, machines, greenbeans, recipes, dateStr, lotNumber) {
     const machineCode = machine ? (machine.code || machine.name) : 'M';
 
     let coffeeCode;
-    if (bulk.coffee_type === 'PostBlendCustom' && bulk.custom_coffee_code) {
+    if ((bulk.coffee_type === 'PostBlendCustom' || bulk.is_return) && bulk.custom_coffee_code) {
         // Custom blend: the sales code picked in the Custom Blend modal —
         // its name is free text and would otherwise become the lot code.
         coffeeCode = bulk.custom_coffee_code;
@@ -4556,7 +4574,7 @@ function buildPreviewLotCode(bulk, machines, greenbeans, recipes, roastBatches, 
     const machineCode = machine ? (machine.code || machine.name) : 'M';
 
     let coffeeCode;
-    if (bulk.coffee_type === 'PostBlendCustom' && bulk.custom_coffee_code) {
+    if ((bulk.coffee_type === 'PostBlendCustom' || bulk.is_return) && bulk.custom_coffee_code) {
         // Custom blend: the sales code picked in the Custom Blend modal —
         // its name is free text and would otherwise become the lot code.
         coffeeCode = bulk.custom_coffee_code;
@@ -4671,7 +4689,9 @@ async function syncProductionLotBatches(lot, bulk, roastBatches) {
 // The one label printer for packed coffee, shared by Ready to Pack > Barcode
 // and Stock by Lot > Print Sticker, so a label reprinted from stock is
 // identical to the one printed when the coffee was packed.
-function printLotBarcodeLabels(lot, requested, machines) {
+// Label markup for one lot — shared by the bulk card's Print Barcode and
+// Item Return (js/returns.js), so both always print the same sticker.
+function buildLotBarcodeLabelsHtml(lot, requested, machines) {
     // Production date = the lot's roast/pack date (production_date). Expiry
     // is a fixed 1-year shelf life from that date — no separate field to
     // track, just computed at print time. dd-mm-yyyy per the label spec
@@ -4748,7 +4768,21 @@ function printLotBarcodeLabels(lot, requested, machines) {
             `;
         }
     });
+    return labelsHtml;
+}
 
+function printLotBarcodeLabels(lot, requested, machines) {
+    printBarcodeLabelsHtml(buildLotBarcodeLabelsHtml(lot, requested, machines));
+}
+
+// Several lots in ONE print job (Item Return sends many lots at once).
+// sets: [{ lot, requested }] — same shapes printLotBarcodeLabels takes.
+function printLotLabelSets(sets, machines) {
+    printBarcodeLabelsHtml((sets || []).map(x => buildLotBarcodeLabelsHtml(x.lot, x.requested, machines)).join(''));
+}
+
+function printBarcodeLabelsHtml(labelsHtml) {
+    const showCode = ((companySettings.label_layout && companySettings.label_layout.packed) || {}).code !== false;
     const printWin = window.open('', '_blank', 'width=900,height=700');
     if (!printWin) {
         alert('Could not open the print window — please allow pop-ups for this site and try again.');

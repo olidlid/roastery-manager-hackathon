@@ -11,7 +11,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://YOUR_PROJECT_REF.supabase.co wss://YOUR_PROJECT_REF.supabase.co https://cdn.jsdelivr.net; object-src 'none'; base-uri 'self'">
     <title>Roastery Manager Pro</title>
     <!-- CSS Stylesheet -->
-    <link rel="stylesheet" href="css/styles.css?v=39">
+    <link rel="stylesheet" href="css/styles.css?v=40">
     <!-- CDN resources: versions pinned AND integrity-hashed (SRI). The browser
          refuses to run these files if their content differs by even one byte
          from the hash below — defeats CDN compromise and network-level
@@ -1257,6 +1257,7 @@
                         <button class="tab-btn" data-target="tab-packing-history" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;">Completed Order</button>
                         <button class="tab-btn" data-target="tab-stock-release" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_stock_release">Stock Release</button>
                         <button class="tab-btn" data-target="tab-waste-inventory" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_waste_inventory">Waste</button>
+                        <button class="tab-btn" data-target="tab-returns" style="background: none; border: none; padding: 12px 0; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent;" data-i18n="tab_returns">Returns</button>
                     </nav>
                 </div>
                 
@@ -1485,6 +1486,43 @@
                             </table>
                         </div>
                         <div id="stock-release-history-empty" class="text-center-muted hidden" style="padding: 24px 0;" data-i18n="stock_release_history_empty">No stock releases recorded yet.</div>
+                    </div>
+                </div>
+
+                <!-- Item Return (js/returns.js, database/stock_returns_migration.sql) -->
+                <div id="tab-returns" class="packing-tab-content hidden">
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                            <div>
+                                <h3 class="card-title" style="font-size: 1.5rem; margin-bottom: 4px; font-weight: 700;" data-i18n="returns_title">Returns</h3>
+                                <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);" data-i18n="returns_hint">Returned coffee waiting for an action, and where it went.</p>
+                            </div>
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <div class="ret-chips" id="returns-filters">
+                                    <button type="button" class="btn btn-secondary btn-sm ret-chip active" data-f="open" data-i18n="ret_filter_open">Open</button>
+                                    <button type="button" class="btn btn-secondary btn-sm ret-chip" data-f="all" data-i18n="ret_filter_all">All</button>
+                                    <button type="button" class="btn btn-secondary btn-sm ret-chip" data-f="done" data-i18n="ret_filter_done">Done</button>
+                                </div>
+                                <button type="button" id="btn-record-return" class="btn btn-primary btn-sm" style="font-weight: 600;" data-i18n="btn_record_return">+ Record Return</button>
+                            </div>
+                        </div>
+                        <div class="table-container">
+                            <table class="ret-table ret-main">
+                                <thead>
+                                    <tr>
+                                        <th data-i18n="ret_col_return">Return</th>
+                                        <th data-i18n="ret_lbl_origin">Origin</th>
+                                        <th data-i18n="ret_col_coffee">Coffee</th>
+                                        <th data-i18n="ret_col_returned">Returned</th>
+                                        <th data-i18n="ret_col_remaining">Remaining</th>
+                                        <th data-i18n="col_status">Status</th>
+                                        <th data-i18n="ret_col_history">History</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="returns-tbody"></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -2499,6 +2537,7 @@
                         </div>
                     </div>
                     <div id="tracking-result-composition" class="hidden"></div>
+                    <div id="tracking-result-returns" class="hidden"></div>
                 </div>
             </section>
 
@@ -3183,7 +3222,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=95"></script>
+    <script src="js/translations.js?v=96"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js"></script>
@@ -3191,13 +3230,14 @@
     <script src="js/auth.js?v=21"></script>
     <script src="js/greenbean.js?v=24"></script>
     <script src="js/roasting.js?v=48"></script>
-    <script src="js/packing.js?v=146"></script>
+    <script src="js/packing.js?v=147"></script>
     <script src="js/sales.js?v=67"></script>
-    <script src="js/crm.js?v=10"></script>
+    <script src="js/returns.js?v=1"></script>
+    <script src="js/crm.js?v=11"></script>
     <script src="js/otheritems.js?v=2"></script>
-    <script src="js/settings.js?v=30"></script>
-    <script src="js/tracking.js?v=12"></script>
+    <script src="js/settings.js?v=31"></script>
+    <script src="js/tracking.js?v=13"></script>
     <script src="js/purchasing.js?v=3"></script>
-    <script src="js/app.js?v=131"></script>
+    <script src="js/app.js?v=132"></script>
 </body>
 </html>

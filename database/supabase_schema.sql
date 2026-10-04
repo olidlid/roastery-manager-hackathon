@@ -295,6 +295,7 @@ CREATE TABLE IF NOT EXISTS public.bulk_roasted_coffee (
     custom_coffee_code TEXT,              -- V2 Custom Blend: the registered Code Definitions code the blend sells as (distinct from custom_blend_code, which is the auto-generated date-based bulk/lot code). Picked from registered codes since 2026-09-29; older rows may hold a free-typed value
     custom_coffee_type TEXT,              -- V2 Custom Blend (2026-09-29): 'Single' | 'Blend' — the sales type of custom_coffee_code (a code can belong to both, e.g. 23). See v2_custom_blend_unregistered_migration.sql
     production_date DATE NOT NULL DEFAULT CURRENT_DATE,  -- V2: re-keys bulk pooling by (coffee, machine, roast day) instead of pooling indefinitely — see bulk_production_date_migration.sql
+    is_return BOOLEAN DEFAULT FALSE,       -- Item Return (2026-10-04): bulk card made from returned coffee — see stock_returns_migration.sql
     is_repack BOOLEAN DEFAULT FALSE,       -- V2 Repack (applied to production 2026-08-03): true for a bulk row created by opening finished packed stock back into loose bulk for re-packing (never renames the coffee — see repack_sources below). See database/repack_migration.sql.
     -- Phase 6 (STOCK_LEDGER_PLAN.md, applied to production 2026-08-22):
     -- movement-context columns, single-use — see log_bulk_stock_movement()
@@ -320,7 +321,8 @@ CREATE TABLE IF NOT EXISTS public.waste_inventory (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     discard_date DATE DEFAULT CURRENT_DATE,
     roast_batch_id INTEGER,
-    bulk_roasted_coffee_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE SET NULL  -- V2 Close Lot: bulk lot this loss came from — see waste_inventory_bulk_link_migration.sql
+    bulk_roasted_coffee_id INTEGER REFERENCES public.bulk_roasted_coffee(id) ON DELETE SET NULL,  -- V2 Close Lot: bulk lot this loss came from — see waste_inventory_bulk_link_migration.sql
+    return_item_id INTEGER        -- Item Return: returned item this waste came from (source_type 'Return'); FK added in stock_returns_migration.sql
 );
 
 -- 13. Packaging sizes (250g / 500g / 1kg ...)
@@ -1861,3 +1863,98 @@ END $$;
 -- file's promise at the top that running it against production is
 -- non-destructive: it would silently reset those 6 keys on every role,
 -- wiping any later adjustment an admin made in Settings > Role Management.
+
+-- =====================================================================
+-- Item Return (2026-10-04) — see database/stock_returns_migration.sql
+-- (the returns_manage permission backfill is DML and lives only there).
+-- bulk_roasted_coffee.is_return is added there too (ALTER below).
+-- =====================================================================
+-- 1. Header — one per Record Return.
+CREATE TABLE IF NOT EXISTS public.stock_returns (
+    id SERIAL PRIMARY KEY,
+    return_number TEXT NOT NULL UNIQUE,          -- RET-YYYYMMDD-n
+    return_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    customer_id INTEGER REFERENCES public.customers(id) ON DELETE SET NULL,  -- picked from the list (counts in CRM)
+    origin_text TEXT,                            -- free-text origin when not a customer (not in CRM)
+    reason TEXT,
+    notes TEXT,
+    created_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. Items — what came back. Identity:
+--   coffee_kind 'single' | 'recipe' | 'custom' | 'unknown'
+--     single  = a green coffee (single_coffee_id)
+--     recipe  = a blend recipe (blend_recipe_id)
+--     custom  = a custom blend (from its sticker; no recipe id)
+--     unknown = no sticker and the roast log had 0 or several coffees for
+--               code + machine + roast date; candidates keeps that list
+--   coffee_code + coffee_type = how sales reads it (Code Definitions)
+--   resolved_via 'sticker' | 'roast_log' | 'unknown'
+CREATE TABLE IF NOT EXISTS public.stock_return_items (
+    id SERIAL PRIMARY KEY,
+    return_id INTEGER NOT NULL REFERENCES public.stock_returns(id) ON DELETE CASCADE,
+    line_no INTEGER NOT NULL DEFAULT 1,
+    coffee_kind TEXT NOT NULL,
+    coffee_code TEXT NOT NULL,
+    coffee_type TEXT NOT NULL,
+    single_coffee_id INTEGER,
+    blend_recipe_id INTEGER,
+    coffee_name TEXT NOT NULL,                   -- green / recipe / custom blend name, or the trade name when unknown
+    resolved_via TEXT NOT NULL,
+    candidates JSONB,                            -- unknown only: [{"name":..., "batches":n}] roasted under the code that day
+    source_packed_lot_id INTEGER REFERENCES public.packed_coffee_lots(id) ON DELETE SET NULL,  -- the scanned sticker's lot
+    machine_id INTEGER,
+    roast_date DATE NOT NULL,                    -- original roast date (from the sticker or typed)
+    bag_size_g INTEGER NOT NULL,
+    sealed_pcs INTEGER NOT NULL DEFAULT 0 CHECK (sealed_pcs >= 0),
+    opened_kg NUMERIC NOT NULL DEFAULT 0 CHECK (opened_kg >= 0),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS stock_return_items_return_idx ON public.stock_return_items (return_id);
+
+-- 3. Actions — where each part of an item went. Never edited or deleted
+-- once written (same rule as the stock ledgers); targets carry no FK on
+-- purpose so a later lot/bulk/waste deletion can't erase the trail.
+--   part   'sealed' (qty_pcs) | 'opened' (kg)
+--   action 'inventory' | 'bulk' | 'waste'
+CREATE TABLE IF NOT EXISTS public.stock_return_actions (
+    id SERIAL PRIMARY KEY,
+    return_item_id INTEGER NOT NULL REFERENCES public.stock_return_items(id) ON DELETE CASCADE,
+    part TEXT NOT NULL,
+    action TEXT NOT NULL,
+    qty_pcs INTEGER NOT NULL DEFAULT 0,
+    kg NUMERIC NOT NULL DEFAULT 0,
+    target_packed_lot_id INTEGER,
+    target_bulk_id INTEGER,
+    target_waste_id INTEGER,
+    roast_date_used DATE,                        -- roast date on the destination (differs from the item's when changed)
+    label_mode TEXT,                             -- inventory only: 'old' | 'new'
+    reason TEXT,
+    performed_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS stock_return_actions_item_idx ON public.stock_return_actions (return_item_id);
+CREATE INDEX IF NOT EXISTS stock_return_actions_lot_idx ON public.stock_return_actions (target_packed_lot_id);
+CREATE INDEX IF NOT EXISTS stock_return_actions_bulk_idx ON public.stock_return_actions (target_bulk_id);
+
+-- 4. Markers on existing tables.
+ALTER TABLE public.bulk_roasted_coffee
+    ADD COLUMN IF NOT EXISTS is_return BOOLEAN DEFAULT FALSE;
+COMMENT ON COLUMN public.bulk_roasted_coffee.is_return IS
+    'Item Return: bulk card made from returned coffee (tag RETURN). Its sources are the stock_return_actions rows pointing at it.';
+ALTER TABLE public.waste_inventory
+    ADD COLUMN IF NOT EXISTS return_item_id INTEGER REFERENCES public.stock_return_items(id) ON DELETE SET NULL;
+COMMENT ON COLUMN public.waste_inventory.return_item_id IS
+    'Item Return: the returned item this waste came from (source_type ''Return'').';
+
+-- 5. Same permissive full_access pattern as every other table.
+DO $$
+DECLARE t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['stock_returns', 'stock_return_items', 'stock_return_actions'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS full_access ON public.%I', t);
+    EXECUTE format('CREATE POLICY full_access ON public.%I FOR ALL USING (true) WITH CHECK (true)', t);
+  END LOOP;
+END $$;
