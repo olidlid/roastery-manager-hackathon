@@ -599,7 +599,7 @@ async function loadCustomBlendSection() {
         const dateStr = (bulk.created_at || '').split('T')[0] || '-';
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${dateStr}</td>
+            <td style="white-space:nowrap;">${dateStr}</td>
             <td><code>${bulk.custom_blend_code || '-'}</code></td>
             <td><code>${bulk.custom_coffee_code || '-'}</code></td>
             <td><strong>${bulk.custom_blend_name || bulk.coffee_name}</strong></td>
