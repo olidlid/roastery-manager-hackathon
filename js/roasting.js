@@ -600,11 +600,11 @@ async function loadCustomBlendSection() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td style="white-space:nowrap;">${dateStr}</td>
-            <td><code>${bulk.custom_blend_code || '-'}</code></td>
+            <td style="white-space:nowrap;"><code>${bulk.custom_blend_code || '-'}</code></td>
             <td><code>${bulk.custom_coffee_code || '-'}</code></td>
             <td><strong>${bulk.custom_blend_name || bulk.coffee_name}</strong></td>
             <td style="font-size:0.8rem; color:var(--text-muted);">${compSummary || '-'}</td>
-            <td>${totalKg.toFixed(2)} kg</td>
+            <td style="white-space:nowrap;">${totalKg.toFixed(2)} kg</td>
             <td style="text-align:right; white-space:nowrap;"><button type="button" class="btn btn-secondary btn-sm" data-wo="${bulk.id}">${escHtml(cbT('cb_wo_btn', 'Work Order'))}</button></td>
         `;
         tbody.appendChild(tr);
