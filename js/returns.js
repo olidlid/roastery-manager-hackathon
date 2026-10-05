@@ -11,6 +11,7 @@
 //                         sealed bags + opened kg
 //   stock_return_actions  every movement of an item (never edited/deleted
 //                         except to roll back the same failed operation)
+//   stock_return_edits    silent log of Edit Return saves (investigation only)
 // Remaining of an item = sealed_pcs / opened_kg minus its actions.
 //
 // Identity (coffee_kind): 'single' green coffee · 'recipe' blend recipe ·
@@ -58,6 +59,7 @@ function rtCoffeeLabel(item) {
 function rtViaLabel(item) {
     if (item.resolved_via === 'sticker') return rtT('ret_via_sticker', 'from sticker');
     if (item.resolved_via === 'roast_log') return rtT('ret_via_roast_log', 'found in roast log');
+    if (item.resolved_via === 'manual') return rtT('ret_via_manual', 'picked by hand');
     const n = Array.isArray(item.candidates) ? item.candidates.length : 0;
     return rtT('ret_via_unknown', 'Unknown · {n} candidates').replace('{n}', n);
 }
@@ -174,6 +176,7 @@ async function loadReturnsSection() {
                 <td><span class="ret-pill ret-pill-${st}">${statusLabel[st]}</span></td>
                 <td>${hist.length ? `<ul class="ret-hist">${hist.map(a => `<li><span class="ret-pill ret-pill-${a.action}">${actLabel[a.action] || a.action}</span> ${rtEsc(a.part === 'sealed' ? `${a.qty_pcs} × ${rtSize(it.bag_size_g)}` : `${(+a.kg).toFixed(2)} kg`)}${a.reason ? ' · ' + rtEsc(a.reason) : ''}${a.roast_date_used && a.roast_date_used !== it.roast_date ? ' · roast ' + rtEsc(a.roast_date_used) : ''}</li>`).join('')}</ul>` : '<span class="text-muted-color">—</span>'}</td>
                 <td style="white-space:nowrap;">${canAct && st !== 'done' ? `<button type="button" class="btn btn-primary btn-sm" data-ret-act="${it.id}">${rtT('ret_btn_action', 'Action')}</button>` : ''}
+                    ${canAct && idx === 0 ? `<button type="button" class="btn btn-secondary btn-sm" data-ret-edit="${r.id}">${rtT('ret_btn_edit', 'Edit')}</button>` : ''}
                     ${canAct && idx === 0 && noActions ? `<button type="button" class="btn btn-secondary btn-sm" data-ret-del="${r.id}">${rtT('btn_delete', 'Delete')}</button>` : ''}</td>
             </tr>`);
         });
@@ -182,6 +185,8 @@ async function loadReturnsSection() {
     tbody.onclick = async (e) => {
         const a = e.target.closest('[data-ret-act]');
         if (a) return rtWithBusy(a, () => openReturnActionModal(parseInt(a.dataset.retAct)));
+        const ed = e.target.closest('[data-ret-edit]');
+        if (ed) return rtWithBusy(ed, () => openEditReturnModal(parseInt(ed.dataset.retEdit)));
         const d = e.target.closest('[data-ret-del]');
         if (d) return deleteReturn(parseInt(d.dataset.retDel));
     };
@@ -1005,6 +1010,519 @@ async function rtOpenPrint(printSets, refs) {
         printLotLabelSets(sets, refs.machines);
         ov.remove();
     };
+}
+
+// ============================================================================
+// Edit Return (2026-10-05, mockup v3) — fix a return after the fact.
+// ----------------------------------------------------------------------------
+// The header (date, origin, reason, notes) is always editable. Per item, what
+// was already processed (its stock_return_actions) is locked; what is still
+// remaining can be edited, removed or re-identified:
+//   no actions yet      → edited in place, or removed
+//   partly processed    → details changed (code, machine, roast date, package):
+//                           · item was Unknown and the edit identifies it,
+//                             same package → applied to the WHOLE item, the
+//                             processed part included (record + Tracking
+//                             only — the bags already moved stay put)
+//                           · otherwise → the remaining becomes a new item;
+//                             the original keeps exactly what was processed
+//                         → only quantities changed: total = processed + new
+//                         → "Remove remaining": total = processed (Done)
+//   fully processed     → only an Unknown coffee can be picked
+// An Unknown coffee can be picked by hand on any item (resolved_via 'manual').
+// Nothing here moves stock. Every change is logged silently to
+// stock_return_edits (who, when, old → new) — never shown in the app.
+// ============================================================================
+async function openEditReturnModal(returnId) {
+    if (!hasPermission('returns_manage')) return;
+    let refs, ret, items, actions;
+    try {
+        let rows;
+        [refs, rows] = await Promise.all([
+            rtLoadRefs(),
+            rtQ(rtSb().from('stock_returns').select('*, stock_return_items(*, stock_return_actions(*))').eq('id', returnId))
+        ]);
+        if (!rows[0]) throw new Error(rtT('ret_err_changed', 'This item changed meanwhile — reopen it and try again.'));
+        const { stock_return_items: its, ...head } = rows[0];
+        ret = head;
+        items = (its || []).sort((a, b) => a.line_no - b.line_no || a.id - b.id);
+        actions = items.flatMap(i => i.stock_return_actions || []);
+        items = items.map(({ stock_return_actions, ...i }) => i);
+    } catch (e) { await showStockFailed(e.message || String(e)); return; }
+
+    const codeOpts = salesCodeOptions(refs.codeDefinitions, refs.greens, refs.recipes);
+    const today = rtToday();
+    const mName = id => (refs.machines.find(m => m.id === id) || {}).name || '-';
+    const codeLabel = (code, type) => { const o = codeOpts.find(x => x.code === code && x.type === type); return o ? salesCodeLabel(o) : (code || ''); };
+    const statusLabel = { need: rtT('ret_status_need', 'Need action'), partial: rtT('ret_status_partial', 'Partial'), done: rtT('ret_status_done', 'Done') };
+    const actLabel = { inventory: rtT('ret_act_inventory', 'Inventory'), bulk: rtT('ret_act_bulk', 'Bulk'), waste: rtT('ret_act_waste', 'Waste') };
+    const reasons = ['Customer return', 'Damaged packaging', 'Near expiry', 'Other'];
+    if (ret.reason && !reasons.includes(ret.reason)) reasons.push(ret.reason);
+    const custName = ret.customer_id ? ((refs.customers.find(c => c.id === ret.customer_id) || {}).name || '') : '';
+
+    // One card per existing item, plus cards for items added here.
+    const cards = items.map((it, i) => {
+        const rem = rtRemaining(it, actions);
+        return {
+            key: 'e' + it.id, no: i + 1, it, isNew: false, removed: false, resolved: null, seq: 0,
+            acts: actions.filter(a => a.return_item_id === it.id), rem, status: rtItemStatus(it, actions),
+            processed: { sealed: (parseInt(it.sealed_pcs) || 0) - rem.sealed, opened: +((parseFloat(it.opened_kg) || 0) - rem.opened).toFixed(3) }
+        };
+    });
+    let addSeq = 0;
+    const maxLine = Math.max(0, ...items.map(i => i.line_no || 0));
+
+    const sizeOpts = sel => {
+        const list = refs.sizes.map(s => parseInt(s.gram));
+        const extra = sel && !list.includes(sel) ? [sel] : [];
+        return `<option value="">${rtT('ret_select', 'Select…')}</option>` + [...refs.sizes.map(s => ({ g: parseInt(s.gram), l: s.label || rtSize(s.gram) })), ...extra.map(g => ({ g, l: rtSize(g) }))]
+            .map(s => `<option value="${s.g}"${s.g === sel ? ' selected' : ''}>${rtEsc(s.l)}</option>`).join('');
+    };
+    const machineOpts = sel => `<option value="">${rtT('ret_select', 'Select…')}</option>` + refs.machines.map(m => `<option value="${m.id}"${m.id === sel ? ' selected' : ''}>${rtEsc(m.name)}</option>`).join('');
+    function fieldsHtml(v, qtyNames) {
+        return `<div class="ret-ed-grid">
+            <div class="form-group"><label class="form-label">${rtT('ret_lbl_code', 'Coffee Code')}</label><input type="text" class="form-control" data-f="code" list="re-code-list" autocomplete="off" value="${rtEsc(v.code)}"></div>
+            <div class="form-group"><label class="form-label">${rtT('ret_lbl_machine', 'Machine')}</label><select class="form-control" data-f="machine">${machineOpts(v.machine)}</select></div>
+            <div class="form-group"><label class="form-label">${rtT('ret_lbl_roast', 'Roast Date')}</label><input type="date" class="form-control" data-f="roast" max="${today}" value="${rtEsc(v.roast)}"></div>
+            <div class="form-group"><label class="form-label">${rtT('ret_lbl_package', 'Package')}</label><select class="form-control" data-f="size">${sizeOpts(v.size)}</select></div>
+            <div class="form-group"><label class="form-label">${qtyNames[0]}</label><input type="number" class="form-control" data-f="sealed" min="0" step="1" value="${v.sealed}"></div>
+            <div class="form-group"><label class="form-label">${qtyNames[1]}</label><input type="number" class="form-control" data-f="opened" min="0" step="0.01" value="${v.opened}"></div>
+        </div><div data-f="note"></div>`;
+    }
+    function existingCardHtml(c) {
+        const it = c.it;
+        const rmLabel = c.status === 'need' ? rtT('ret_remove', 'Remove') : c.status === 'partial' ? rtT('ret_ed_remove_remaining', 'Remove remaining') : '';
+        const pick = it.coffee_kind === 'unknown' ? `<div class="form-group" style="margin-bottom:10px;"><label class="form-label">${rtT('ret_lbl_coffee', 'Coffee')} <span class="ret-hint">— ${rtT('ret_ed_pick_hint', 'was Unknown. Pick it if you know it; this only fixes the record and Tracking, no stock moves.')}</span></label><select class="form-control" data-f="pick"></select></div>` : '';
+        const lock = c.acts.length ? `<div class="ret-ed-lock">🔒 <b>${rtT('ret_ed_locked', 'Processed — locked')}</b> ${c.acts.map(a => `${rtEsc(a.part === 'sealed' ? `${a.qty_pcs} × ${rtSize(it.bag_size_g)}` : `${(+a.kg).toFixed(2)} kg ${rtT('ret_opened_short', 'opened')}`)} → <span class="ret-pill ret-pill-${a.action}">${actLabel[a.action] || a.action}</span>`).join(' · ')}</div>` : '';
+        const body = c.status === 'done'
+            ? `<div class="ret-hint">${rtT('ret_ed_nothing_left', 'Nothing remaining — only the coffee can be corrected.')}</div>`
+            : `<div class="ret-ed-edit"><div class="ret-ed-title"><span>${c.acts.length ? rtT('ret_ed_remaining', 'Remaining — editable') : rtT('ret_ed_unprocessed', 'Not processed — fully editable')}</span>${c.acts.length ? `<span class="ret-hint">${rtEsc(rtT('ret_ed_left', '{q} left').replace('{q}', rtQtyText(c.rem.sealed, c.rem.opened, it.bag_size_g)))}</span>` : ''}</div>
+                ${fieldsHtml({ code: codeLabel(it.coffee_code, it.coffee_type), machine: it.machine_id, roast: it.roast_date, size: parseInt(it.bag_size_g), sealed: c.rem.sealed, opened: c.rem.opened },
+                    c.acts.length ? [rtT('ret_ed_sealed_left', 'Sealed left'), rtT('ret_ed_opened_left', 'Opened left (kg)')] : [rtT('ret_lbl_sealed', 'Sealed packs'), rtT('ret_lbl_opened', 'Opened coffee (kg)')])}</div>`;
+        return `<div class="ret-ed-card" data-card="${c.key}">
+            <div class="ret-ed-top"><b>${c.no} · ${rtEsc(rtCoffeeLabel(it))}</b><span class="ret-ed-actions"><span class="ret-pill ret-pill-${c.status}">${statusLabel[c.status]}</span>${rmLabel ? `<button type="button" class="btn btn-secondary btn-sm" data-rm="${c.key}">${rmLabel}</button>` : ''}</span></div>
+            <div class="ret-ed-removed-note ret-hint hidden" data-f="removednote"></div>
+            <div data-f="content">${pick}${lock}${body}</div>
+        </div>`;
+    }
+    function newCardHtml(c) {
+        return `<div class="ret-ed-card ret-ed-new" data-card="${c.key}">
+            <div class="ret-ed-top"><b>${rtT('ret_ed_new_item', 'New item')}</b><button type="button" class="ret-x" data-rm="${c.key}" aria-label="${rtEsc(rtT('ret_remove', 'Remove'))}">×</button></div>
+            <div class="ret-scanbox"><label class="form-label" style="margin-bottom:6px;">${rtT('ret_lbl_strip', 'Strip code — scan or type, then Enter')}</label>
+                <input type="text" class="form-control" data-f="strip" autocomplete="off" placeholder="20037" style="font-family:monospace;">
+                <div class="ret-hint" data-f="striphint">${rtT('ret_ed_strip_hint', 'Scan a sticker, or fill in the fields below by hand.')}</div></div>
+            ${fieldsHtml({ code: '', machine: null, roast: '', size: null, sealed: '', opened: '' }, [rtT('ret_lbl_sealed', 'Sealed packs'), rtT('ret_lbl_opened', 'Opened coffee (kg)')])}
+        </div>`;
+    }
+
+    const html = `
+        <div class="ret-ed-head">
+            <div class="form-group"><label class="form-label">${rtT('ret_lbl_date', 'Return Date')}</label><input type="date" id="re-date" class="form-control" max="${today}" value="${rtEsc(ret.return_date)}"></div>
+            <div class="form-group"><label class="form-label">${rtT('ret_lbl_origin', 'Origin')}</label>
+                <div style="display:flex; gap:6px;">
+                    <div class="ret-seg" id="re-origin-seg"><button type="button" data-o="cust" class="${ret.customer_id ? 'active' : ''}">${rtT('ret_origin_customer', 'Customer')}</button><button type="button" data-o="other" class="${ret.customer_id ? '' : 'active'}">${rtT('ret_origin_other', 'Other')}</button></div>
+                    <input type="text" id="re-cust" class="form-control${ret.customer_id ? '' : ' hidden'}" list="re-cust-list" autocomplete="off" value="${rtEsc(custName)}" placeholder="${rtEsc(rtT('ret_ph_customer', 'Customer name'))}">
+                    <input type="text" id="re-other" class="form-control${ret.customer_id ? ' hidden' : ''}" value="${rtEsc(ret.origin_text || '')}" placeholder="${rtEsc(rtT('ret_ph_other', 'e.g. Pulled from shelf'))}">
+                </div>
+                <datalist id="re-cust-list">${refs.customers.map(c => `<option value="${rtEsc(c.name)}"></option>`).join('')}</datalist></div>
+            <div class="form-group"><label class="form-label">${rtT('ret_lbl_reason', 'Reason')}</label><select id="re-reason" class="form-control"><option value="">—</option>${reasons.map(r => `<option${r === ret.reason ? ' selected' : ''}>${rtEsc(r)}</option>`).join('')}</select></div>
+            <div class="form-group"><label class="form-label">${rtT('ret_lbl_notes', 'Notes')}</label><input type="text" id="re-notes" class="form-control" value="${rtEsc(ret.notes || '')}" placeholder="${rtEsc(rtT('ret_ph_optional', 'optional'))}"></div>
+        </div>
+        <datalist id="re-code-list">${codeOpts.map(o => `<option value="${rtEsc(salesCodeLabel(o))}"></option>`).join('')}</datalist>
+        <div class="ret-item-head"><span>${rtT('ret_ed_items', 'Items')}</span></div>
+        <div id="re-cards">${cards.map(existingCardHtml).join('')}</div>
+        <button type="button" id="re-add" class="btn btn-secondary" style="width:100%; border-style:dashed;">+ ${rtT('ret_ed_add_item', 'Add item')}</button>
+        <div class="ret-ed-foot">
+            <div><span id="re-count" class="ret-hint"></span><div class="ret-why" id="re-why"></div></div>
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('btn-close-modal').click()">${rtT('btn_cancel', 'Cancel')}</button>
+                <button type="button" id="re-save" class="btn btn-primary" disabled>${rtT('ret_ed_save', 'Save changes')}</button>
+            </div>
+        </div>`;
+    openModal(rtT('ret_title_edit', 'Edit Return · {n}').replace('{n}', ret.return_number), html, '1100px');
+
+    const $ = id => document.getElementById(id);
+    const cardEl = c => document.querySelector(`[data-card="${c.key}"]`);
+    const fEl = (c, n) => { const el = cardEl(c); return el ? el.querySelector(`[data-f="${n}"]`) : null; };
+    const fVal = (c, n) => { const el = fEl(c, n); return el ? el.value : ''; };
+    const allCards = () => cards.filter(c => c.isNew ? !c.gone : true);
+    let origin = ret.customer_id ? 'cust' : 'other';
+
+    // ---------- reading a card ----------
+    function valsOf(c) {
+        if (!c.isNew && c.status === 'done') {
+            const it = c.it;
+            return { st: { state: 'ok', code: it.coffee_code, type: it.coffee_type }, code: it.coffee_code, type: it.coffee_type, machine: it.machine_id, roast: it.roast_date, size: parseInt(it.bag_size_g), sealed: 0, opened: 0, pick: fVal(c, 'pick') };
+        }
+        const st = resolveSalesCodeInput(fVal(c, 'code'), codeOpts, refs.codeDefinitions);
+        const num = (n, int) => { const raw = fVal(c, n); if (raw === '') return 0; const x = Number(raw); return int ? x : +x.toFixed(3); };
+        return { st, code: st.code, type: st.type, machine: parseInt(fVal(c, 'machine')) || null, roast: fVal(c, 'roast'), size: parseInt(fVal(c, 'size')) || null,
+            sealed: num('sealed', true), opened: num('opened', false), pick: fVal(c, 'pick') };
+    }
+    const sameDetails = (v, it) => v.code === it.coffee_code && v.type === it.coffee_type && v.machine === it.machine_id && v.roast === it.roast_date;
+    const identityKeys = ['coffee_kind', 'coffee_name', 'single_coffee_id', 'blend_recipe_id', 'resolved_via', 'candidates', 'source_packed_lot_id'];
+    function identityOf(c, v) {
+        if (v.pick) {
+            const [k, id] = v.pick.split(':');
+            const x = (k === 'single' ? refs.greens : refs.recipes).find(y => y.id === parseInt(id));
+            if (x) return { coffee_kind: k, coffee_name: x.name, single_coffee_id: k === 'single' ? x.id : null, blend_recipe_id: k === 'recipe' ? x.id : null, resolved_via: 'manual', candidates: null, source_packed_lot_id: c.isNew ? null : (c.it.source_packed_lot_id || null) };
+        }
+        if (c.isNew && c.sticker) {
+            const s = c.sticker;
+            return { coffee_kind: s.kind, coffee_name: s.name, single_coffee_id: s.singleId || null, blend_recipe_id: s.blendId || null, resolved_via: 'sticker', candidates: null, source_packed_lot_id: s.lot.id };
+        }
+        if (!c.isNew && sameDetails(v, c.it)) { const o = {}; identityKeys.forEach(k => o[k] = c.it[k] == null ? null : c.it[k]); return o; }
+        if (c.resolved && c.resolved.hit) {
+            const h = c.resolved.hit;
+            return { coffee_kind: h.kind, coffee_name: h.name, single_coffee_id: h.kind === 'single' ? h.id : null, blend_recipe_id: h.kind === 'recipe' ? h.id : null, resolved_via: 'roast_log', candidates: null, source_packed_lot_id: null };
+        }
+        const def = refs.codeDefinitions.find(d => d.code === v.code);
+        return { coffee_kind: 'unknown', coffee_name: def ? def.name : `Code ${v.code}`, single_coffee_id: null, blend_recipe_id: null, resolved_via: 'unknown', candidates: ((c.resolved && c.resolved.list) || []).map(x => ({ name: x.name, batches: x.batches })), source_packed_lot_id: null };
+    }
+
+    // ---------- the plan: what Save will write ----------
+    // Each op: { change, itemId?, patch?, old?, row?, line }.
+    function itemPatch(it, next) {
+        const patch = {}, old = {};
+        Object.keys(next).forEach(k => {
+            const a = it[k] == null ? null : it[k], b = next[k] == null ? null : next[k];
+            const same = typeof b === 'number' ? Math.abs((+a || 0) - b) < 0.0005 && a !== null : JSON.stringify(a) === JSON.stringify(b);
+            if (!same) { patch[k] = b; old[k] = a; }
+        });
+        return { patch, old };
+    }
+    function describe(old, patch) {
+        const fmt = (k, x) => x == null || x === '' ? '—' : k === 'machine_id' ? mName(x) : k === 'bag_size_g' ? rtSize(x) : (k === 'candidates' ? null : String(x));
+        return Object.keys(patch).filter(k => !['candidates', 'resolved_via', 'single_coffee_id', 'blend_recipe_id', 'source_packed_lot_id', 'coffee_kind'].includes(k))
+            .map(k => `${rtEsc(rtT('ret_ed_f_' + k, k))}: <b>${rtEsc(fmt(k, old[k]))} → ${rtEsc(fmt(k, patch[k]))}</b>`).join(', ');
+    }
+    function plan() {
+        const ops = [], whys = [];
+        const date = $('re-date').value;
+        if (!date || date > today) whys.push(rtT('ret_why_date', 'Check the return date.'));
+        let o = null;
+        if (origin === 'cust') { const cu = refs.customers.find(x => x.name === $('re-cust').value.trim()); if (cu) o = { customer_id: cu.id, origin_text: null }; }
+        else if ($('re-other').value.trim()) o = { customer_id: null, origin_text: $('re-other').value.trim() };
+        if (!o) whys.push(rtT('ret_why_origin', 'Fill in the origin.'));
+        else {
+            const { patch, old } = itemPatch(ret, { return_date: date, customer_id: o.customer_id, origin_text: o.origin_text, reason: $('re-reason').value || null, notes: $('re-notes').value.trim() || null });
+            if (Object.keys(patch).length) {
+                const showOld = Object.assign({}, old), showNew = Object.assign({}, patch);
+                if ('customer_id' in patch || 'origin_text' in patch) {
+                    const lbl = (cid, txt) => cid ? ((refs.customers.find(x => x.id === cid) || {}).name || '-') : (txt || '—');
+                    showOld.origin = lbl(ret.customer_id, ret.origin_text); showNew.origin = lbl(o.customer_id, o.origin_text);
+                    delete showOld.customer_id; delete showOld.origin_text; delete showNew.customer_id; delete showNew.origin_text;
+                }
+                ops.push({ change: 'header', patch, old, line: `${rtT('ret_ed_header', 'Return')}: ${describe(showOld, showNew)}` });
+            }
+        }
+        let nextLine = maxLine;
+        for (const c of allCards()) {
+            const label = c.isNew ? rtT('ret_ed_new_item', 'New item') : rtT('ret_ed_item_n', 'Item {n}').replace('{n}', c.no);
+            if (c.removed) {
+                if (c.status === 'need') ops.push({ change: 'item_remove', itemId: c.it.id, old: c.it, line: `${label}: <b>${rtT('ret_ed_removed', 'removed')}</b>` });
+                else if (c.status === 'partial') {
+                    const { patch, old } = itemPatch(c.it, { sealed_pcs: c.processed.sealed, opened_kg: c.processed.opened });
+                    ops.push({ change: 'remaining_remove', itemId: c.it.id, patch, old, line: `${label}: ${rtEsc(rtT('ret_ed_line_rm_remaining', 'remaining {q} removed — the item becomes Done').replace('{q}', rtQtyText(c.rem.sealed, c.rem.opened, c.it.bag_size_g)))}` });
+                }
+                continue;
+            }
+            const v = valsOf(c);
+            const editable = c.isNew || c.status !== 'done';
+            if (editable) {
+                const pre = `${label}: `;
+                if (v.st.state !== 'ok') { whys.push(pre + rtT('ret_why_code', 'Enter a registered coffee code.')); continue; }
+                if (!v.machine) { whys.push(pre + rtT('ret_why_machine', 'Pick the machine.')); continue; }
+                if (!v.roast || v.roast > today || (date && v.roast > date)) { whys.push(pre + rtT('ret_why_roast', 'Check the roast date (on or before the return date).')); continue; }
+                if (!v.size) { whys.push(pre + rtT('ret_why_size', 'Pick the package.')); continue; }
+                if (c.resolved && c.resolved.loading) { whys.push(pre + rtT('ret_resolving', 'Looking it up in the roast log…')); continue; }
+                if (!Number.isInteger(v.sealed) || v.sealed < 0 || !(v.opened >= 0)) { whys.push(pre + rtT('ret_why_qty_bad', 'Check the quantities.')); continue; }
+                if ((c.isNew || c.status === 'need') && !(v.sealed > 0 || v.opened > 0)) { whys.push(pre + rtT('ret_ed_why_zero', 'Enter sealed packs and/or opened coffee — or remove the item.')); continue; }
+            } else if (date && c.it.roast_date > date) { whys.push(rtT('ret_why_roast_after', 'An item\'s roast date is after the return date.')); }
+            const id = identityOf(c, v);
+            const details = { coffee_code: v.code, coffee_type: v.type, machine_id: v.machine, roast_date: v.roast, bag_size_g: v.size };
+            if (c.isNew) {
+                const row = Object.assign({ return_id: ret.id, line_no: ++nextLine }, details, id, { sealed_pcs: v.sealed, opened_kg: v.opened });
+                ops.push({ change: 'item_add', row, line: `${label}: <b>${rtEsc(rtCoffeeLabel(row))}</b> · ${rtEsc(rtQtyText(v.sealed, v.opened, v.size))}` });
+                continue;
+            }
+            const it = c.it;
+            if (c.status === 'done') {
+                if (!v.pick) continue;
+                const { patch, old } = itemPatch(it, id);
+                if (Object.keys(patch).length) ops.push({ change: 'item_identify', itemId: it.id, patch, old, line: `${label}: ${rtT('ret_lbl_coffee', 'Coffee')} <b>${rtEsc(rtCoffeeLabel(it))} → ${rtEsc(rtCoffeeLabel(Object.assign({}, it, id)))}</b>` });
+                continue;
+            }
+            if (c.status === 'need') {
+                const { patch, old } = itemPatch(it, Object.assign({}, details, id, { sealed_pcs: v.sealed, opened_kg: v.opened }));
+                if (Object.keys(patch).length) ops.push({ change: 'item_update', itemId: it.id, patch, old, line: `${label}: ${describe(Object.assign({}, old, { coffee_name: rtCoffeeLabel(it) }), Object.assign({}, patch, 'coffee_name' in patch || 'coffee_kind' in patch ? { coffee_name: rtCoffeeLabel(Object.assign({}, it, id)) } : {}))}` });
+                continue;
+            }
+            // partly processed
+            const totals = { sealed_pcs: c.processed.sealed + v.sealed, opened_kg: +(c.processed.opened + v.opened).toFixed(3) };
+            const detailsChanged = !sameDetails(v, it) || v.size !== parseInt(it.bag_size_g);
+            const nothingLeft = !(v.sealed > 0 || v.opened > 0);
+            if (detailsChanged && !nothingLeft) {
+                const identified = it.coffee_kind === 'unknown' && id.coffee_kind !== 'unknown' && v.size === parseInt(it.bag_size_g);
+                if (identified) {
+                    const { patch, old } = itemPatch(it, Object.assign({}, details, id, totals));
+                    ops.push({ change: 'item_identify', itemId: it.id, patch, old, line: `${label}: ${describe(Object.assign({}, old, { coffee_name: rtCoffeeLabel(it) }), Object.assign({}, patch, { coffee_name: rtCoffeeLabel(Object.assign({}, it, id)) }))} — ${rtEsc(rtT('ret_ed_line_whole', 'applied to the whole item, incl. the part already processed (record and Tracking only)'))}` });
+                } else {
+                    const { patch, old } = itemPatch(it, { sealed_pcs: c.processed.sealed, opened_kg: c.processed.opened });
+                    const row = Object.assign({ return_id: ret.id, line_no: ++nextLine }, details, id, { sealed_pcs: v.sealed, opened_kg: v.opened });
+                    ops.push({ change: 'item_split', itemId: it.id, patch, old, row, line: `${label}: ${rtEsc(rtT('ret_ed_line_split', 'remaining {q} becomes a new item ({d}); the processed part keeps its details').replace('{q}', rtQtyText(v.sealed, v.opened, v.size)).replace('{d}', `${rtCoffeeLabel(row)} · ${mName(v.machine)} · ${v.roast} · ${rtSize(v.size)}`))}` });
+                }
+                continue;
+            }
+            const next = Object.assign({}, totals);
+            if (v.pick) Object.assign(next, id);
+            const { patch, old } = itemPatch(it, next);
+            if (!Object.keys(patch).length) continue;
+            const lines = [];
+            if ('sealed_pcs' in patch || 'opened_kg' in patch) lines.push(rtEsc(rtT('ret_ed_line_remaining', 'remaining {a} → {b}').replace('{a}', rtQtyText(c.rem.sealed, c.rem.opened, it.bag_size_g)).replace('{b}', rtQtyText(v.sealed, v.opened, it.bag_size_g))));
+            if (v.pick && ('coffee_name' in patch || 'coffee_kind' in patch)) lines.push(`${rtT('ret_lbl_coffee', 'Coffee')} <b>${rtEsc(rtCoffeeLabel(it))} → ${rtEsc(rtCoffeeLabel(Object.assign({}, it, id)))}</b>`);
+            ops.push({ change: v.pick ? 'item_identify' : 'item_update', itemId: it.id, patch, old, line: `${label}: ${lines.join(', ')}` });
+        }
+        return { ops, why: whys[0] || '' };
+    }
+
+    // ---------- per-card UI ----------
+    function renderPick(c) {
+        const sel = fEl(c, 'pick'); if (!sel) return;
+        const v = valsOf(c);
+        const cur = sel.value;
+        const list = v.st.state === 'ok' ? (v.type === 'Single' ? refs.greens.filter(g => g.code === v.code).map(g => ({ v: 'single:' + g.id, l: g.name }))
+            : refs.recipes.filter(r => r.code === v.code).map(r => ({ v: 'recipe:' + r.id, l: r.name }))) : [];
+        sel.innerHTML = `<option value="">${rtT('ret_ed_keep_unknown', '— keep Unknown —')}</option>` + list.map(o => `<option value="${o.v}"${o.v === cur ? ' selected' : ''}>${rtEsc(o.l)} (code ${rtEsc(v.code)})</option>`).join('');
+    }
+    function renderNote(c) {
+        const box = fEl(c, 'note'); if (!box) return;
+        if (c.removed) { box.innerHTML = ''; return; }
+        const v = valsOf(c);
+        if (v.st.state === 'missing' || v.st.state === 'no_members') { box.innerHTML = `<div class="ret-hint ret-err">${rtEsc(rtT('ret_code_bad', 'Code {code} can\'t be used — it must be registered in Code Definitions with a coffee under it.').replace('{code}', v.st.code))}</div>`; return; }
+        if (v.st.state === 'ambiguous') { box.innerHTML = `<div class="ret-hint ret-err">${rtEsc(rtT('ret_code_ambiguous', 'Code {code} is both Single and Blend — pick it from the list.').replace('{code}', v.st.code))}</div>`; return; }
+        const parts = [];
+        if (c.isNew && c.sticker) parts.push(`<div class="ret-found">✓ ${rtEsc(c.sticker.name)} · ${c.sticker.type} · lot <code>${rtEsc(c.sticker.lot.lot_code)}</code></div>`);
+        else if (c.resolved && c.resolved.loading) parts.push(`<div class="ret-hint">${rtT('ret_resolving', 'Looking it up in the roast log…')}</div>`);
+        else if (c.resolved && !v.pick) {
+            const kindWord = v.type === 'Blend' ? rtT('ret_word_recipe', 'Recipe') : rtT('ret_word_origin', 'Origin');
+            if (c.resolved.hit) parts.push(`<div class="ret-found">✓ ${kindWord}: <b>${rtEsc(c.resolved.hit.name)}</b> — ${rtEsc(rtT('ret_found_log', 'found in the roast log ({n} batches that day)').replace('{n}', c.resolved.hit.batches))}</div>`);
+            else parts.push(`<div class="ret-unknown"><b>${kindWord}: Unknown</b> — ${rtEsc(c.resolved.list.length ? rtT('ret_unknown_many', 'roasted under this code that day: {list}. Saved as Unknown; Tracking lists them.').replace('{list}', c.resolved.list.map(x => x.name).join(', ')) : rtT('ret_unknown_none', 'nothing roasted under this code on this machine that day. Check the date, or save as Unknown.'))}</div>`);
+        }
+        if (!c.isNew && c.status === 'partial' && v.st.state === 'ok' && (v.sealed > 0 || v.opened > 0) && (!sameDetails(v, c.it) || v.size !== parseInt(c.it.bag_size_g)) && !(c.resolved && c.resolved.loading)) {
+            const id = identityOf(c, v);
+            const whole = c.it.coffee_kind === 'unknown' && id.coffee_kind !== 'unknown' && v.size === parseInt(c.it.bag_size_g);
+            parts.push(`<div class="ret-ed-note ${whole ? 'ret-ed-note-ok' : 'ret-ed-note-split'}">${rtEsc(whole
+                ? rtT('ret_ed_note_whole', 'This item was Unknown, so the new details also go on the part already processed — in the return record and Tracking only. No stock moves, no split.')
+                : rtT('ret_ed_note_split', 'The remaining becomes its own item with these details. The part already processed keeps the details it was moved with.'))}</div>`);
+        }
+        box.innerHTML = parts.join('');
+    }
+    function markChanged(c) {
+        const pick = fEl(c, 'pick'); if (pick) pick.classList.toggle('ret-changed', !!pick.value);
+        if (c.isNew || c.status === 'done') return;
+        const it = c.it;
+        const orig = { code: codeLabel(it.coffee_code, it.coffee_type), machine: String(it.machine_id || ''), roast: it.roast_date || '', size: String(parseInt(it.bag_size_g) || ''), sealed: String(c.rem.sealed), opened: String(c.rem.opened) };
+        Object.keys(orig).forEach(k => {
+            const el = fEl(c, k); if (!el) return;
+            let now = el.value;
+            if (k === 'code') { const st = resolveSalesCodeInput(now, codeOpts, refs.codeDefinitions); now = st.state === 'ok' ? codeLabel(st.code, st.type) : now; }
+            if (k === 'sealed' || k === 'opened') now = now === '' ? '0' : String(Number(now));
+            el.classList.toggle('ret-changed', now !== orig[k]);
+        });
+    }
+    async function resolveCard(c) {
+        const v = valsOf(c);
+        const seq = ++c.seq;
+        if (c.isNew && c.sticker) { c.resolved = null; refreshCard(c); return; }
+        if (v.st.state !== 'ok' || !v.machine || !v.roast || (!c.isNew && sameDetails(v, c.it))) { c.resolved = null; refreshCard(c); return; }
+        c.resolved = { loading: true }; refreshCard(c);
+        let res;
+        try { const list = await rtRoastLog(v.code, v.type, v.machine, v.roast, refs); res = { list, hit: list.length === 1 ? list[0] : null }; }
+        catch (e) { console.warn('roast log lookup failed', e); res = { list: [], hit: null }; }
+        if (seq !== c.seq) return;
+        c.resolved = res; refreshCard(c);
+    }
+    function refreshCard(c) {
+        const el = cardEl(c); if (!el) return;
+        el.classList.toggle('ret-ed-is-removed', !!c.removed);
+        const rn = fEl(c, 'removednote'), content = fEl(c, 'content');
+        if (rn) {
+            rn.classList.toggle('hidden', !c.removed);
+            rn.textContent = c.removed ? (c.status === 'partial'
+                ? rtT('ret_ed_removed_remaining', 'The remaining {q} will be removed; the processed part stays. Click Undo to keep it.').replace('{q}', rtQtyText(c.rem.sealed, c.rem.opened, c.it.bag_size_g))
+                : rtT('ret_ed_removed_item', 'This item will be removed. Click Undo to keep it.')) : '';
+        }
+        if (content) content.classList.toggle('hidden', !!c.removed);
+        const rmBtn = el.querySelector(`[data-rm="${c.key}"]`);
+        if (rmBtn && !c.isNew) rmBtn.textContent = c.removed ? rtT('ret_ed_undo', 'Undo') : (c.status === 'partial' ? rtT('ret_ed_remove_remaining', 'Remove remaining') : rtT('ret_remove', 'Remove'));
+        renderPick(c); markChanged(c); renderNote(c); refreshFoot();
+    }
+    function refreshFoot() {
+        const { ops, why } = plan();
+        $('re-count').textContent = ops.length ? rtT('ret_ed_n_changes', '{n} change(s)').replace('{n}', ops.length) : rtT('ret_ed_no_changes', 'No changes yet');
+        $('re-why').textContent = why;
+        $('re-save').disabled = !!why || !ops.length;
+    }
+    async function scanCard(c) {
+        const v = fVal(c, 'strip').trim(); if (!v) return;
+        const hint = fEl(c, 'striphint');
+        hint.className = 'ret-hint'; hint.textContent = rtT('ret_strip_looking', 'Looking up…');
+        let res;
+        try { res = await rtResolveSticker(v, refs); } catch (e) { res = { error: e.message || String(e) }; }
+        if (res.error) { c.sticker = null; hint.className = 'ret-hint ret-err'; hint.textContent = res.error; refreshCard(c); return; }
+        c.sticker = res;
+        fEl(c, 'code').value = codeLabel(res.code, res.type);
+        fEl(c, 'machine').value = res.machineId || ''; fEl(c, 'roast').value = res.roastDate || ''; fEl(c, 'size').value = res.size || '';
+        hint.className = 'ret-hint ret-ok'; hint.textContent = rtT('ret_strip_found', 'Lot found — enter the quantity, then Add to list.');
+        c.resolved = null; refreshCard(c);
+        fEl(c, 'sealed').focus();
+    }
+
+    // ---------- events ----------
+    const box = $('re-cards');
+    const cardOf = el => { const k = el.closest('[data-card]'); return k ? cards.find(c => c.key === k.dataset.card) : null; };
+    box.addEventListener('input', e => {
+        const c = cardOf(e.target); if (!c) return;
+        const f = e.target.dataset.f;
+        if (f === 'strip') return;
+        if (c.isNew && c.sticker && ['code', 'machine', 'roast', 'size'].includes(f)) { c.sticker = null; const h = fEl(c, 'striphint'); h.className = 'ret-hint'; h.textContent = rtT('ret_ed_strip_hint', 'Scan a sticker, or fill in the fields below by hand.'); }
+        if (['code', 'machine', 'roast'].includes(f)) resolveCard(c); else refreshCard(c);
+    });
+    box.addEventListener('change', e => {
+        const c = cardOf(e.target); if (!c) return;
+        if (e.target.dataset.f === 'strip') { scanCard(c); return; }
+        if (['machine', 'size', 'pick'].includes(e.target.dataset.f)) refreshCard(c);
+    });
+    box.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' || e.target.dataset.f !== 'strip') return;
+        e.preventDefault(); const c = cardOf(e.target); if (c) scanCard(c);
+    });
+    box.addEventListener('click', e => {
+        const b = e.target.closest('[data-rm]'); if (!b) return;
+        const c = cards.find(x => x.key === b.dataset.rm); if (!c) return;
+        if (c.isNew) { c.gone = true; cardEl(c).remove(); refreshFoot(); return; }
+        c.removed = !c.removed; refreshCard(c);
+    });
+    $('re-add').addEventListener('click', () => {
+        const c = { key: 'n' + (++addSeq), isNew: true, sticker: null, resolved: null, seq: 0, status: 'need' };
+        cards.push(c);
+        box.insertAdjacentHTML('beforeend', newCardHtml(c));
+        refreshCard(c);
+        fEl(c, 'strip').focus();
+    });
+    $('re-origin-seg').addEventListener('click', e => {
+        const b = e.target.closest('button'); if (!b) return;
+        origin = b.dataset.o;
+        $('re-origin-seg').querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+        $('re-cust').classList.toggle('hidden', origin !== 'cust'); $('re-other').classList.toggle('hidden', origin !== 'other');
+        refreshFoot();
+    });
+    ['re-date', 're-cust', 're-other', 're-reason', 're-notes'].forEach(i => { $(i).addEventListener('input', refreshFoot); $(i).addEventListener('change', refreshFoot); });
+    cards.forEach(refreshCard);
+    $('re-save').addEventListener('click', () => {
+        const { ops, why } = plan();
+        if (why || !ops.length) return;
+        const ov = document.createElement('div');
+        ov.className = 'overlay'; ov.style.zIndex = '2000';
+        ov.innerHTML = `<div class="overlay-card" role="dialog" aria-modal="true" style="max-width:600px; gap:10px; text-align:center;">
+            <div class="ret-q">?</div>
+            <h3 style="margin:0;">${rtT('ret_ed_q', 'Save these changes?')}</h3>
+            <ul class="ret-result" style="text-align:left;">${ops.map(o => `<li>${o.line}</li>`).join('')}</ul>
+            <div class="ret-hint">${rtT('ret_ed_no_stock', 'No stock moves. Bags already processed stay where they are.')}</div>
+            <div class="ret-hint">${rtT('ret_nothing_saved', 'Nothing is saved until you press Proceed.')}</div>
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:6px;">
+                <button type="button" class="btn btn-secondary" data-f="cancel">${rtT('btn_cancel', 'Cancel')}</button>
+                <button type="button" class="btn btn-primary" data-f="go">${rtT('ret_btn_proceed', 'Proceed')}</button>
+            </div></div>`;
+        document.body.appendChild(ov);
+        ov.querySelector('[data-f="go"]').focus();
+        ov.querySelector('[data-f="cancel"]').onclick = () => ov.remove();
+        ov.querySelector('[data-f="go"]').onclick = async () => { ov.remove(); await saveEdits(ops); };
+    });
+
+    // ---------- save: all-or-nothing, verified, logged ----------
+    let saving = false;
+    async function saveEdits(ops) {
+        if (saving) return;
+        saving = true;
+        const lock = lockProcessingScreen(rtT('ret_ed_saving', 'Saving changes…'));
+        const undo = [];
+        let failure = null, partial = null;
+        const sb = rtSb(), who = rtUser();
+        try {
+            // Nothing may have moved since the modal opened.
+            const fresh = await rtQ(sb.from('stock_return_items').select('id, sealed_pcs, opened_kg, stock_return_actions(id)').eq('return_id', ret.id));
+            for (const it of items) {
+                const f = fresh.find(x => x.id === it.id);
+                const n = actions.filter(a => a.return_item_id === it.id).length;
+                if (!f || (f.stock_return_actions || []).length !== n || f.sealed_pcs !== it.sealed_pcs || Math.abs(+f.opened_kg - +it.opened_kg) > 0.0005)
+                    throw new Error(rtT('ret_err_changed', 'This item changed meanwhile — reopen it and try again.'));
+            }
+            const logs = [];
+            const added = [];
+            for (const op of ops) {
+                if (op.change === 'header') {
+                    const { error } = await sb.from('stock_returns').update(op.patch).eq('id', ret.id);
+                    if (error) throw error;
+                    undo.push(async () => { await sb.from('stock_returns').update(op.old).eq('id', ret.id); });
+                    logs.push({ return_item_id: null, change: 'header', details: Object.fromEntries(Object.keys(op.patch).map(k => [k, [op.old[k], op.patch[k]]])) });
+                    continue;
+                }
+                if (op.change === 'item_remove') {
+                    const { error } = await sb.from('stock_return_items').delete().eq('id', op.itemId);
+                    if (error) throw error;
+                    undo.push(async () => { await sb.from('stock_return_items').insert(op.old); });
+                    logs.push({ return_item_id: op.itemId, change: 'item_remove', details: { row: op.old } });
+                    continue;
+                }
+                if (op.patch && Object.keys(op.patch).length) {
+                    const { error } = await sb.from('stock_return_items').update(op.patch).eq('id', op.itemId);
+                    if (error) throw error;
+                    undo.push(async () => { await sb.from('stock_return_items').update(op.old).eq('id', op.itemId); });
+                    logs.push({ return_item_id: op.itemId, change: op.change, details: Object.fromEntries(Object.keys(op.patch).map(k => [k, [op.old[k], op.patch[k]]])) });
+                }
+                if (op.row) {
+                    const { data, error } = await sb.from('stock_return_items').insert(op.row).select().single();
+                    if (error) throw error;
+                    undo.push(async () => { await sb.from('stock_return_items').delete().eq('id', data.id); });
+                    added.push({ op, id: data.id });
+                    logs.push({ return_item_id: data.id, change: op.change === 'item_split' ? 'item_split' : 'item_add', details: { row: op.row, split_from: op.change === 'item_split' ? op.itemId : null } });
+                }
+            }
+            const logRows = logs.map(l => Object.assign({ return_id: ret.id, return_number: ret.return_number, edited_by: who }, l));
+            const { data: logged, error: logErr } = await sb.from('stock_return_edits').insert(logRows).select('id');
+            if (logErr) throw logErr;
+            undo.push(async () => { await sb.from('stock_return_edits').delete().in('id', logged.map(x => x.id)); });
+
+            // Read back every write.
+            const [hd, now] = await Promise.all([
+                rtQ(sb.from('stock_returns').select('*').eq('id', ret.id)),
+                rtQ(sb.from('stock_return_items').select('*').eq('return_id', ret.id))
+            ]);
+            const eq = (a, b) => (typeof b === 'number' ? Math.abs((+a || 0) - b) < 0.0005 && a !== null : JSON.stringify(a == null ? null : a) === JSON.stringify(b));
+            const bad = ops.some(op => {
+                if (op.change === 'header') return !hd[0] || Object.keys(op.patch).some(k => !eq(hd[0][k], op.patch[k]));
+                if (op.change === 'item_remove') return now.some(i => i.id === op.itemId);
+                if (op.patch && Object.keys(op.patch).length) { const r = now.find(i => i.id === op.itemId); if (!r || Object.keys(op.patch).some(k => !eq(r[k], op.patch[k]))) return true; }
+                if (op.row) { const a = added.find(x => x.op === op); if (!a || !now.some(i => i.id === a.id)) return true; }
+                return false;
+            });
+            if (bad || logged.length !== logRows.length) throw new Error(rtT('ret_ed_verify_failed', 'The changes could not be verified after saving.'));
+        } catch (e) {
+            console.error('Edit return failed:', e);
+            const left = await rtRollback(undo);
+            if (left.length) partial = [e.message || String(e), ...left].join('\n'); else failure = e.message || String(e);
+        } finally {
+            lock.release();
+            saving = false;
+        }
+        if (failure) { await showStockFailed(failure); return; }
+        if (partial) { await showStockPartial(partial); return; }
+        const closeBtn = document.getElementById('btn-close-modal'); if (closeBtn) closeBtn.click();
+        loadReturnsSection();
+        await rtShowDone({ title: rtT('ret_ed_done', 'Return updated'), sub: `${ret.return_number} · ${rtT('ret_ed_n_changes', '{n} change(s)').replace('{n}', ops.length)}`, results: ops.map(o => o.line), printSets: [], refs });
+    }
 }
 
 // ============================================================================
