@@ -1142,6 +1142,12 @@ async function openCustomBlendModal() {
         if (type === 'Blend') return (recipes || []).find(r => r.id === id)?.name || null;
         return null;
     }
+    // Printed in front of each ingredient on the work order.
+    function resolveCoffeeCode(type, id) {
+        if (type === 'Single') return (greenbeans || []).find(g => g.id === id)?.code || null;
+        if (type === 'Blend') return (recipes || []).find(r => r.id === id)?.code || null;
+        return null;
+    }
 
     // packed_coffee doesn't reliably carry single_coffee_id/blend_recipe_id
     // for rows created outside the roast-log flow — same name-matching
@@ -1169,7 +1175,7 @@ async function openCustomBlendModal() {
             const id = b.coffee_type === 'Single' ? b.single_coffee_id : b.blend_recipe_id;
             const key = `${b.coffee_type}:${id != null ? id : 'name:' + b.coffee_name}`;
             if (!bulkCoffees.has(key)) {
-                bulkCoffees.set(key, { key, type: b.coffee_type, name: resolveCoffeeName(b.coffee_type, id) || stripType(b.coffee_name), lots: [] });
+                bulkCoffees.set(key, { key, type: b.coffee_type, name: resolveCoffeeName(b.coffee_type, id) || stripType(b.coffee_name), coffeeCode: resolveCoffeeCode(b.coffee_type, id), lots: [] });
             }
             bulkCoffees.get(key).lots.push({
                 id: b.id,
@@ -1199,10 +1205,11 @@ async function openCustomBlendModal() {
                 .sort((a, b) => (a.packed_date || '').localeCompare(b.packed_date || '') || a.id - b.id)
                 .map(l => {
                     const pl = l.production_lot_id ? prodLotById.get(l.production_lot_id) : null;
-                    return { id: l.id, code: l.lot_code, remainingPcs: parseInt(l.remaining_pcs) || 0, roastDate: (pl && pl.production_date) || l.packed_date || null };
+                    return { id: l.id, code: l.lot_code, strip: l.strip_code || null, remainingPcs: parseInt(l.remaining_pcs) || 0, roastDate: (pl && pl.production_date) || l.packed_date || null };
                 });
             if (lots.length === 0) return null;
-            return { key: `packed:${p.id}`, id: p.id, type: identity.type, name, bagSizeG, machineId: p.machine_id || null, lots };
+            const coffeeCode = identity.viaCode ? (p.coffee_code || null) : resolveCoffeeCode(identity.type, identity.id);
+            return { key: `packed:${p.id}`, id: p.id, type: identity.type, name, coffeeCode, bagSizeG, machineId: p.machine_id || null, lots };
         })
         .filter(Boolean)
         .sort((a, b) => a.name.localeCompare(b.name) || a.bagSizeG - b.bagSizeG);
@@ -1216,7 +1223,6 @@ async function openCustomBlendModal() {
         return;
     }
 
-    const dateStr = todayStr.replace(/-/g, '');
     const html = `
         <div class="form-row">
             <div class="form-group flex-1">
@@ -1233,7 +1239,8 @@ async function openCustomBlendModal() {
         <div class="form-row" style="align-items:stretch;">
             <div class="form-group flex-1" style="max-width:260px;">
                 <label class="form-label">${cbT('cb_lbl_bulk_code', 'Bulk Code (auto)')}</label>
-                <input type="text" id="cb-bulk-code-preview" class="form-control" value="CB-${dateStr}" disabled style="color:var(--text-muted);">
+                <input type="text" id="cb-bulk-code-preview" class="form-control" value="—" disabled style="color:var(--text-muted); font-family:monospace;">
+                <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;">${cbT('cb_bulk_code_hint', 'Code + machine + roast date + CB. The date is set at the next step.')}</div>
             </div>
             <div class="form-group flex-1" style="display:flex; flex-direction:column; justify-content:center; align-items:flex-end; text-align:right; background:var(--primary-glow); border:1px solid var(--primary); border-radius:12px; padding:8px 16px;">
                 <div style="font-size:0.72rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--primary);">${cbT('cb_total_label', 'Total blend size')}</div>
@@ -1480,6 +1487,9 @@ async function openCustomBlendModal() {
         else if (!selectedMachineId()) reason = cbT('cb_block_machine', 'Pick a machine under Produce As.');
         document.getElementById('cb-block-reason').textContent = reason;
         document.getElementById('cb-submit').disabled = !!reason;
+        const preview = document.getElementById('cb-bulk-code-preview');
+        const mId = selectedMachineId();
+        if (preview) preview.value = cs.state === 'ok' && mId ? customBlendBulkCode(cs.code, (machines || []).find(m => m.id === mId), null) : '—';
     }
 
     function renderAll() { renderRows(); renderProduceAs(); renderFooter(); }
@@ -1551,17 +1561,19 @@ async function openCustomBlendModal() {
                 const c = bulkCoffeeByKey(r.coffee);
                 const before = lot.availableKg - (lotUsed['b' + lot.id] || 0);
                 lotUsed['b' + lot.id] = (lotUsed['b' + lot.id] || 0) + amt;
-                stock.push({ kind: 'bulk', refId: lot.id, name: c.name, type: c.type, lotCode: lot.code, machineId: lot.machineId, roastDate: lot.roastDate, kg: amt, before, after: before - amt });
+                stock.push({ kind: 'bulk', refId: lot.id, name: c.name, type: c.type, coffeeCode: c.coffeeCode, lotCode: lot.code, machineId: lot.machineId, roastDate: lot.roastDate, kg: amt, before, after: before - amt });
             } else {
                 const c = packedCoffeeByKey(r.coffee);
                 const bags = Math.round(amt / (c.bagSizeG / 1000));
                 const before = lot.remainingPcs - (lotUsed['p' + lot.id] || 0);
                 lotUsed['p' + lot.id] = (lotUsed['p' + lot.id] || 0) + bags;
-                stock.push({ kind: 'packed', refId: c.id, lotId: lot.id, name: c.name, type: c.type, bagSizeG: c.bagSizeG, lotCode: lot.code, machineId: c.machineId, roastDate: lot.roastDate, kg: amt, bags, before, after: before - bags });
+                stock.push({ kind: 'packed', refId: c.id, lotId: lot.id, name: c.name, type: c.type, coffeeCode: c.coffeeCode, bagSizeG: c.bagSizeG, lotCode: lot.code, strip: lot.strip, machineId: c.machineId, roastDate: lot.roastDate, kg: amt, bags, before, after: before - bags });
             }
         });
         const total = [...stock, ...unregistered].reduce((s, x) => s + x.kg, 0);
-        openCustomBlendReview({ name, code, machineId, machineName, stock, unregistered, total, fmtDate, shortDate, esc, todayStr });
+        const machine = (machines || []).find(m => m.id === machineId) || null;
+        const existingBlendCodes = (bulkList || []).map(b => b.custom_blend_code).filter(Boolean);
+        openCustomBlendReview({ name, code, machineId, machine, machineName, existingBlendCodes, stock, unregistered, total, fmtDate, shortDate, esc, todayStr });
     });
 }
 
@@ -1607,6 +1619,7 @@ function openCustomBlendReview(v) {
                 <dt style="color:var(--text-muted);">${cbT('cb_rv_blend', 'Blend')}</dt><dd style="margin:0; font-weight:600;">${esc(v.name)}</dd>
                 <dt style="color:var(--text-muted);">${cbT('cb_rv_sells_as', 'Sells as')}</dt><dd style="margin:0; font-weight:600;">${esc(salesCodeLabel(v.code))}</dd>
                 <dt style="color:var(--text-muted);">${cbT('cb_rv_produce_as', 'Produce as')}</dt><dd style="margin:0; font-weight:600;">${esc(v.machineName(v.machineId))}</dd>
+                <dt style="color:var(--text-muted);">${cbT('cb_rv_bulk_code', 'Bulk code')}</dt><dd style="margin:0; font-weight:700; font-family:monospace;" id="cb-rv-bulk-code"></dd>
             </dl>
             <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px; padding:12px 14px; border:1px solid var(--border); border-radius:12px;">
                 <label class="form-label" for="cb-rd-select" style="margin:0;">${cbT('cb_rd_label', 'Production / Roast Date')} <span style="color:var(--danger);">*</span></label>
@@ -1654,6 +1667,13 @@ function openCustomBlendReview(v) {
         hint.style.fontWeight = err ? '600' : '400';
         custom.style.borderColor = err ? 'var(--danger)' : '';
         confirm.disabled = !roast;
+        const codeEl = overlay.querySelector('#cb-rv-bulk-code');
+        if (codeEl) {
+            codeEl.textContent = roast ? customBlendBulkCode(v.code.code, v.machine, roast.iso, v.existingBlendCodes) : cbT('cb_rv_code_after_date', 'shown once the roast date is picked');
+            codeEl.style.color = roast ? '' : 'var(--text-muted)';
+            codeEl.style.fontFamily = roast ? 'monospace' : '';
+            codeEl.style.fontWeight = roast ? '700' : '400';
+        }
     };
     sel.addEventListener('change', () => { check(); if (sel.value === 'custom') custom.focus(); });
     custom.addEventListener('input', check);
@@ -1735,13 +1755,11 @@ async function submitCustomBlend(v) {
                 }
             }
 
-            // 2. The blend's bulk card, collision-safe CB- code (CB = Custom
-            // Blend; recipe-assembled post-blends use PB-).
+            // 2. The blend's bulk card. Code = sales code + machine + roast
+            // date + CB{n} (customBlendBulkCode), numbered against the bulk
+            // cards as they are now so it never repeats.
             const { data: allBulk } = await fetchData('bulk_roasted_coffee');
-            const dateStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
-            let bulkCode = `CB-${dateStr}`;
-            let suffix = 2;
-            while ((allBulk || []).some(b => b.custom_blend_code === bulkCode)) bulkCode = `CB-${dateStr}-${suffix++}`;
+            const bulkCode = customBlendBulkCode(v.code.code, v.machine, v.roast.iso, (allBulk || []).map(b => b.custom_blend_code));
 
             const { data: newBulk, error: bulkErr } = await saveData('bulk_roasted_coffee', {
                 coffee_name: v.name,
@@ -1797,7 +1815,7 @@ async function submitCustomBlend(v) {
                 lotIds.length ? sb.from('packed_coffee_lots').select('id, remaining_pcs').in('id', lotIds) : Promise.resolve({ data: [] })
             ]);
             const left = new Map([...(bb.data || []).map(x => ['b' + x.id, parseFloat(x.bulk_available) || 0]), ...(pl.data || []).map(x => ['p' + x.id, parseInt(x.remaining_pcs) || 0])]);
-            return { ok: true, bulkCode, left };
+            return { ok: true, bulkCode, left, createdAt: new Date().toISOString(), createdBy: userName };
         })();
     } catch (err) {
         console.error('submitCustomBlend error:', err);
@@ -1819,6 +1837,14 @@ async function submitCustomBlend(v) {
 
 function showCustomBlendCreated(v, outcome) {
     const { esc, fmtDate } = v;
+    const wo = {
+        code: outcome.bulkCode, name: v.name, sellsAs: salesCodeLabel(v.code), machine: v.machineName(v.machineId),
+        roastIso: v.roast.iso, total: v.total, createdAt: outcome.createdAt, createdBy: outcome.createdBy,
+        items: [
+            ...v.stock.map(s => ({ kind: s.kind, coffeeCode: s.coffeeCode, name: s.name, type: s.type, machine: v.machineName(s.machineId), roastIso: s.roastDate, lotCode: s.lotCode, strip: s.strip, bagSizeG: s.bagSizeG, bags: s.bags, kg: s.kg })),
+            ...v.unregistered.map(u => ({ kind: 'unreg', name: u.name, origin: u.origin, kg: u.kg }))
+        ]
+    };
     return new Promise(resolve => {
         const lines = [
             ...v.stock.map(s => s.kind === 'bulk'
@@ -1830,24 +1856,44 @@ function showCustomBlendCreated(v, outcome) {
         overlay.className = 'overlay';
         overlay.style.zIndex = '2000';
         overlay.innerHTML = `
-            <div class="overlay-card" role="dialog" aria-modal="true" style="max-width:560px; width:100%; max-height:calc(100vh - 32px); overflow:auto; background:var(--bg-sidebar); border:1px solid var(--border); border-radius:var(--border-radius); padding:22px 24px; gap:0;">
+            <div class="overlay-card" role="dialog" aria-modal="true" style="max-width:600px; width:100%; max-height:calc(100vh - 32px); overflow:auto; background:var(--bg-sidebar); border:1px solid var(--border); border-radius:var(--border-radius); padding:22px 24px; gap:0;">
                 <div style="width:50px; height:50px; border-radius:50%; background:var(--primary-glow); color:var(--success); display:grid; place-items:center; margin:0 auto 10px; font-size:1.6rem; font-weight:800;">✓</div>
                 <h3 style="margin:0 0 4px; font-size:1.2rem; font-weight:800; text-align:center;">${cbT('cb_done_title', 'Blend created')}</h3>
                 <p style="margin:0 0 14px; color:var(--text-muted); font-size:0.86rem; text-align:center;">${esc(cbT('cb_done_sub', '{name} is now in Ready to Pack.').replace('{name}', v.name))}</p>
-                <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; background:var(--primary-glow); border:1px solid var(--primary); border-radius:12px; padding:10px 16px; margin-bottom:14px;">
-                    <span style="font-size:0.74rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--primary);">${cbT('cb_done_card', 'New bulk card')} · <span style="font-family:monospace;">${esc(outcome.bulkCode)}</span></span>
-                    <span style="font-family:monospace; font-size:1.8rem; font-weight:700;">${v.total.toFixed(2)}<span style="font-size:1rem; color:var(--text-muted); margin-left:5px;">kg</span></span>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; background:var(--primary-glow); border:1px solid var(--primary); border-radius:12px; padding:12px 16px; margin-bottom:14px;">
+                    <div>
+                        <div style="font-size:0.72rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--primary);">${cbT('cb_done_code_lbl', 'New bulk code — mark it on the bulk')}</div>
+                        <div style="font-family:monospace; font-size:1.5rem; font-weight:700;">${esc(outcome.bulkCode)}</div>
+                    </div>
+                    <span style="font-family:monospace; font-size:1.5rem; font-weight:700;">${v.total.toFixed(2)}<span style="font-size:0.9rem; color:var(--text-muted); margin-left:4px;">kg</span></span>
                 </div>
-                <dl style="display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:0.85rem; margin:0 0 12px;">
+                <dl style="display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:0.85rem; margin:0 0 14px;">
                     <dt style="color:var(--text-muted);">${cbT('cb_rv_sells_as', 'Sells as')}</dt><dd style="margin:0; font-weight:600;">${esc(salesCodeLabel(v.code))}</dd>
                     <dt style="color:var(--text-muted);">${cbT('cb_rd_short', 'Roast date')}</dt><dd style="margin:0; font-weight:600;">${fmtDate(v.roast.iso)} <span style="color:var(--text-muted); font-weight:400;">· ${esc(v.roast.from)}</span></dd>
                     <dt style="color:var(--text-muted);">${cbT('cb_rv_produce_as', 'Produce as')}</dt><dd style="margin:0; font-weight:600;">${esc(v.machineName(v.machineId))}</dd>
                 </dl>
-                <ul style="list-style:none; margin:0 0 12px; padding:0; display:grid; gap:6px; font-size:0.85rem;">${lines.map(l => `<li><span style="color:var(--success); font-weight:800; margin-right:6px;">✓</span>${l}</li>`).join('')}</ul>
-                <p style="margin:0 0 12px; color:var(--text-muted); font-size:0.8rem;">${cbT('cb_done_verified', 'All figures were read back from the database after saving.')}</p>
+                <div style="border:1px solid var(--border); border-radius:12px; padding:14px 16px; display:grid; grid-template-columns:auto minmax(0,1fr); gap:14px; align-items:center; margin-bottom:12px;">
+                    <div aria-hidden="true" style="width:56px; height:76px; background:#fff; border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,0.35); padding:7px 6px; display:flex; flex-direction:column; gap:4px;">
+                        <i style="display:block; height:6px; width:70%; background:#2d5016; border-radius:2px;"></i><i style="display:block; height:11px; background:#2d5016; border-radius:2px;"></i>
+                        <i style="display:block; height:4px; background:#d9dcd3; border-radius:2px;"></i><i style="display:block; height:4px; background:#d9dcd3; border-radius:2px;"></i><i style="display:block; height:4px; background:#d9dcd3; border-radius:2px;"></i>
+                    </div>
+                    <div>
+                        <b style="display:block;">${cbT('cb_wo_card_title', 'Work Order · A4')}</b>
+                        <div style="font-size:0.82rem; color:var(--text-muted);">${esc(cbT('cb_wo_card_desc', '{n} ingredient(s) to gather, the steps, sign-off lines, and a cut-off tag with {code} to stick on the bulk.').replace('{n}', wo.items.length).replace('{code}', outcome.bulkCode))}</div>
+                        <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:0.82rem;">${cbT('cb_wo_copies', 'Copies')}
+                            <input type="number" min="1" max="10" value="1" data-act="copies" class="form-control" style="width:70px; padding:4px 8px;"></label>
+                    </div>
+                </div>
+                <details style="margin:0 0 10px; font-size:0.84rem;">
+                    <summary style="cursor:pointer; color:var(--text-muted);">${cbT('cb_done_stock', 'Stock taken')} (${lines.length})</summary>
+                    <ul style="list-style:none; margin:8px 0 0; padding:0; display:grid; gap:6px;">${lines.map(l => `<li><span style="color:var(--success); font-weight:800; margin-right:6px;">✓</span>${l}</li>`).join('')}</ul>
+                    <p style="margin:8px 0 0; color:var(--text-muted); font-size:0.8rem;">${cbT('cb_done_verified', 'All figures were read back from the database after saving.')}</p>
+                </details>
+                <p style="margin:0 0 12px; color:var(--text-muted); font-size:0.8rem;">${cbT('cb_wo_reprint_note', 'You can print it again later from Custom Blend History.')}</p>
                 <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
                     <button type="button" class="btn btn-secondary" data-act="done">${cbT('cb_done_btn', 'Done')}</button>
-                    <button type="button" class="btn btn-primary" data-act="rtp">${cbT('cb_done_view', 'View in Ready to Pack')}</button>
+                    <button type="button" class="btn btn-secondary" data-act="rtp">${cbT('cb_done_view', 'View in Ready to Pack')}</button>
+                    <button type="button" class="btn btn-primary" data-act="print">${cbT('cb_wo_print', 'Print Work Order')}</button>
                 </div>
             </div>`;
         document.body.appendChild(overlay);
@@ -1862,8 +1908,282 @@ function showCustomBlendCreated(v, outcome) {
         };
         overlay.querySelector('[data-act="done"]').addEventListener('click', () => finish('done'));
         overlay.querySelector('[data-act="rtp"]').addEventListener('click', () => finish('rtp'));
-        overlay.querySelector('[data-act="rtp"]').focus();
+        // Printing keeps the dialog open — they may still want Ready to Pack.
+        overlay.querySelector('[data-act="print"]').addEventListener('click', () => {
+            const copies = Math.min(10, Math.max(1, parseInt(overlay.querySelector('[data-act="copies"]').value) || 1));
+            printBlendWorkOrder(wo, copies);
+        });
+        overlay.querySelector('[data-act="print"]').focus();
     });
+}
+
+// Custom blend bulk code (user ruling 2026-10-04/05): the sales code picked in
+// the form, the machine it's produced as and its roast date — the same
+// pattern as every other bulk card, so it matches the stickers — then CB{n}
+// so it can never be taken for a roasted bulk of the same code. n is the
+// first number not already used by a bulk card. Without a roast date
+// (the form, before the review step) it returns a placeholder preview.
+// Blends made before this keep their old CB-YYYYMMDD code.
+function customBlendBulkCode(salesCode, machine, roastIso, existingCodes) {
+    const sanitize = s => (s || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'X';
+    const machineCode = machine ? (machine.code || machine.name) : 'M';
+    if (!roastIso) return `${sanitize(salesCode)}-${sanitize(machineCode)}DDMMYY-CB#`;
+    const [y, m, d] = roastIso.split('-');
+    const prefix = `${sanitize(salesCode)}-${sanitize(machineCode)}${d}${m}${y.slice(2)}-CB`;
+    const taken = new Set((existingCodes || []).filter(Boolean));
+    let n = 1;
+    while (taken.has(prefix + n)) n++;
+    return prefix + n;
+}
+
+// A4 work order for the packing team: which lots to take and how much, the
+// steps, sign-off lines and a cut-off tag with the bulk code. `wo` comes from
+// showCustomBlendCreated (just made) or printBlendWorkOrderFromHistory
+// (reprint). Same letterhead/table style as printOrderDetail.
+function printBlendWorkOrder(wo, copies = 1) {
+    const e = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const T = (k, f) => e(cbT(k, f));
+    const dmy = iso => { if (!iso) return '-'; const [y, m, d] = String(iso).slice(0, 10).split('-'); return `${d}/${m}/${y}`; };
+    const dmyShort = iso => { if (!iso) return '-'; const [y, m, d] = String(iso).slice(0, 10).split('-'); return `${d}/${m}/${y.slice(2)}`; };
+    const stamp = dt => { const x = new Date(dt); if (isNaN(x)) return '-'; const p = n => String(n).padStart(2, '0'); return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()} ${p(x.getHours())}:${p(x.getMinutes())}`; };
+    const cs = (typeof companySettings !== 'undefined' && companySettings) || {};
+    const code = e(wo.code);
+    const kg = (+wo.total || 0).toFixed(2);
+
+    const rows = wo.items.map((it, i) => {
+        const chip = it.kind === 'unreg' || !it.coffeeCode
+            ? '<span class="cc cc-none">—</span>'
+            : `<span class="cc">${e(it.coffeeCode)}</span>`;
+        let coffee, from, amount;
+        if (it.kind === 'unreg') {
+            coffee = `${chip}<b>${e(it.name)}</b><span class="unreg">${T('cb_wo_not_in_stock', 'Not in stock')}</span><span class="s">${e(cbT('cb_wo_source', 'Source: {s}').replace('{s}', it.origin || '-'))}</span>`;
+            from = '—';
+            amount = `${(+it.kg).toFixed(2)} kg`;
+        } else {
+            coffee = `${chip}<b>${e(it.name)}</b>${it.type ? ` (${e(it.type)})` : ''}<span class="s">${e(it.machine || '-')} · ${e(cbT('cb_wo_roasted', 'roasted {d}').replace('{d}', dmyShort(it.roastIso)))}</span>`;
+            if (it.kind === 'packed') {
+                const size = it.bagSizeG >= 1000 ? `${it.bagSizeG / 1000}kg` : `${it.bagSizeG}g`;
+                from = `${T('cb_wo_packed', 'Packed')} ${e(size)}${it.strip ? ` · ${T('cb_wo_strip', 'strip')} <span class="strip">${e(it.strip)}</span>` : ''}<span class="s">${T('cb_wo_lot', 'lot')} ${e(it.lotCode || '-')} · ${e(cbT('cb_wo_open_bags', 'open {n} bags').replace('{n}', it.bags))}</span>`;
+                amount = `${e(cbT('cb_wo_bags', '{n} bags').replace('{n}', it.bags))}<span class="s">${(+it.kg).toFixed(2)} kg</span>`;
+            } else {
+                from = `${T('cb_wo_bulk', 'Bulk')} <span class="code">${e(it.lotCode || '-')}</span>`;
+                amount = `${(+it.kg).toFixed(2)} kg`;
+            }
+        }
+        return `<tr><td>${i + 1}</td><td>${coffee}</td><td>${from}</td><td class="n">${amount}</td><td class="c"><span class="box"></span></td></tr>`;
+    }).join('');
+
+    const sheet = `
+    <div class="sheet">
+        <div class="lh">
+            <div class="lh-left">
+                ${cs.show_logo_in_print && cs.logo_base64 ? `<img class="logo" src="${cs.logo_base64}" alt="">` : ''}
+                <div>
+                    <div class="lh-name">${e(cs.company_name || 'Coffee Roastery')}</div>
+                    <div class="lh-contact">${e([cs.address, cs.phone, cs.email].filter(Boolean).join(' · '))}</div>
+                </div>
+            </div>
+            <div class="lh-right">
+                <div class="doc-title">${T('cb_wo_doc_title', 'Blend Work Order')}</div>
+                <div class="doc-sub">${code} · ${e(cbT('cb_wo_printed', 'printed {d}').replace('{d}', stamp(new Date())))}</div>
+            </div>
+        </div>
+        <div class="mark">
+            <div>
+                <div class="ml">${T('cb_wo_mark', 'Mark the blended bulk with')}</div>
+                <div class="mcode">${code}</div>
+                <div class="mname">${e(wo.name)}</div>
+                <div class="msells">${T('cb_rv_sells_as', 'Sells as')} <b>${e(wo.sellsAs)}</b></div>
+            </div>
+            <div class="mkg"><span>${T('cb_wo_expected', 'Expected total')}</span><b>${kg} kg</b></div>
+        </div>
+        <div class="info">
+            <div><span>${T('cb_wo_created', 'Created')}</span><b>${e(stamp(wo.createdAt))}</b></div>
+            <div><span>${T('cb_wo_ordered_by', 'Ordered by')}</span><b>${e(wo.createdBy || '-')}</b></div>
+            <div><span>${T('cb_rv_produce_as', 'Produce as')}</span><b>${e(wo.machine || '-')}</b></div>
+            <div><span>${T('cb_rd_short', 'Roast date')}</span><b>${e(dmy(wo.roastIso))}</b></div>
+        </div>
+        <div class="sh">${T('cb_wo_ingredients', 'Ingredients — take exactly these')}</div>
+        <table class="wo">
+            <thead><tr>
+                <th style="width:24px;">#</th><th>${T('cb_wo_col_coffee', 'Coffee')}</th><th>${T('cb_wo_col_from', 'Take from')}</th>
+                <th style="width:96px;">${T('cb_wo_col_amount', 'Amount')}</th><th style="width:48px; text-align:center;">${T('cb_wo_col_taken', 'Taken')}</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+            <tfoot><tr><td colspan="3" style="text-align:right;">${T('cb_wo_total', 'Total')}</td><td class="n">${kg} kg</td><td></td></tr></tfoot>
+        </table>
+        <div class="sh">${T('cb_wo_steps', 'Steps')}</div>
+        <ol class="steps">
+            <li>${T('cb_wo_step1', 'Take each ingredient from the lot shown and tick Taken.')}</li>
+            <li>${T('cb_wo_step2', 'Mix everything together until even.')}</li>
+            <li>${T('cb_wo_step3', 'Weigh the blend — expected {kg} kg. Actual: {blank} kg').replace('{kg}', `<b>${kg}</b>`).replace('{blank}', '<span class="blank"></span>')}</li>
+            <li>${T('cb_wo_step4', 'Mark the container with {code} (or tape on the tag below).').replace('{code}', `<b>${code}</b>`)}</li>
+        </ol>
+        <div class="sh">${T('cb_wo_notes', 'Notes')}</div>
+        <div class="notes"></div>
+        <div class="sign">
+            <div><b>${T('cb_wo_ordered_by', 'Ordered by')}</b>${e(wo.createdBy || '-')} · ${e(dmy(wo.createdAt))}</div>
+            <div><b>${T('cb_wo_blended_by', 'Blended by')}</b>${T('cb_wo_name_date', 'Name / date')}</div>
+            <div><b>${T('cb_wo_checked_by', 'Checked by')}</b>${T('cb_wo_name_date', 'Name / date')}</div>
+        </div>
+        <div class="cut"><span>✂ ${T('cb_wo_cut', 'cut here — tape onto the bulk container')}</span></div>
+        <div class="tag">
+            <div><div class="tcode">${code}</div><div class="tname">${e(wo.name)}</div></div>
+            <div class="tr">${T('cb_rd_short', 'Roast date')}<b>${e(dmyShort(wo.roastIso))}</b>${e(cbT('cb_wo_total_kg', 'Total {kg} kg').replace('{kg}', kg))}</div>
+        </div>
+    </div>`;
+
+    const html = `<!DOCTYPE html>
+<html dir="${document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'}">
+<head>
+<meta charset="utf-8">
+<title>${T('cb_wo_doc_title', 'Blend Work Order')} — ${code}</title>
+<style>
+    @page { size: A4; margin: 12mm; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; font-size: 12px; line-height: 1.45; }
+    .sheet { page-break-after: always; }
+    .sheet:last-child { page-break-after: auto; }
+    .lh { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; border-bottom: 3px solid #2d5016; margin-bottom: 14px; }
+    .lh-left { display: flex; gap: 12px; align-items: center; }
+    .logo { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; }
+    .lh-name { font-size: 18px; font-weight: 800; color: #2d5016; line-height: 1.2; }
+    .lh-contact { font-size: 10px; color: #666; }
+    .lh-right { text-align: right; }
+    .doc-title { font-size: 17px; font-weight: 800; color: #2d5016; letter-spacing: 0.5px; text-transform: uppercase; }
+    .doc-sub { font-size: 10px; color: #888; margin-top: 2px; }
+    .mark { border: 2.5px solid #2d5016; border-radius: 8px; display: flex; justify-content: space-between; gap: 16px; padding: 10px 14px; margin-bottom: 14px; align-items: center; }
+    .ml { font-size: 9.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #2d5016; }
+    .mcode { font-family: Consolas, 'Courier New', monospace; font-size: 28px; font-weight: 700; line-height: 1.1; margin: 2px 0 4px; }
+    .mname { font-size: 14px; font-weight: 700; }
+    .msells { font-size: 11px; color: #444; }
+    .mkg { text-align: right; white-space: nowrap; }
+    .mkg b { display: block; font-family: Consolas, 'Courier New', monospace; font-size: 24px; }
+    .mkg span { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+    .info { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #ddd; border-radius: 6px; margin-bottom: 14px; }
+    .info div { padding: 6px 10px; border-left: 1px solid #ddd; }
+    .info div:first-child { border-left: 0; }
+    .info span { display: block; font-size: 9.5px; font-weight: 700; text-transform: uppercase; color: #888; letter-spacing: 0.04em; }
+    .info b { font-size: 12px; }
+    .sh { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: #2d5016; margin: 0 0 6px; }
+    table.wo { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+    table.wo th { background: #2d5016; color: #fff; padding: 7px 8px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid #2d5016; text-align: left; }
+    table.wo td { padding: 7px 8px; border: 1px solid #ddd; vertical-align: top; }
+    table.wo td.n { text-align: right; font-family: Consolas, 'Courier New', monospace; white-space: nowrap; }
+    table.wo td.c { text-align: center; }
+    table.wo tr { page-break-inside: avoid; }
+    .s { display: block; font-size: 10px; color: #777; font-family: 'Segoe UI', Arial, sans-serif; }
+    .code { font-family: Consolas, 'Courier New', monospace; font-weight: 700; }
+    .strip { font-family: Consolas, 'Courier New', monospace; font-weight: 700; font-size: 13px; border: 1.5px solid #1a1a1a; border-radius: 3px; padding: 0 5px; }
+    .cc { display: inline-block; min-width: 22px; text-align: center; font-family: Consolas, 'Courier New', monospace; font-weight: 700; font-size: 11.5px; background: #2d5016; color: #fff; border-radius: 3px; padding: 0 5px; margin-right: 6px; }
+    .cc-none { background: transparent; color: #999; border: 1px solid #ccc; }
+    tfoot td { background: #f0f5eb; font-weight: 700; }
+    .box { display: inline-block; width: 15px; height: 15px; border: 1.5px solid #555; border-radius: 2px; }
+    .blank { display: inline-block; min-width: 70px; border-bottom: 1px solid #555; height: 14px; vertical-align: bottom; }
+    .unreg { font-size: 9px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: #b45309; border: 1px solid #b45309; border-radius: 3px; padding: 0 4px; margin: 0 4px; }
+    ol.steps { margin: 0 0 14px; padding-inline-start: 18px; }
+    ol.steps li { margin-bottom: 3px; }
+    .notes { border: 1px solid #ddd; border-radius: 6px; height: 50px; margin-bottom: 26px; }
+    .sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .sign div { border-top: 1px solid #555; padding-top: 5px; font-size: 10.5px; color: #555; }
+    .sign b { display: block; color: #1a1a1a; font-size: 11.5px; }
+    .cut { border-top: 1.5px dashed #999; margin: 22px 0 0; position: relative; }
+    .cut span { position: absolute; top: -9px; left: 12px; background: #fff; padding: 0 6px; font-size: 10px; color: #888; }
+    .tag { margin-top: 16px; border: 2.5px solid #1a1a1a; border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; gap: 12px; align-items: center; page-break-inside: avoid; }
+    .tcode { font-family: Consolas, 'Courier New', monospace; font-size: 38px; font-weight: 700; line-height: 1; }
+    .tname { font-size: 15px; font-weight: 800; margin-top: 6px; }
+    .tr { text-align: right; font-size: 11px; color: #444; white-space: nowrap; }
+    .tr b { display: block; font-family: Consolas, 'Courier New', monospace; font-size: 22px; color: #1a1a1a; }
+    @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+</style>
+</head>
+<body>
+${Array.from({ length: copies }, () => sheet).join('')}
+<script>window.onload = function () { window.print(); }<\/script>
+</body>
+</html>`;
+    const w = window.open('', '_blank');
+    if (!w) {
+        showWarningModal(cbT('cb_wo_popup_blocked', 'The print window was blocked — allow pop-ups for this site and try again.'), false, null, null, 'warning');
+        return false;
+    }
+    w.document.write(html);
+    w.document.close();
+    return true;
+}
+
+// Reprint from Custom Blend History: rebuilds the work order from the saved
+// blend — its bulk card, post_blend_components and their source lots.
+async function printBlendWorkOrderFromHistory(bulkId, btn) {
+    if (btn && btn.disabled) return;
+    const label = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.textContent = cbT('hist_loading', 'Loading…'); }
+    try {
+        const sb = window.supabaseClient;
+        const q = async (query) => { const { data, error } = await query; if (error) throw error; return data || []; };
+        const [bulkRows, comps, moves, machinesRes, greensRes, recipesRes, defsRes, batchesRes] = await Promise.all([
+            q(sb.from('bulk_roasted_coffee').select('*').eq('id', bulkId)),
+            q(sb.from('post_blend_components').select('*').eq('blend_bulk_id', bulkId).order('id')),
+            q(sb.from('bulk_stock_movements').select('performed_by, operation').eq('bulk_roasted_coffee_id', bulkId).order('id').limit(5)),
+            fetchData('machines'), fetchData('green_coffee'), fetchData('blend_recipes'), fetchData('code_definitions'), fetchData('roast_batches')
+        ]);
+        const bulk = bulkRows[0];
+        if (!bulk) throw new Error(cbT('cb_wo_not_found', 'This blend no longer exists.'));
+        const machines = machinesRes.data || [], greenbeans = greensRes.data || [], recipes = recipesRes.data || [];
+        const srcBulkIds = comps.filter(c => c.source_bulk_id).map(c => c.source_bulk_id);
+        const srcLotIds = comps.filter(c => c.source_packed_lot_id).map(c => c.source_packed_lot_id);
+        const [srcBulks, srcLots] = await Promise.all([
+            srcBulkIds.length ? q(sb.from('bulk_roasted_coffee').select('*').in('id', srcBulkIds)) : [],
+            srcLotIds.length ? q(sb.from('packed_coffee_lots').select('*, packed_coffee(*), production_lots(production_date)').in('id', srcLotIds)) : []
+        ]);
+        const machineName = id => (machines.find(m => m.id === id) || {}).name || '-';
+        const stripType = s => String(s || '').replace(/ \((Single|Blend)\)$/, '');
+        const identity = (type, id, name, fallbackCode) => {
+            const g = type === 'Single' && greenbeans.find(x => x.id === id);
+            const r = type === 'Blend' && recipes.find(x => x.id === id);
+            const byName = !g && !r ? (greenbeans.find(x => x.name === stripType(name)) || recipes.find(x => x.name === stripType(name))) : null;
+            const hit = g || r || byName;
+            const t = g ? 'Single' : r ? 'Blend' : byName ? (greenbeans.includes(byName) ? 'Single' : 'Blend') : type;
+            return { name: hit ? hit.name : stripType(name), code: (hit && hit.code) || fallbackCode || null, type: t === 'Single' || t === 'Blend' ? t : null };
+        };
+        const items = comps.map(c => {
+            const kg = parseFloat(c.kg) || 0;
+            if (c.source_type === 'Unregistered') return { kind: 'unreg', name: c.source_name || '-', origin: c.source_note || '-', kg };
+            if (c.source_type === 'Bulk') {
+                const b = srcBulks.find(x => x.id === c.source_bulk_id);
+                if (!b) return { kind: 'bulk', name: '-', kg, lotCode: `#${c.source_bulk_id}` };
+                const idn = identity(b.coffee_type, b.coffee_type === 'Single' ? b.single_coffee_id : b.blend_recipe_id, b.coffee_name, b.custom_coffee_code);
+                return { kind: 'bulk', coffeeCode: idn.code, name: idn.name, type: idn.type, machine: machineName(b.machine_id), roastIso: b.production_date,
+                    lotCode: b.custom_blend_code || buildPreviewLotCode(b, machines, greenbeans, recipes, batchesRes.data || [], b.production_date || String(b.created_at || '').slice(0, 10)), kg };
+            }
+            const l = srcLots.find(x => x.id === c.source_packed_lot_id);
+            const p = l && l.packed_coffee;
+            if (!l || !p) return { kind: 'packed', name: '-', kg, bags: '-', bagSizeG: 0, lotCode: `#${c.source_packed_lot_id}` };
+            const idn = identity(p.single_coffee_id ? 'Single' : p.blend_recipe_id ? 'Blend' : p.coffee_code_type, p.single_coffee_id || p.blend_recipe_id, p.custom_coffee_name, p.coffee_code);
+            const bagSizeG = parseFloat(p.bag_size_g) || 0;
+            return { kind: 'packed', coffeeCode: idn.code, name: idn.name, type: idn.type, machine: machineName(p.machine_id),
+                roastIso: (l.production_lots && l.production_lots.production_date) || l.packed_date, lotCode: l.lot_code, strip: l.strip_code,
+                bagSizeG, bags: bagSizeG ? Math.round(kg / (bagSizeG / 1000)) : '-', kg };
+        });
+        const def = (defsRes.data || []).find(d => d.code === bulk.custom_coffee_code);
+        const blendMove = moves.find(m => m.operation === 'blend') || moves[0];
+        printBlendWorkOrder({
+            code: bulk.custom_blend_code || '-',
+            name: bulk.custom_blend_name || bulk.coffee_name,
+            sellsAs: bulk.custom_coffee_code ? salesCodeLabel({ code: bulk.custom_coffee_code, name: def ? def.name : '-', type: bulk.custom_coffee_type || '-' }) : '-',
+            machine: machineName(bulk.machine_id),
+            roastIso: bulk.production_date,
+            total: items.reduce((s, it) => s + (+it.kg || 0), 0),
+            createdAt: bulk.created_at,
+            createdBy: blendMove ? blendMove.performed_by : null,
+            items
+        }, 1);
+    } catch (err) {
+        console.error('printBlendWorkOrderFromHistory error:', err);
+        await showWarningModal(cbT('cb_wo_load_failed', "Could not load this blend's work order: {msg}").replace('{msg}', err && err.message ? err.message : String(err)), false, null, null, 'warning');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = label; }
+    }
 }
 
 async function loadPackingRecordsTable() {

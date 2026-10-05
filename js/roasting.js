@@ -560,8 +560,14 @@ async function loadCustomBlendSection() {
         .filter(b => b.is_post_blend && !b.source_plan_id)
         .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
+    // Reprint the blend's work order (js/packing.js printBlendWorkOrderFromHistory).
+    tbody.onclick = (e) => {
+        const b = e.target.closest('[data-wo]');
+        if (b && typeof printBlendWorkOrderFromHistory === 'function') printBlendWorkOrderFromHistory(parseInt(b.dataset.wo), b);
+    };
+
     if (customBlends.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center-muted">No custom blends created yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center-muted">No custom blends created yet.</td></tr>';
         return;
     }
 
@@ -599,6 +605,7 @@ async function loadCustomBlendSection() {
             <td><strong>${bulk.custom_blend_name || bulk.coffee_name}</strong></td>
             <td style="font-size:0.8rem; color:var(--text-muted);">${compSummary || '-'}</td>
             <td>${totalKg.toFixed(2)} kg</td>
+            <td style="text-align:right; white-space:nowrap;"><button type="button" class="btn btn-secondary btn-sm" data-wo="${bulk.id}">${escHtml(cbT('cb_wo_btn', 'Work Order'))}</button></td>
         `;
         tbody.appendChild(tr);
     });
