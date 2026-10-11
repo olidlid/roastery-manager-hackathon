@@ -2,7 +2,7 @@
 
 Scope for this document was clarified with the user on 2026-07-11, after the V1 modularization (REFACTORING.md) closed out Task #9 of the original refactor checklist, which had only *named* these phases (FIFO, Work Order, B2B, AI) without scoping any of them.
 
-**Current sandbox:** V2 development happens on the existing project (`roasterymanagerv2.vercel.app` + Supabase project `YOUR_PROJECT_REF`). The client handover (separate, deferred effort — see project memory) forks a copy of the codebase to the client's own infra; V2 work is not part of what ships in that fork.
+**Current sandbox:** V2 development happens on the existing project (the private production deployment and its Supabase project). The client handover (separate, deferred effort — see project memory) forks a copy of the codebase to the client's own infra; V2 work is not part of what ships in that fork.
 
 ---
 

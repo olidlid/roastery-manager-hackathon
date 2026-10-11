@@ -7,8 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 Roastery Manager Pro is a web-based coffee roastery management system. It manages the full production lifecycle — from green bean inventory to roasted coffee packing and sales dispatch.
 
-**Live URL:** https://roasterymanagerv2.vercel.app
-**GitHub:** https://github.com/olidlid/roasterymanagerv2 (private)
+**Live URL (staging, hackathon copy):** _TBD — set when the Vercel project is created_
+**GitHub:** https://github.com/olidlid/roastery-manager-hackathon
+
+This repository is a public copy of a privately deployed production app, with its own Supabase project and seed data. Never point tests at the production deployment.
 **Tech Stack:** HTML, CSS, JavaScript (Vanilla), Supabase (PostgreSQL + Auth)
 **Deployment:** Vercel (auto-deploy from GitHub main branch, rewrites all routes to index.html — see vercel.json)
 
@@ -62,15 +64,14 @@ There is **no bundler, transpiler, or build step**. Every `js/*.js` file is load
 
 ## Supabase Configuration
 
-**Project URL:** `https://YOUR_PROJECT_REF.supabase.co`
+**Project URL:** _TBD — the staging Supabase project_ (hardcoded in `js/supabase.js`)
 **Anon key:** hardcoded in `js/supabase.js` (both apps load this file) — intentional.
 **Auth providers:** Email/Password + Google OAuth (`flowType: 'implicit'`, `detectSessionInUrl: true`)
 
 ### Google OAuth Setup
-- **Google Cloud Project:** RoasteryManagerV2
-- **Client ID:** `241927420519-c8gngv7uov9indmfdt1naomqjhihj891.apps.googleusercontent.com`
-- **Authorized JavaScript Origins:** `https://roasterymanagerv2.vercel.app`, `https://YOUR_PROJECT_REF.supabase.co`
-- **Authorized Redirect URI:** `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`
+- **Client ID / secret:** configured in the staging Supabase project's Auth settings, not in this repo
+- **Authorized JavaScript Origins:** `https://<staging-vercel-domain>`, `https://<staging-project>.supabase.co`
+- **Authorized Redirect URI:** `https://<staging-project>.supabase.co/auth/v1/callback`
 
 ### `handle_new_user` trigger
 A trigger on `auth.users` auto-creates a `public.profiles` row on signup (role defaults to `'Roaster'`). Change the `profiles` schema and this trigger must change too, or new signups silently get no profile.
@@ -208,9 +209,8 @@ Feature work in this repo is planned in a root-level `*_PLAN.md` before the code
 
 ## Test Credentials
 
-- **Email:** cholidulasyhar00@gmail.com
-- **Password:** [ask the team — never commit it]
-- **Role:** Developer (Developer-only UI is gated on `currentUser.role === 'Developer'`, not a permission key).
+- One test account per role on the staging project; credentials live in the team password manager — never commit them.
+- **Developer role:** (Developer-only UI is gated on `currentUser.role === 'Developer'`, not a permission key).
 
 ---
 
