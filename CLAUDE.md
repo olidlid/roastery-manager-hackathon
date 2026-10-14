@@ -66,7 +66,7 @@ There is **no bundler, transpiler, or build step**. Every `js/*.js` file is load
 
 ## Supabase Configuration
 
-**Project URL:** _TBD — the staging Supabase project_ (hardcoded in `js/supabase.js`)
+**Project URL:** `https://tparoylfaqpdvekwkejt.supabase.co` — the staging project, Frankfurt (hardcoded in `js/supabase.js`)
 **Anon key:** hardcoded in `js/supabase.js` (both apps load this file) — intentional.
 **Auth providers:** Email/Password + Google OAuth (`flowType: 'implicit'`, `detectSessionInUrl: true`)
 

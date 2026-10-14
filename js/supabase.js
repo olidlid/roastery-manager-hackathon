@@ -3,8 +3,8 @@
 // Credentials are hardcoded so the app is always full-Supabase, consistent across every browser/device.
 
 (function() {
-    const SUPABASE_URL = 'https://YOUR_PROJECT_REF.supabase.co';
-    const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+    const SUPABASE_URL = 'https://tparoylfaqpdvekwkejt.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwYXJveWxmYXFwZHZla3drZWp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE5NDI2MTEsImV4cCI6MjEwNzUxODYxMX0.hf_2BCW1ZZP5amJ5w5UMsy6C3QzulYUzPHZEthRegj0';
 
     window.SUPABASE_URL = SUPABASE_URL;
     window.SUPABASE_ANON_KEY = SUPABASE_ANON_KEY;
