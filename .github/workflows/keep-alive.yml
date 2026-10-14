@@ -1,0 +1,39 @@
+# Keeps the staging Supabase project awake. Free-plan projects are paused
+# after 7 days without activity, and a paused project fails every test run
+# until someone restores it by hand. One read every 3 days is enough.
+#
+# Uses the same public URL + anon key the browser already gets from
+# js/supabase.js — no secrets. Does nothing while those are placeholders.
+name: Keep staging awake
+
+on:
+  schedule:
+    - cron: '17 6 */3 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: js/supabase.js
+          sparse-checkout-cone-mode: false
+
+      - name: Read a row from staging
+        run: |
+          url=$(grep -oP "SUPABASE_URL = '\K[^']+" js/supabase.js)
+          key=$(grep -oP "SUPABASE_ANON_KEY = '\K[^']+" js/supabase.js)
+          if [[ -z "$url" || "$url" == *YOUR_PROJECT_REF* ]]; then
+            echo "Supabase URL is still a placeholder — nothing to ping."
+            exit 0
+          fi
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "apikey: $key" -H "Authorization: Bearer $key" \
+            "$url/rest/v1/company_settings?select=id&limit=1")
+          echo "GET company_settings -> HTTP $status"
+          [[ "$status" == "200" ]]

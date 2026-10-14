@@ -43,7 +43,8 @@ roastery-manager-v2/
 │   ├── app.js                 # Bootstrap, navigation, modals, dashboard, reports, stock opname
 │   ├── leader.js              # Logic for leader.html (separate from the chain above)
 │   └── app_backup.js          # Untracked pre-split snapshot — NOT loaded, safe to delete
-├── database/                 # supabase_schema.sql (source of truth) + ~38 migration files
+├── database/                 # supabase_schema.sql (source of truth) + ~38 migration files;
+│                             #   staging_setup.sql / seed_demo.sql / seed_test_users.sql build staging (STAGING_SETUP.md)
 ├── docs/                     # PRD.html, CRM mockups, reorder_backtest.js (console tool)
 ├── server.js                 # Static file server for local dev (node server.js, port 8000)
 └── test.js                   # Concatenates every js/*.js in load order, evaluates in jsdom → catches SyntaxErrors
@@ -58,6 +59,7 @@ There is **no bundler, transpiler, or build step**. Every `js/*.js` file is load
 - **Run locally:** `node server.js` → http://localhost:8000
 - **Syntax-check everything:** `node test.js` — parses the `<script src="js/...">` tags out of `index.html` in document order, concatenates them exactly as the browser's shared global scope would, and evaluates the result in jsdom. Catches SyntaxErrors AND duplicate declarations. There is no real test suite; `npm test` is a stub that always fails.
 - **Single file:** `node --check js/<file>.js`
+- **Fresh staging database:** follow `database/STAGING_SETUP.md`. Re-running `database/seed_demo.sql` resets staging to the demo data; it refuses to run without the staging marker in `company_settings`.
 - **Android build:** standard Capacitor/Gradle flow from `android/`; `dist/` must be (re)built first. ⚠️ `dist/js/app.js` is a stale pre-split snapshot that `dist/index.html` doesn't even load — ignore it.
 
 ---
