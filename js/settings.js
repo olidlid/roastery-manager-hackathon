@@ -332,35 +332,51 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
                 console.error("Supabase SignUp Error:", error);
                 let msg = error.message || "Unknown error occurred";
                 if (msg === '{}') {
-                    msg = "Error dari database (pastikan tabel profiles sudah sesuai dan tidak ada error pada trigger on_auth_user_created).";
+                    msg = window.t('msg_signup_trigger_error');
                 }
-                alert("Registration failed: " + msg);
+                await showWarningModal(msg, false, window.t('title_account_create_failed'));
                 return;
             }
 
-            // 2. Wait a split second for trigger to insert into profiles, then update role
-            if (data.user) {
-                setTimeout(async () => {
-                    // username is written here too: the trigger leaves it NULL
-                    // if someone took the name between the check above and now.
-                    const profileUpdate = username ? { role: role, username: username } : { role: role };
-                    const { error: profileError } = await window.supabaseClient
-                        .from('profiles')
-                        .update(profileUpdate)
-                        .eq('id', data.user.id);
-                    if (profileError) {
-                        console.error("Failed to update role in profile:", profileError);
-                        alert(window.t('alert_username_save_failed').replace('{msg}', profileError.message));
-                    }
-                    loadUsersSection();
-                }, 800);
+            // Supabase answers a signUp for an email that already exists with a
+            // user that has no identities (and no error), so it can't be used
+            // to probe for accounts. Nothing was created in that case.
+            if (!data.user || (Array.isArray(data.user.identities) && data.user.identities.length === 0)) {
+                await showWarningModal(window.t('msg_account_email_exists').replace('{email}', email), false, window.t('title_account_create_failed'));
+                return;
             }
 
-            alert("Operator account created successfully!" + 
-                  "\nNote: If email confirmation is enabled in your Supabase Dashboard, the user must click the confirmation link in their email inbox before they can sign in.");
-            
+            // 2. Give the signup trigger a moment to insert the profile row, then
+            //    set the role. username is written here too: the trigger leaves
+            //    it NULL if someone took the name between the check above and now.
+            await new Promise(r => setTimeout(r, 800));
+            const profileUpdate = username ? { role: role, username: username } : { role: role };
+            const { error: profileError } = await window.supabaseClient
+                .from('profiles')
+                .update(profileUpdate)
+                .eq('id', data.user.id);
+
             modalContainer.classList.add('hidden');
             loadUsersSection();
+
+            if (profileError) {
+                console.error("Failed to update role in profile:", profileError);
+                await showWarningModal(window.t('alert_username_save_failed').replace('{msg}', profileError.message), false);
+                return;
+            }
+
+            // No session back from signUp means "Confirm email" is on in
+            // Supabase Auth: the account exists but can't sign in until the
+            // link in that inbox is clicked.
+            const signInWith = username
+                ? window.t('msg_account_sign_in_username').replace('{username}', username)
+                : window.t('msg_account_sign_in_email').replace('{email}', email);
+            const lines = [
+                window.t('msg_account_created').replace('{name}', name).replace('{role}', role),
+                signInWith
+            ];
+            if (!data.session) lines.push(window.t('msg_account_confirm_email').replace('{email}', email));
+            await showWarningModal(lines.join('\n\n'), false, window.t('title_account_created'), null, 'success');
         }
     });
 });
