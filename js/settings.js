@@ -15,6 +15,31 @@
 // ==========================================================================
 // SECTION 6: USER MANAGEMENT
 // ==========================================================================
+// Username login: same rule as profiles_username_format in
+// database/supabase_schema.sql (lowercase, no '@', so the login field can tell
+// a username from an email). Returns '' for an empty field (no username),
+// the normalized username when valid, or null after alerting that it isn't.
+const SETTINGS_USERNAME_RE = /^[a-z0-9._-]{3,30}$/;
+function settingsReadUsername(inputId) {
+    const el = document.getElementById(inputId);
+    const value = el ? el.value.trim().toLowerCase() : '';
+    if (!value) return '';
+    if (!SETTINGS_USERNAME_RE.test(value)) {
+        alert(window.t('alert_username_invalid'));
+        return null;
+    }
+    return value;
+}
+
+// true when another profile already holds this username. Throws on a read
+// error so the caller stops instead of creating a clashing account.
+async function settingsUsernameTaken(username, exceptUserId) {
+    const { data, error } = await window.supabaseClient
+        .from('profiles').select('id').eq('username', username);
+    if (error) throw error;
+    return (data || []).some(row => row.id !== exceptUserId);
+}
+
 async function loadUsersSection() {
     const { data: users } = await fetchData('profiles');
     const tbody = document.getElementById('users-table-body');
@@ -34,7 +59,7 @@ async function loadUsersSection() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td><strong>${user.name}</strong></td>
-            <td><code>${user.email || '-'}</code></td>
+            <td><code>${user.email || '-'}</code>${user.username ? `<br><span class="text-muted-xs">@${user.username}</span>` : ''}</td>
             <td><span class="potential-badge">${user.role}</span></td>
             <td>${user.created_at ? new Date(user.created_at).toLocaleDateString() : '2026-06-28'}</td>
             <td>
@@ -158,6 +183,11 @@ async function editUserRole(userId) {
                 <input type="text" class="form-control" value="${user.name}" disabled>
             </div>
             <div class="form-group">
+                <label class="form-label" data-i18n="lbl_username">${window.t('lbl_username')}</label>
+                <input type="text" id="m-edit-username" class="form-control" value="${user.username || ''}" placeholder="e.g. alice" autocapitalize="none" spellcheck="false">
+                <small class="text-muted-xs" data-i18n="hint_username">${window.t('hint_username')}</small>
+            </div>
+            <div class="form-group">
                 <label class="form-label">Assign Role</label>
                 <select id="m-edit-role" class="form-control">${roleOptions}</select>
             </div>
@@ -171,7 +201,21 @@ async function editUserRole(userId) {
     document.getElementById('modal-edit-role-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const newRole = document.getElementById('m-edit-role').value;
-        const { error } = await saveData('profiles', { id: user.id, role: newRole });
+        const username = settingsReadUsername('m-edit-username');
+        if (username === null) return;
+        if (username) {
+            try {
+                if (await settingsUsernameTaken(username, user.id)) {
+                    alert(window.t('alert_username_taken').replace('{username}', username));
+                    return;
+                }
+            } catch (err) {
+                alert(window.t('alert_username_check_failed').replace('{msg}', err.message));
+                return;
+            }
+        }
+        // An emptied field clears the username (that user signs in by email only).
+        const { error } = await saveData('profiles', { id: user.id, role: newRole, username: username || null });
         if (error) {
             alert('Failed to save role: ' + error.message);
             return;
@@ -204,6 +248,11 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
             <div class="form-group mt-25" >
                 <label class="form-label">Email Address</label>
                 <input type="email" id="m-inv-user" class="form-control" placeholder="e.g. alice@roastery.com" required>
+            </div>
+            <div class="form-group mt-25">
+                <label class="form-label" data-i18n="lbl_username">${window.t('lbl_username')}</label>
+                <input type="text" id="m-inv-username" class="form-control" placeholder="e.g. alice" autocapitalize="none" spellcheck="false">
+                <small class="text-muted-xs" data-i18n="hint_username">${window.t('hint_username')}</small>
             </div>
             ${passwordFieldHtml}
             <div class="form-group mt-25" >
@@ -241,7 +290,21 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
             loadUsersSection();
         } else {
             const password = document.getElementById('m-inv-pass').value;
-            
+
+            const username = settingsReadUsername('m-inv-username');
+            if (username === null) return;
+            if (username) {
+                try {
+                    if (await settingsUsernameTaken(username)) {
+                        alert(window.t('alert_username_taken').replace('{username}', username));
+                        return;
+                    }
+                } catch (err) {
+                    alert(window.t('alert_username_check_failed').replace('{msg}', err.message));
+                    return;
+                }
+            }
+
             // 1. Sign up the user in Supabase auth using a temporary client
             // We use a temp client so it doesn't log out the current admin session!
             const tempClient = supabase.createClient(
@@ -258,7 +321,9 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
                 options: {
                     data: {
                         full_name: name,
-                        user_name: email.split('@')[0]
+                        user_name: email.split('@')[0],
+                        // Read by the handle_new_user trigger into profiles.username.
+                        username: username || null
                     }
                 }
             });
@@ -276,12 +341,16 @@ document.getElementById('btn-invite-user').addEventListener('click', () => {
             // 2. Wait a split second for trigger to insert into profiles, then update role
             if (data.user) {
                 setTimeout(async () => {
+                    // username is written here too: the trigger leaves it NULL
+                    // if someone took the name between the check above and now.
+                    const profileUpdate = username ? { role: role, username: username } : { role: role };
                     const { error: profileError } = await window.supabaseClient
                         .from('profiles')
-                        .update({ role: role })
+                        .update(profileUpdate)
                         .eq('id', data.user.id);
                     if (profileError) {
                         console.error("Failed to update role in profile:", profileError);
+                        alert(window.t('alert_username_save_failed').replace('{msg}', profileError.message));
                     }
                     loadUsersSection();
                 }, 800);

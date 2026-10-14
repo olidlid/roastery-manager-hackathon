@@ -2161,11 +2161,28 @@ document.getElementById('btn-google-login').addEventListener('click', async () =
     if (error) alert("OAuth error: " + error.message);
 });
 
-// --- SUPABASE EMAIL LOGIN ---
+// --- SUPABASE EMAIL / USERNAME LOGIN ---
+// One field takes an email or a username. Usernames never contain '@'
+// (profiles_username_format), so anything without one is looked up by
+// resolve_login_email() and the normal email sign-in runs on the result.
+// An unknown username gets the same message as a wrong password, so the
+// form doesn't reveal which usernames exist.
 document.getElementById('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const email = document.getElementById('login-email').value;
+    const identifier = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
+
+    let email = identifier;
+    if (!identifier.includes('@')) {
+        const { data: resolved, error: resolveError } = await window.supabaseClient
+            .rpc('resolve_login_email', { p_login: identifier });
+        if (resolveError || !resolved) {
+            const msg = resolveError ? resolveError.message : window.t('msg_invalid_login');
+            alert(window.t("alert_signin_failed").replace("{msg}", msg));
+            return;
+        }
+        email = resolved;
+    }
 
     const { data, error } = await window.supabaseClient.auth.signInWithPassword({
         email,

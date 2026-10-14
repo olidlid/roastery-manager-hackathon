@@ -33,8 +33,14 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     email TEXT,
     role TEXT DEFAULT 'Roaster',
     avatar_url TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Added 2026-10-14 (username_login_migration.sql): optional login name,
+    -- lowercase [a-z0-9._-]{3,30}, never contains '@' so the login field can
+    -- tell it from an email. Resolved to the auth email by resolve_login_email().
+    username TEXT CONSTRAINT profiles_username_format CHECK (username ~ '^[a-z0-9._-]{3,30}$')
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_uniq ON public.profiles (username);
 
 -- 2. Roles & granular permissions (seeded from MOCK_DB.custom_roles in js/app.js
 --    by syncCustomRolesFromSupabase() when empty)
@@ -1345,18 +1351,28 @@ END $$;
 -- ============================================================================
 -- SIGNUP TRIGGER (fixed 2026-07-05 to match the real profiles columns;
 -- the old version inserted into a non-existent "username" column and broke
--- every signup)
+-- every signup). Since 2026-10-14 profiles.username exists and the trigger
+-- fills it from the signup metadata — see username_login_migration.sql.
+-- Only a valid, still-free username is stored: a constraint violation here
+-- would be swallowed by the EXCEPTION block and leave the user with NO profile.
 -- ============================================================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
+DECLARE
+  v_username TEXT := lower(btrim(new.raw_user_meta_data->>'username'));
 BEGIN
-  INSERT INTO public.profiles (id, name, email, role, created_at)
+  IF v_username !~ '^[a-z0-9._-]{3,30}$'
+     OR EXISTS (SELECT 1 FROM public.profiles WHERE username = v_username) THEN
+    v_username := NULL;
+  END IF;
+  INSERT INTO public.profiles (id, name, email, role, username, created_at)
   VALUES (
     new.id,
     COALESCE(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
     new.email,
     'Roaster',
+    v_username,
     NOW()
   );
   RETURN new;
@@ -1370,6 +1386,26 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- Username login (2026-10-14, username_login_migration.sql): the login form's
+-- one field takes an email OR a username; a username is turned into the
+-- account's auth.users email here, then the normal email sign-in runs.
+-- SECURITY DEFINER because anon can't read auth.users. Exposes nothing new —
+-- profiles is already readable under full_access. NULL for an unknown username.
+CREATE OR REPLACE FUNCTION public.resolve_login_email(p_login TEXT)
+RETURNS TEXT
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT u.email
+  FROM auth.users u
+  JOIN public.profiles p ON p.id = u.id
+  WHERE p.username = lower(btrim(p_login))
+  LIMIT 1;
+$$;
+
+REVOKE ALL ON FUNCTION public.resolve_login_email(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.resolve_login_email(TEXT) TO anon, authenticated;
 
 -- ============================================================================
 -- GREENBEAN LOT ATOMIC FUNCTIONS (applied to production 2026-08-19)

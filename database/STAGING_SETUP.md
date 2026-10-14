@@ -27,7 +27,9 @@ into `supabase_schema.sql`; don't run them on a fresh project.
    (a second Sales Agent and a Developer are optional).
 2. Open `seed_test_users.sql` in the SQL Editor, replace the `REPLACE_ME` emails
    there (don't commit real addresses), and run it. The result table shows any
-   account it could not find.
+   account it could not find. Each account also gets a username (`admin`,
+   `leader`, `roaster`, `packing`, `sales`, …), so it can sign in with that
+   instead of the email.
 
 Passwords live in the password manager, never in this repo.
 

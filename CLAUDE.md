@@ -111,7 +111,7 @@ This is the part of the codebase that has cost the most real money, and every ru
 **Every stock path is all-or-nothing** (convention set in `ee14598`): lock the screen, do the work, **verify by reading back**, then report success — or roll back and say plainly that nothing was saved. `showStockFailed()` (nothing changed, safe to retry) and `showStockPartial()` (half-done, do NOT repeat) in js/db.js exist to keep that distinction honest.
 
 ### `profiles`
-`id (uuid, PK)`, `name`, `email`, `role`, `avatar_url`, `created_at`. RLS is `full_access` (`FOR ALL USING (true)`) like every other table — authorization is enforced client-side, not by RLS.
+`id (uuid, PK)`, `name`, `email`, `role`, `avatar_url`, `created_at`, `username` (optional, lowercase `[a-z0-9._-]{3,30}`, unique — added 2026-10-14). RLS is `full_access` (`FOR ALL USING (true)`) like every other table — authorization is enforced client-side, not by RLS.
 
 ### `custom_roles`
 `id`, `name` (unique), `color`, `is_system`, `permissions` (jsonb, ~80 boolean keys), `created_at`.
@@ -136,6 +136,7 @@ The app always talks to the live Supabase project. `isMockMode` is hardcoded `fa
 2. No session → `auth-overlay` shown, app container hidden.
 3. Session → `loadUserProfile(userId)` reads `profiles`, `syncCustomRolesFromSupabase()` fills the permission cache, `applyRoleAccess()` shows/hides menus, dashboard loads.
 4. New signups get their `profiles` row from the DB trigger, not app code.
+5. **Username login** (2026-10-14): the login field takes an email *or* a username. Input without `@` goes through the `resolve_login_email(p_login)` RPC (SECURITY DEFINER, readable by anon) to get the account's `auth.users` email, then the normal `signInWithPassword` runs. Every account still has an email in Auth. Usernames are set in Settings → Users (Add / Edit) or by `database/seed_test_users.sql`.
 
 ### SPA structure
 One page, one `<section id="sec-*" class="page-section hidden">` per screen. `navigateTo(sectionId)` toggles visibility, sets the header from `PAGE_METADATA`, restores the last tab, and calls `loadSectionData(sectionId)`.

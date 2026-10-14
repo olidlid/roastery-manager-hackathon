@@ -166,8 +166,8 @@
             <!-- Email/Password Login -->
             <form id="login-form" onsubmit="event.preventDefault();">
                 <div class="form-group" style="margin-bottom: 12px;">
-                    <label class="form-label" for="login-email" style="font-size: 0.8rem;">Email</label>
-                    <input type="email" id="login-email" class="form-control" placeholder="name@roastery.com" required>
+                    <label class="form-label" for="login-email" style="font-size: 0.8rem;" data-i18n="login_identifier_lbl">Email or Username</label>
+                    <input type="text" id="login-email" class="form-control" placeholder="name@roastery.com / username" data-i18n-placeholder="login_identifier_ph" autocomplete="username" autocapitalize="none" spellcheck="false" required>
                 </div>
                 <div class="form-group" style="margin-bottom: 16px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -3223,7 +3223,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"
             integrity="sha384-3wY11tldQ5+yWqAvmTN4XtQvnjoTva0cV15O/O/O5NTtp0ivVopSzLOzsVXWZse9" crossorigin="anonymous"></script>
     <!-- Translation & I18n Scripts -->
-    <script src="js/translations.js?v=98"></script>
+    <script src="js/translations.js?v=99"></script>
     <script src="js/i18n.js"></script>
     <!-- App Scripts (Standard JavaScript, works over file:///) -->
     <script src="js/supabase.js?v=2"></script>
@@ -3236,9 +3236,9 @@
     <script src="js/returns.js?v=4"></script>
     <script src="js/crm.js?v=11"></script>
     <script src="js/otheritems.js?v=2"></script>
-    <script src="js/settings.js?v=31"></script>
+    <script src="js/settings.js?v=32"></script>
     <script src="js/tracking.js?v=13"></script>
     <script src="js/purchasing.js?v=3"></script>
-    <script src="js/app.js?v=132"></script>
+    <script src="js/app.js?v=133"></script>
 </body>
 </html>
